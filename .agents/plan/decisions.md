@@ -85,19 +85,24 @@ than drifting.
 
 ## Still open (must be resolved in Phase 0, may amend decisions)
 
-- Exact OpenCloud Web extension packaging + auth-forwarding mechanism.
-  *(Spike 4 — not yet run.)*
+**All Phase-0 open items are now resolved.** See `phase-0-findings.md`.
+
+- ~~Exact OpenCloud Web extension packaging + auth-forwarding mechanism.~~
+  **RESOLVED** (Spike 4). Vite 8 + `@opencloud-eu/extension-sdk` module-
+  federation bundle; drop under `web/assets/apps/<id>/`; OpenCloud injects it
+  into `config.json`. Auth = user's OIDC browser session (implicit forwarding).
 - ~~kopia-as-library API surface, incl. per-file restore.~~ **RESOLVED** (Spike 2,
   kopia v0.23.1). Full lifecycle validated against Garage via importable
   packages; per-file restore works (`snapshotfs.GetNestedEntry` + `restore.Entry`).
-  API surface + gotchas recorded in `phase-0-findings.md`. restic fallback not
-  needed.
-- CS3 gRPC + data-provider read path against a real OpenCloud instance, and which
-  token/credential the **unattended** worker uses. *(Spike 3 — not yet run.)*
-- How CS3 exposes shared-space membership (who may retrieve a shared space's RK).
-  *(Spike 3 — not yet run.)*
+  restic fallback not needed.
+- ~~CS3 gRPC + data-provider read path … which token/credential the unattended
+  worker uses.~~ **RESOLVED** (Spike 3). Read path validated end-to-end;
+  worker uses a **service account** (see decision #11 below).
+- ~~How CS3 exposes shared-space membership.~~ **RESOLVED** (Spike 3). Read the
+  space's `Opaque` map `grants` / `groups` / `grants_expirations` from
+  `ListStorageSpaces`.
 
-### Amendments from Phase 0 (Spikes 1 & 2)
+### Amendments from Phase 0
 
 - **Decision #8 confirmed by test:** Garage v2.3.0 returns `NotImplemented` for
   both Object Lock and bucket versioning (`internal/testutil` integration tests
@@ -107,6 +112,18 @@ than drifting.
   therefore implemented **above** kopia (list snapshots → delete manifests older
   than the window → full maintenance GC), never via kopia's policy engine. This
   reinforces #10 rather than changing it. See `phase-0-findings.md`.
+- **New decision #11 (locked): the unattended worker authenticates with an
+  OpenCloud service account** (`auth-service`, CS3 auth type `"serviceaccounts"`).
+  Rationale: reva grants service accounts an *owner scope* and they may read all
+  spaces, so a single credential backs up any space with no per-user
+  impersonation. Machine-auth (impersonation) was considered and rejected as
+  unnecessary coupling. The service-account secret lives in the cluster
+  (`OC_SERVICE_ACCOUNT_ID`/`SECRET`), never in the admin UI, never logged — same
+  handling class as the SRW key. This validates the Phase 6 scheduler / SRW model
+  (the highest-risk assumption held).
+- **Membership for shared-space RK retrieval (decisions.md #7):** query the
+  space grants via the `ListStorageSpaces` opaque map; no separate sharing API
+  needed.
 
 ---
 

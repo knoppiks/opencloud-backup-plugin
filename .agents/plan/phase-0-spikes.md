@@ -108,13 +108,24 @@ metadata + download refs; bytes flow over the HTTP data provider.
   cluster, pagination behavior on large folders.
 
 **Exit criteria:**
-- [ ] Spaces listed for a test user.
-- [ ] One file streamed end-to-end and checksum-verified.
-- [ ] Documented answer: what token/credential the **unattended** worker uses.
-- [ ] Documented answer: how space membership is queried.
+- [x] Spaces listed for a test user. (`ListStorageSpaces` via service account)
+- [x] One file streamed end-to-end and checksum-verified.
+      (`InitiateFileDownload` → data gateway HTTP GET → sha256 match)
+- [x] Documented answer: the **unattended** worker uses a **service account**
+      (`auth-service`, type `"serviceaccounts"`, owner scope, reads any space).
+      See `phase-0-findings.md`.
+- [x] Documented answer: space membership is read from the space's `Opaque`
+      map (`grants` / `groups` / `grants_expirations`) on `ListStorageSpaces`.
 
 **Risk:** high. If server-side impersonation is not feasible as assumed, the
 scheduler design (Phase 6) and SRW model need revisiting.
+
+**Status: DONE — the high-risk assumption holds.** Server-side unattended read
+works via a service account (no impersonation needed), so the Phase 6 scheduler
+/ SRW model stand. Fixture: `test/fixtures/opencloud/` (kept for Phases 2/4/5/8).
+Gotcha: `InitiateFileDownload` needs a space-relative reference
+(`{ResourceId: space.Root, Path: "./name"}`), not a bare resource id; expose the
+gateway with `OC_GATEWAY_GRPC_ADDR=0.0.0.0:9142`.
 
 ---
 
@@ -133,10 +144,20 @@ OpenCloud Web UI?
   token (session forwarding).
 
 **Exit criteria:**
-- [ ] Hello-world extension visible in the test instance.
-- [ ] Documented packaging + auth-forwarding mechanism for Phase 8.
+- [x] Hello-world extension visible in the test instance. Built with Vite +
+      `@opencloud-eu/extension-sdk`, deployed to `web/assets/apps/backup-spike/`,
+      injected into `config.json` as an `external_apps` entry, entrypoint +
+      chunks served `200`. (`spikes/webext/`)
+- [x] Documented packaging + auth-forwarding mechanism for Phase 8.
+      See `phase-0-findings.md`.
 
 **Risk:** medium; independent of the backend track.
+
+**Status: DONE.** Packaging = Vue 3 + TS, Vite 8 module-federation via
+extension-sdk → `manifest.json` + `remoteEntry`. Loading = drop under
+`web/assets/apps/<id>/`, OpenCloud scans + injects into `config.json` (restart
+required). Auth = user's OIDC browser session (`client_id: web`), token via
+`web-pkg` composables — implicit session forwarding.
 
 ---
 

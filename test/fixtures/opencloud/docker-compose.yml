@@ -1,0 +1,39 @@
+# Test OpenCloud fixture for integration tests (Phase 0 spikes 3 & 4; reused by
+# Phases 2, 4, 5, 8). Single-container "all services" OpenCloud.
+#
+# NOTE: run ./up.sh, not `docker compose up` directly — the instance needs a
+# one-time `init` (generates secrets into ./config/opencloud.yaml) before the
+# server starts. up.sh handles init + start + secret extraction.
+#
+# Pinned image (Phase 0): opencloudeu/opencloud-rolling:7.3.0
+# Exposed:
+#   9200 -> HTTPS web / graph / webdav / OCS (self-signed; OC_INSECURE)
+#   9142 -> CS3 gateway gRPC (bound to 0.0.0.0 for out-of-container workers)
+
+services:
+  opencloud:
+    image: opencloudeu/opencloud-rolling:7.3.0
+    container_name: opencloud-fixture
+    # `entrypoint: opencloud` + no command == `server`.
+    ports:
+      - "9200:9200"
+      - "9142:9142"
+    environment:
+      OC_INSECURE: "true"
+      PROXY_HTTP_ADDR: "0.0.0.0:9200"
+      OC_URL: "https://localhost:9200"
+      # Expose the CS3 gateway gRPC outside the container (default is localhost).
+      OC_GATEWAY_GRPC_ADDR: "0.0.0.0:9142"
+      # Test-only: enable HTTP basic auth so tests can seed data without OIDC.
+      PROXY_ENABLE_BASIC_AUTH: "true"
+      OC_LOG_LEVEL: "error"
+    volumes:
+      - ./config:/etc/opencloud
+      - ./data:/var/lib/opencloud
+      # Web extensions (Spike 4 / Phase 8) are served from here.
+      - ./apps:/var/lib/opencloud/web/assets/apps
+    healthcheck:
+      test: ["CMD", "curl", "-fsSk", "https://localhost:9200/graph/v1.0/me", "-o", "/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30

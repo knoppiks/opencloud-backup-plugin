@@ -1,0 +1,17 @@
+# IDE
+/.idea/
+
+# Go
+/tmp/
+
+# Node (web extension spike / Phase 8 UI)
+node_modules/
+spikes/webext/dist/
+spikes/webext/.__mf__temp/
+
+# Local fixture runtime state & SECRETS — never commit
+# (OpenCloud generates config incl. secrets, plus data + loaded apps at runtime)
+test/fixtures/opencloud/config/
+test/fixtures/opencloud/data/
+test/fixtures/opencloud/apps/
+test/fixtures/opencloud/fixture.env

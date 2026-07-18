@@ -1,0 +1,20 @@
+{
+  "name": "opencloud-backup-webext-spike",
+  "version": "0.0.0",
+  "description": "Phase-0 Spike 4: throwaway hello-world OpenCloud Web extension to validate packaging + loading.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@opencloud-eu/extension-sdk": "^7.0.0",
+    "@opencloud-eu/web-client": "^7.0.0",
+    "@opencloud-eu/web-pkg": "^7.0.0",
+    "vite": "^8.0.0",
+    "vue": "^3.5.13",
+    "vue-router": "^5.0.0",
+    "vue3-gettext": "^4.0.0-beta.1"
+  }
+}
