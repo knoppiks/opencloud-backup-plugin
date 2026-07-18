@@ -32,12 +32,17 @@ local dev?
   poll) — this becomes the integration-test fixture for all later phases.
 
 **Exit criteria:**
-- [ ] One command/helper brings up a clean Garage, S3 round-trip passes.
-- [ ] Multipart upload works.
-- [ ] Object-Lock / versioning calls confirmed failing (501 / stub) — recorded
-      so later tests guard/skip correctly.
+- [x] One command/helper brings up a clean Garage, S3 round-trip passes.
+      (`internal/testutil.StartGarage`)
+- [x] Multipart upload works. (24 MiB, checksum-verified)
+- [x] Object-Lock / versioning calls confirmed failing — both return
+      `NotImplemented`; recorded in `phase-0-findings.md`.
 
 **Risk:** low. Research says trivial; confirm once.
+
+**Status: DONE.** See `phase-0-findings.md`. Fixture: `internal/testutil/`.
+Gotcha worth flagging for Phase 1: AWS SDK v2 default checksum validation breaks
+multipart GET against Garage — set request/response checksum to `WhenRequired`.
 
 ---
 
@@ -62,13 +67,21 @@ expose everything we depend on — outside its CLI?
    ownership, context requirements, logging hooks.
 
 **Exit criteria:**
-- [ ] All 7 steps pass using only importable packages (no kopia CLI).
-- [ ] Written API-surface notes: which packages/functions we will wrap in
-      `/pkg/snapshot`.
-- [ ] Dedup confirmed working over Garage.
+- [x] All 7 steps pass using only importable packages (no kopia CLI).
+      (`spikes/kopia/`, `go test -tags integration ./spikes/kopia/...`)
+- [x] Written API-surface notes: see `phase-0-findings.md` (§ API surface to
+      wrap in `/pkg/snapshot`).
+- [x] Dedup confirmed working over Garage. (~25 MB snapshot 1 → ~9.8 KB
+      snapshot 2 after a 1-line change; 24 MiB binary not re-uploaded.)
 
 **Fallback if blocked:** restic as subprocess (documented decision change —
-would ripple into decisions.md #5).
+would ripple into decisions.md #5). **Not needed** — kopia library API suffices.
+
+**Status: DONE.** Key finding that amends the plan: kopia retention is
+**count-based only**; time-based `keep-within` (decisions.md #10) must be
+implemented by us (list → `DeleteManifest` older than window → full maintenance
+GC). Two restore gotchas: call `FilesystemOutput.Init` and set
+`RestoreDirEntryAtDepth = MaxInt32`. Details in `phase-0-findings.md`.
 
 ---
 

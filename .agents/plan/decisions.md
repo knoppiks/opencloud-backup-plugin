@@ -86,10 +86,27 @@ than drifting.
 ## Still open (must be resolved in Phase 0, may amend decisions)
 
 - Exact OpenCloud Web extension packaging + auth-forwarding mechanism.
-- kopia-as-library API surface, incl. per-file restore.
+  *(Spike 4 — not yet run.)*
+- ~~kopia-as-library API surface, incl. per-file restore.~~ **RESOLVED** (Spike 2,
+  kopia v0.23.1). Full lifecycle validated against Garage via importable
+  packages; per-file restore works (`snapshotfs.GetNestedEntry` + `restore.Entry`).
+  API surface + gotchas recorded in `phase-0-findings.md`. restic fallback not
+  needed.
 - CS3 gRPC + data-provider read path against a real OpenCloud instance, and which
-  token/credential the **unattended** worker uses.
+  token/credential the **unattended** worker uses. *(Spike 3 — not yet run.)*
 - How CS3 exposes shared-space membership (who may retrieve a shared space's RK).
+  *(Spike 3 — not yet run.)*
+
+### Amendments from Phase 0 (Spikes 1 & 2)
+
+- **Decision #8 confirmed by test:** Garage v2.3.0 returns `NotImplemented` for
+  both Object Lock and bucket versioning (`internal/testutil` integration tests
+  guard this).
+- **Decision #10 implementation pinned:** kopia's own retention policy is
+  **count-based only** (no native `keep-within`). Time-based retention is
+  therefore implemented **above** kopia (list snapshots → delete manifests older
+  than the window → full maintenance GC), never via kopia's policy engine. This
+  reinforces #10 rather than changing it. See `phase-0-findings.md`.
 
 ---
 
