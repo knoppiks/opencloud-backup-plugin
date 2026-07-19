@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencloud-backupd
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: backupd
+spec:
+  # Single replica for v1: the worker holds per-run repo state and maintenance
+  # ownership (phase-0-findings.md Spike 2). Scaling out needs coordination and
+  # is out of scope for Phase 1.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencloud-backup
+      app.kubernetes.io/component: backupd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opencloud-backup
+        app.kubernetes.io/component: backupd
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: backupd
+        # Image is built and pushed by CI; tag is set at deploy time.
+        image: ghcr.io/knoppiks/opencloud-backupd:latest
+        imagePullPolicy: IfNotPresent
+        args: [ "/backupd" ]
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: BACKUPD_ADDR
+          value: ":8080"
+        envFrom:
+        - configMapRef:
+            name: opencloud-backup-bootstrap-target
+        # Wrapping keys (SRW + TW) and the OC service-account credentials are
+        # injected from Secrets in a later phase; the placeholder Secret exists
+        # now (secret-wrap-keys.yaml -> opencloud-backup-wrap-keys). Target S3
+        # credentials are NOT injected here — they are admin-entered and stored
+        # TW-wrapped in the app (decisions.md #12/#14). Never echo secrets to logs.
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 2
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ "ALL" ]
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      # kopia connect writes a local config + cache per run; a writable tmp is
+      # required since the root filesystem is read-only
+      # (phase-0-findings.md Spike 2, "Repo connect is stateful on local disk").
+      - name: tmp
+        emptyDir: { }

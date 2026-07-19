@@ -16,8 +16,8 @@ services:
     container_name: opencloud-fixture
     # `entrypoint: opencloud` + no command == `server`.
     ports:
-      - "9200:9200"
-      - "9142:9142"
+    - "9200:9200"
+    - "9142:9142"
     environment:
       OC_INSECURE: "true"
       PROXY_HTTP_ADDR: "0.0.0.0:9200"
@@ -28,12 +28,12 @@ services:
       PROXY_ENABLE_BASIC_AUTH: "true"
       OC_LOG_LEVEL: "error"
     volumes:
-      - ./config:/etc/opencloud
-      - ./data:/var/lib/opencloud
-      # Web extensions (Spike 4 / Phase 8) are served from here.
-      - ./apps:/var/lib/opencloud/web/assets/apps
+    - ./config:/etc/opencloud
+    - ./data:/var/lib/opencloud
+    # Web extensions (Spike 4 / Phase 8) are served from here.
+    - ./apps:/var/lib/opencloud/web/assets/apps
     healthcheck:
-      test: ["CMD", "curl", "-fsSk", "https://localhost:9200/graph/v1.0/me", "-o", "/dev/null"]
+      test: [ "CMD", "curl", "-fsSk", "https://localhost:9200/graph/v1.0/me", "-o", "/dev/null" ]
       interval: 5s
       timeout: 5s
       retries: 30

@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync with go.mod's toolchain pin.
+  GO_VERSION: "1.26.0"
+
+jobs:
+  build-test:
+    name: build / vet / lint / test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: go build
+      run: go build ./...
+
+    - name: go vet
+      run: go vet ./...
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: v2.12.2
+
+    - name: go test (race)
+      run: go test -race ./...
+
+  integration:
+    name: integration (Garage fixture)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    # testcontainers-go drives Docker, which is preinstalled on ubuntu-latest.
+    - name: go test -tags integration
+      run: go test -tags integration ./...
+
+  static-binary:
+    name: static binary artifact
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    # Success metric 1 (decisions.md): a single static Go binary.
+    - name: build static backupd
+      env:
+        CGO_ENABLED: "0"
+      run: go build -trimpath -ldflags "-s -w" -o dist/backupd ./cmd/backupd
+
+    - name: verify static
+      run: |
+        file dist/backupd
+        if ldd dist/backupd 2>&1 | grep -qv 'not a dynamic executable'; then
+          echo "backupd is not statically linked" >&2
+          exit 1
+        fi
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: backupd-static
+        path: dist/backupd
+        if-no-files-found: error
+
+  manifests:
+    name: k8s manifests (kubeconform)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    # Offline schema validation of the /deploy manifests. `kubectl apply
+    # --dry-run=client` needs a reachable API server for REST mappings, so CI
+    # uses kubeconform (schema-only, no cluster) as the equivalent check.
+    - name: install kubeconform
+      run: |
+        curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+          | tar -xz kubeconform
+        sudo mv kubeconform /usr/local/bin/
+
+    - name: validate manifests
+      run: kubeconform -strict -summary deploy/

@@ -98,7 +98,7 @@ func TestGarageMultipart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get object: %v", err)
 	}
-	defer out.Body.Close()
+	defer func() { _ = out.Body.Close() }()
 	got, err := io.ReadAll(out.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)

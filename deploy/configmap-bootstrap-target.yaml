@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opencloud-backup-bootstrap-target
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: backupd
+data:
+  # OPTIONAL bootstrap/default target metadata.
+  #
+  # With in-app, admin-managed targets (decisions.md #12) the source of truth is
+  # the app's target store, edited via the UI. This ConfigMap is only a
+  # convenience: on first start, if the target store is empty, the service may
+  # seed a single default target from these values so a fresh deploy is usable
+  # "one click" without the admin first opening the target UI.
+  #
+  # This holds NON-SECRET metadata only. Bootstrap credentials (if the operator
+  # wants a pre-seeded target) are injected separately from a Secret and sealed
+  # with the TW key on first start — never placed here. Leave BOOTSTRAP_ENABLE
+  # "false" to skip seeding and require the admin to add targets in the UI.
+  #
+  # Garage as of the pinned version has no Object Lock / versioning
+  # (decisions.md #8); immutability is handled out-of-band (Phase 7).
+  BOOTSTRAP_ENABLE: "false"
+  BOOTSTRAP_TARGET_NAME: "Buddy-S3"
+  BOOTSTRAP_S3_ENDPOINT: "http://garage.storage.svc.cluster.local:3900"
+  BOOTSTRAP_S3_REGION: "garage"
+  BOOTSTRAP_S3_BUCKET: "opencloud-backup"
+  BOOTSTRAP_S3_USE_PATH_STYLE: "true"
+  BOOTSTRAP_S3_DISABLE_TLS: "true"

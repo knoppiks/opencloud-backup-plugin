@@ -1,0 +1,43 @@
+# golangci-lint config (schema v2). Conservative set for a young codebase;
+# tighten per phase.
+version: "2"
+
+run:
+  build-tags:
+  - integration
+
+linters:
+  enable:
+  - bodyclose
+  - misspell
+  - revive
+  settings:
+    revive:
+      rules:
+      - name: exported
+        disabled: true
+  exclusions:
+    paths:
+    # Throwaway Phase-0 spike drivers (phase-0-findings.md). Not production code.
+    - spikes/
+    rules:
+    # Skeleton packages intentionally define unused-yet interfaces/types that
+    # later phases implement. Do not fail CI on that during Phase 1.
+    - path: pkg/
+      linters:
+      - unused
+    # Phase-0 Garage fixture uses the classic s3/manager uploader; migrating to
+    # feature/s3/transfermanager is a separate, tracked decision.
+    - path: internal/testutil/
+      text: "manager.NewUploader|manager.Uploader|uploader.Upload"
+      linters:
+      - staticcheck
+
+formatters:
+  enable:
+  - gofmt
+  - goimports
+  settings:
+    goimports:
+      local-prefixes:
+      - opencloud-backup-plugin
