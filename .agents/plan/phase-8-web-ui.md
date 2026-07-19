@@ -3,17 +3,41 @@
 **Goal:** the "Backup Vault" OpenCloud Web extension. This is where "user
 clicks yes once" becomes real.
 
-**Depends on:** Phase 0 Spike 4 (extension mechanism), Phases 2/3/5/6 (APIs).
+**Depends on:** Phase 0 Spike 4 (extension mechanism), Phase 0 admin-role spike
+(client-side admin detection via the web SDK ability model; decisions.md #13),
+Phases 2/3/5/6 (APIs).
 
 ## Views / flows
 
 1. **Overview (single page, per-Space cards)**
    - Space list (from `GET /spaces`) with backup state per space:
      not configured / active / stale / failed.
-   - Target shown read-only ("Buddy-S3", admin-defined).
+   - Target shown read-only to the user (name only, from `GET /targets`;
+     admin-managed, decisions.md #12). No credentials or endpoints exposed.
+
+0. **Admin: target management (admin-only view)**
+   - Visible only when the caller is an OpenCloud admin, gated client-side by the
+     web SDK ability model (`useAbility()`; mechanism pinned by the admin-role
+     spike) **and** enforced server-side by the admin middleware (Phase 2).
+   - List / add / edit / delete targets (name, endpoint, region, bucket, prefix,
+     path-style/TLS flags).
+   - **Credential fields are write-only** (decisions.md #14): entered on
+     add/edit, never rendered back; the API never returns them. Editing a target
+     without re-entering credentials leaves the stored (wrapped) credentials
+     untouched.
+   - Grant management per target: **all users** or **specific users** (and/or
+     specific spaces). Grants drive what each user sees in `GET /targets`.
+   - This view manages targets/grants **only** — it exposes no user backup data,
+     job status for other users' spaces, or plaintext (decisions.md #15).
 
 2. **Setup wizard ("Yes, back up my data")** — the critical UX:
    1. Pick space (personal preselected).
+   1b. **Pick target** (from `GET /targets`, granted targets only): shown only
+       when the user has **more than one** granted target. With exactly one, it
+       is auto-selected and this step is skipped, preserving the "one click"
+       promise (decisions.md #12). The chosen `target_id` is sent to
+       `POST /backup/setup`; the server re-checks the grant (never trusts the
+       client).
    2. **Recovery Key ceremony (client-side):**
       - Generate RK in the browser (WebCrypto; Argon2id via wasm for the KEK).
       - Generate/wrap DK per the Phase 3 contract; **plaintext RK never leaves
@@ -56,6 +80,9 @@ clicks yes once" becomes real.
 - Unit (Vitest): wizard state machine, RK ceremony (mock WebCrypto),
   confirmation gate cannot be skipped.
 - Component: status board states (fresh/stale/failed/running) via mocked API.
+- Admin target view: renders only for an admin ability; credential fields are
+  write-only (never populated from API); non-admin never sees the view. Wizard
+  target picker: hidden with one granted target, shown with several.
 - E2E (Playwright against compose stack): full happy path — setup wizard →
   manual run → status turns green → Path B restore → file appears in
   `Restore/<ts>/`. One negative: wrong RK re-entry blocks setup.
@@ -66,6 +93,8 @@ clicks yes once" becomes real.
 ## Exit criteria
 
 - [ ] Extension loads in OpenCloud Web, nav entry visible (success metric 7).
+- [ ] Admin sees the target-management view; non-admin does not (client gate +
+      server 403). Credentials never rendered back.
 - [ ] E2E happy path green in CI.
 - [ ] Browser↔CLI crypto interop test green.
 - [ ] Plaintext RK provably never sent: network-layer assertion in E2E

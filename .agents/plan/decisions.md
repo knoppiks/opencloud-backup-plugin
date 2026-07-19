@@ -13,8 +13,10 @@ than drifting.
   family. Not enterprise. Optimize for "one click, then forget", admin-supported
   recovery, and simple mental models over feature breadth.
 - **Core promise:** a user clicks "back up my data" once; backups then run
-  **scheduled and unattended** to a pre-configured external S3 target ("Buddy
-  S3"). The admin operates backups but **never sees plaintext**.
+  **scheduled and unattended** to an external S3 target ("Buddy S3"). Targets are
+  **managed in-app by an admin** (decision #12), who grants them to all or
+  specific users. The admin operates targets/grants but **never sees plaintext**
+  and cannot reach users' backups (decision #15).
 - **Non-goals:** client↔OpenCloud sync (the normal OpenCloud clients do that;
   this backs up what is *already in* OpenCloud); enterprise scale/SLAs; HSM key
   custody.
@@ -81,6 +83,44 @@ than drifting.
     policy can be weaponized — an attacker injecting many bogus recent snapshots
     could push legitimate ones out of a "keep last N" window.
 
+11. **Unattended worker authenticates with an OpenCloud service account**
+    (`auth-service`, CS3 auth type `"serviceaccounts"`). See "Amendments from
+    Phase 0" below for the full rationale. Listed here so the locked-decision
+    numbering is contiguous.
+
+12. **Backup targets are in-app, admin-managed (not a single deploy-time
+    config).** An in-app admin creates/edits multiple S3 targets through the UI
+    and grants each to **all users** or **specific users**. This supersedes the
+    earlier "single pre-configured Buddy-S3" framing. The user experience is
+    unchanged when exactly one target is granted (it is auto-selected — "one
+    click" preserved); a picker appears only when a user has more than one.
+    Rationale: a family admin wants to point different people at different buddy
+    stores without redeploying the cluster. **Enforcement is server-side** (a
+    user sees/uses only granted targets); client input is never trusted.
+
+13. **The in-app admin identity is the OpenCloud admin role, reused — we do not
+    build our own admin user store.** Admin status is derived from OpenCloud
+    (server-side via the graph `appRoleAssignments`; client-side via the web
+    SDK's ability/CASL model). **This is validated by a Phase-0 spike** before
+    Phase 2/8 depend on it (see phase-0 admin-role spike); if graph detection
+    proves unreliable on the pinned OpenCloud version, the documented fallback is
+    an operator-provided allow-list of admin subject IDs in config.
+
+14. **Target S3 credentials are app-managed and encrypted at rest.** The admin
+    enters credentials in the UI; the app stores them **wrapped by a
+    cluster/KMS "Target-Wrap" (TW) key** — the same custody class as the SRW key
+    (K8s secret / KMS, never in the admin UI, never logged). Credential fields
+    are **write-only**: no API `GET` ever returns them, and they are decrypted
+    **only in worker memory at run time** and zeroized after use where Go allows.
+    Threat-model delta from this is recorded below.
+
+15. **Admin scope is targets + grants only.** The admin can manage targets and
+    who may use them, and nothing else. The admin gets **no plaintext, no restore
+    into a user's Space, and no visibility into or control over users' backup
+    jobs/contents for Spaces they are not a member of.** This reaffirms
+    decision #2 rather than weakening it; the admin is a *configuration* actor,
+    not a *data* actor.
+
 ---
 
 ## Still open (must be resolved in Phase 0, may amend decisions)
@@ -136,8 +176,15 @@ than drifting.
   Wraps the DK via an Argon2id-derived KEK.
 - **SRW (Server Runtime Wrap):** server-held wrapped DK enabling unattended runs;
   KEK from K8s secret / KMS.
+- **TW (Target Wrap):** a cluster/KMS-held key that wraps **S3 target
+  credentials** at rest (decision #14). Same custody class as SRW — lives in a
+  K8s secret / KMS, never in the admin UI, never logged. Distinct key from SRW so
+  the two concerns (data-key custody vs. target-credential custody) rotate
+  independently. The wrap uses the same maintained AEAD-envelope primitive as the
+  DK wraps; **no hand-rolled crypto.**
 - **Envelope format is a long-term compatibility promise** — versioned from day
-  one (the standalone decrypt CLI must parse it forever).
+  one (the standalone decrypt CLI must parse it forever). The TW-wrapped
+  credential blob is versioned for the same reason.
 
 ---
 
@@ -161,6 +208,23 @@ Why we are still protected:
 **Secondary threat: server/cluster compromise** leaking S3 credentials (and
 possibly the prune key). Less likely in the family scenario; addressed by
 immutability Tiers 2/3.
+
+**Secondary-threat delta from in-app target management (decisions #12/#14):**
+moving target credentials into an app-managed store widens this threat: one
+database compromise could expose *all* targets' credentials instead of custody
+being limited to K8s secrets. Mitigations that keep the delta acceptable:
+
+- The database stores **only ciphertext** (TW-wrapped credential blobs). The TW
+  key itself stays in the cluster secret / KMS, **not** in the database, so a
+  stolen database alone does not yield plaintext credentials.
+- Credentials are **write-only** across the API and UI (decision #14): never
+  returned by any read path, so an admin-session or API compromise cannot
+  exfiltrate existing credentials, only overwrite them.
+- Plaintext credentials exist **only in worker memory at run time** and are
+  zeroized after use where Go allows; they are never logged.
+- The blast radius is still bounded by immutability Tiers 2/3 (a leaked S3
+  **write** credential cannot rewrite history when prune/GC runs from a separate
+  trusted context with the owner key).
 
 ---
 

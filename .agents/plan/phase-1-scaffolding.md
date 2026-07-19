@@ -40,8 +40,11 @@ layout does not depend on spike outcomes; the `/pkg/snapshot` internals do).
 
 4. **K8s manifests (skeleton)** under `/deploy/`:
    - Deployment for `backupd`.
-   - Secret: SRW-wrapping key (placeholder, generation documented).
-   - ConfigMap: S3 target (endpoint, bucket, region `garage`).
+   - Secret: SRW- and TW-wrapping keys (placeholders, generation documented).
+     Target S3 credentials are **not** here — they are admin-managed and stored
+     TW-wrapped in the app (decisions.md #12/#14).
+   - ConfigMap: optional bootstrap/default target metadata (non-secret only;
+     `BOOTSTRAP_ENABLE` gates first-start seeding).
    - No ingress/auth details yet (Phase 2).
 
 5. **Dev environment**

@@ -27,9 +27,14 @@ choice is swappable.
 ### Run flow (`/pkg/snapshot` + orchestration)
 
 1. Resolve Space + check backup configured (keys exist).
+1b. Resolve the Space's **target** and open its credentials in memory:
+    `targets.Store.GetTarget` → `targets.CredSealer.Open` (TW-unwrap;
+    decisions.md #12/#14). Plaintext credentials live only in memory for this run
+    and are zeroized after use; never logged.
 2. Unwrap DK via SRW (in memory only).
-3. Connect/open kopia repo `s3://bucket/spaces/<space-id>/` (create on first
-   run; repo password = DK).
+3. Connect/open kopia repo on the resolved target,
+   `s3://<bucket>/<prefix>/spaces/<space-id>/` (create on first run; repo
+   password = DK).
 4. Snapshot the Space source (mtime + structure preserved; files only —
    decisions.md #4 scope).
 5. Apply retention: **time-based `keep-within`** policy (configurable, deep
