@@ -39,6 +39,31 @@ spec:
         env:
         - name: BACKUPD_ADDR
           value: ":8080"
+        # Phase 2 — auth & space enumeration.
+        # OIDC: the backend validates OpenCloud IDP bearer tokens (JWKS discovery
+        # from the issuer). OIDC_AUDIENCE is optional (enforced only when set).
+        - name: OIDC_ISSUER
+          value: "https://cloud.example.org"
+        # - name: OIDC_AUDIENCE
+        #   value: "backup-api"
+        # Admin detection (decisions.md #13). Primary: graph appRoleAssignments —
+        # set OC_BASE_URL; OC_ADMIN_APP_ROLE_ID defaults to the pinned 7.3.0 Admin
+        # role id (phase-0-findings.md) and only needs overriding on other builds.
+        # Fallback: set ADMIN_SUBJECT_ALLOWLIST (comma-separated subs) instead.
+        - name: OC_BASE_URL
+          value: "https://cloud.example.org"
+        # - name: OC_ADMIN_APP_ROLE_ID
+        #   value: "71881883-1768-46bd-a24d-a356a2afdf7f"
+        # - name: ADMIN_SUBJECT_ALLOWLIST
+        #   value: ""
+        # CS3 read path (decisions.md #11). The service-account id/secret come
+        # from a Secret in the scheduler phase; wired here so /spaces works.
+        - name: CS3_GATEWAY_ADDR
+          value: "opencloud-gateway:9142"
+        # - name: OC_SERVICE_ACCOUNT_ID
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: service-account-id } }
+        # - name: OC_SERVICE_ACCOUNT_SECRET
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: service-account-secret } }
         envFrom:
         - configMapRef:
             name: opencloud-backup-bootstrap-target
@@ -61,8 +86,9 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 10
         readinessProbe:
+          # /readyz probes the CS3 gateway (Phase 2); 503 until it is reachable.
           httpGet:
-            path: /healthz
+            path: /readyz
             port: http
           initialDelaySeconds: 2
           periodSeconds: 10

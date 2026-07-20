@@ -101,10 +101,13 @@ than drifting.
 13. **The in-app admin identity is the OpenCloud admin role, reused — we do not
     build our own admin user store.** Admin status is derived from OpenCloud
     (server-side via the graph `appRoleAssignments`; client-side via the web
-    SDK's ability/CASL model). **This is validated by a Phase-0 spike** before
-    Phase 2/8 depend on it (see phase-0 admin-role spike); if graph detection
-    proves unreliable on the pinned OpenCloud version, the documented fallback is
-    an operator-provided allow-list of admin subject IDs in config.
+    SDK's ability/CASL model). **Validated by the Phase-0 admin-role spike**
+    (see `phase-0-findings.md`): on 7.3.0 the OIDC token carries no role claim,
+    so detection uses `GET /graph/v1.0/me?$expand=appRoleAssignments` and maps the
+    Admin app-role id (`71881883-1768-46bd-a24d-a356a2afdf7f`, configurable) →
+    admin. Graph detection proved reliable; the fallback (operator-provided
+    allow-list of admin subject IDs in config) is still implemented in Phase 2 as
+    an alternative resolver. The client-side CASL gate is deferred to Phase 8.
 
 14. **Target S3 credentials are app-managed and encrypted at rest.** The admin
     enters credentials in the UI; the app stores them **wrapped by a
