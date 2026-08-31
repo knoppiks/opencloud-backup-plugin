@@ -8,8 +8,11 @@ not the enterprise. A user clicks "back up my data" once; backups then run
 automatically to an external S3 target. The admin can operate and recover
 backups **without ever seeing the plaintext content** of a user's data.
 
-> Status: **planning / pre-implementation.** No runnable code yet. The design and
-> phased roadmap live in [`.agents/plan/`](.agents/plan/).
+> Status: **in development.** The backup pipeline works end to end — a seeded
+> OpenCloud Space is snapshotted, encrypted and deduplicated onto an S3 target
+> and restores byte-identically. Restore CLIs, scheduling and the Web UI are
+> still to come. The design and phased roadmap live in
+> [`.agents/plan/`](.agents/plan/).
 
 ## What it does
 

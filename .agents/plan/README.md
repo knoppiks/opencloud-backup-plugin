@@ -31,6 +31,10 @@ target store, access grants, and at-rest credential encryption (TW key) live in
 `pkg/targets`; admin identity reuses OpenCloud's admin role (validated by the
 admin-role spike). See the per-phase docs for where each piece is implemented.
 
+**Which target a Space uses** is the user's choice, not the admin's, so the
+binding lives separately in `pkg/spacecfg` (target id + time-based retention
+window). It is only stored after a server-side grant check.
+
 ## Rules that apply to every phase
 
 - **Untested code is incomplete.** Every phase ships unit tests; integration
@@ -60,3 +64,5 @@ admin-role spike). See the per-phase docs for where each piece is implemented.
 - **Path B** — user-triggered full restore into `Restore/<ts>/` via GUI.
 - **Space** — oCIS storage space; unit of backup, keying, and scheduling.
 - **Garage** — S3-compatible target store (no Object Lock/versioning today).
+- **Repo layout** — one kopia repository per Space, at
+  `s3://<bucket>/<prefix>spaces/<space-id>/`.

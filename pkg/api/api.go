@@ -16,7 +16,9 @@ import (
 	"net/http"
 
 	"opencloud-backup-plugin/pkg/cs3"
+	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
+	"opencloud-backup-plugin/pkg/spacecfg"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -35,6 +37,12 @@ type Server struct {
 	// plaintext DK or RK is ever stored or returned (decisions.md, Phase 3).
 	keyStore keys.Store
 	srw      srwWrapper
+
+	// spaceConfigs holds each Space's target binding and retention window;
+	// runner triggers backup runs; jobStore serves the run history (Phase 4).
+	spaceConfigs spacecfg.Store
+	runner       backupRunner
+	jobStore     jobs.Store
 
 	// ready reports readiness for GET /readyz; defaults to always-ready.
 	ready func(context.Context) error
@@ -61,6 +69,18 @@ func WithKeyStore(st keys.Store) Option { return func(s *Server) { s.keyStore = 
 // WithSRWWrapper sets the Server Runtime Wrap holder used at key setup. It is
 // satisfied by *keys.SRWWrapper.
 func WithSRWWrapper(w srwWrapper) Option { return func(s *Server) { s.srw = w } }
+
+// WithSpaceConfigStore sets the per-Space backup configuration store.
+func WithSpaceConfigStore(st spacecfg.Store) Option {
+	return func(s *Server) { s.spaceConfigs = st }
+}
+
+// WithBackupRunner sets the worker that executes backup runs. It is satisfied
+// by *backup.Runner.
+func WithBackupRunner(r backupRunner) Option { return func(s *Server) { s.runner = r } }
+
+// WithJobStore sets the job store backing the run-history endpoint.
+func WithJobStore(st jobs.Store) Option { return func(s *Server) { s.jobStore = st } }
 
 // WithReadiness sets the readiness probe for GET /readyz.
 func WithReadiness(fn func(context.Context) error) Option {
@@ -101,6 +121,13 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/spaces/{id}/backup/setup", authed(s.handleKeySetup))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/keystatus", authed(s.handleKeyStatus))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/recovery-envelope", authed(s.handleRecoveryEnvelope))
+
+	// Backup configuration and runs (Phase 4). Space-scoped and member-gated;
+	// the target binding is validated against server-side grants.
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/config", authed(s.handleGetBackupConfig))
+	s.mux.Handle("PUT /api/v1/spaces/{id}/backup/config", authed(s.handlePutBackupConfig))
+	s.mux.Handle("POST /api/v1/spaces/{id}/backup/run", authed(s.handleRunBackup))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs", authed(s.handleListRuns))
 
 	// Admin API scaffold: Authenticate -> ResolveAdmin -> RequireAdmin. The
 	// concrete admin target/grant endpoints are added in the target-store phase;

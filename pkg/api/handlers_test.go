@@ -22,8 +22,11 @@ type fakeSpaceReader struct {
 func (f fakeSpaceReader) ListSpaces(context.Context) ([]cs3.Space, error) {
 	return f.spaces, f.err
 }
+func (f fakeSpaceReader) ListDir(context.Context, cs3.Space, string) ([]cs3.Entry, error) {
+	return nil, nil
+}
 func (f fakeSpaceReader) Walk(context.Context, cs3.Space, func(cs3.Entry) error) error { return nil }
-func (f fakeSpaceReader) OpenFile(context.Context, cs3.Space, string) (io.ReadCloser, error) {
+func (f fakeSpaceReader) OpenFile(context.Context, cs3.Space, string, int64) (io.ReadCloser, error) {
 	return nil, errors.New("not used")
 }
 

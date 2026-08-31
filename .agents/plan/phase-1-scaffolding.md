@@ -15,12 +15,19 @@ layout does not depend on spike outcomes; the `/pkg/snapshot` internals do).
    /pkg/api/            # HTTP handlers, DTOs (chi or stdlib mux)
    /pkg/cs3/            # CS3 gateway client wrapper (interface + impl)
    /pkg/keys/           # DK/RK/SRW key service
+   /pkg/targets/        # admin-managed S3 targets, grants, TW cred sealing
+   /pkg/spacecfg/       # per-Space backup config (target binding, retention)
    /pkg/snapshot/       # kopia wrapper (repo-per-space lifecycle)
+   /pkg/backup/         # run orchestration (CS3 -> snapshot -> target)
    /pkg/s3target/       # Garage/S3 config, capability probe
    /pkg/scheduler/      # per-space cron scheduling
-   /pkg/jobs/           # job/state store
+   /pkg/jobs/           # job/state store + per-Space run lock
    /internal/testutil/  # Garage fixture, fake CS3, clock
    ```
+
+   `/pkg/targets` was added in Phase 2 (decisions.md #12–#15); `/pkg/spacecfg`
+   and `/pkg/backup` in Phase 4. `/pkg/spacecfg` is deliberately separate from
+   `/pkg/targets`: targets are admin-owned, the binding is user-owned.
 
    `/cmd` binaries stay thin; all logic in packages, wired via constructor
    injection (testability rule).
