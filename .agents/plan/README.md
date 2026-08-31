@@ -4,6 +4,9 @@ Per-phase planning documents.
 
 - **[decisions.md](decisions.md)** is the canonical record of locked decisions,
   the trust/key model, threat model, and success criteria. Read it first.
+- **[key-envelope-format.md](key-envelope-format.md)** specifies the key-envelope
+  and Recovery-Key wire formats. It is a **long-term compatibility promise**: the
+  standalone decrypt CLI must parse every version forever.
 - The per-phase docs below break each phase into concrete deliverables, tasks,
   and exit criteria.
 

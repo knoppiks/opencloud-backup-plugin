@@ -64,6 +64,15 @@ spec:
         #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: service-account-id } }
         # - name: OC_SERVICE_ACCOUNT_SECRET
         #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: service-account-secret } }
+        # Phase 3 — key service. The Server Runtime Wrap key wraps per-Space Data
+        # Keys so unattended runs are possible (decisions.md #1). Base64 of 32
+        # random bytes. Cluster/KMS custody: never in the admin UI, never logged.
+        # Without it the backup key endpoints stay unavailable (fail closed).
+        - name: SRW_KEY
+          valueFrom:
+            secretKeyRef:
+              name: opencloud-backup-wrap-keys
+              key: srw-wrapping-key
         envFrom:
         - configMapRef:
             name: opencloud-backup-bootstrap-target

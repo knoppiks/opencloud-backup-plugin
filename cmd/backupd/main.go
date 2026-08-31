@@ -6,7 +6,9 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,6 +23,7 @@ import (
 
 	"opencloud-backup-plugin/pkg/api"
 	"opencloud-backup-plugin/pkg/cs3"
+	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -131,6 +134,25 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 	store := targets.NewMemoryStore()
 	opts = append(opts, api.WithAuthorizer(store))
 
+	// --- key service (Phase 3) -------------------------------------------
+	// The SRW key is cluster/KMS custody (decisions.md #1): it arrives via a
+	// Secret-backed env var, is used to wrap/unwrap DKs, and is NEVER logged.
+	// Without it the backup key endpoints stay unavailable rather than running
+	// in a degraded, insecure mode.
+	if srwKey, err := loadWrapKey("SRW_KEY"); err != nil {
+		return nil, cleanup, err
+	} else if srwKey != nil {
+		wrapper, err := keys.NewSRWWrapper(srwKey)
+		keys.Zeroize(srwKey)
+		if err != nil {
+			return nil, cleanup, err
+		}
+		opts = append(opts, api.WithKeyStore(keys.NewMemoryStore()), api.WithSRWWrapper(wrapper))
+		logger.Info("key service enabled")
+	} else {
+		logger.Warn("SRW_KEY unset; backup key endpoints will be unavailable")
+	}
+
 	// --- readiness --------------------------------------------------------
 	opts = append(opts, api.WithReadiness(readiness(spaceReader)))
 
@@ -148,6 +170,27 @@ func readiness(reader cs3.SpaceReader) func(context.Context) error {
 		_, err := reader.ListSpaces(probeCtx)
 		return err
 	}
+}
+
+// loadWrapKey reads a base64-encoded 256-bit wrapping key (SRW or TW) from the
+// environment. It returns (nil, nil) when unset so the caller can decide whether
+// the feature is optional.
+//
+// The key value itself is never logged, and errors deliberately describe only
+// the shape of the problem, never the value (AGENTS.md: never log key material).
+func loadWrapKey(envVar string) ([]byte, error) {
+	raw := os.Getenv(envVar)
+	if raw == "" {
+		return nil, nil
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, fmt.Errorf("%s must be base64-encoded", envVar)
+	}
+	if len(key) != keys.SRWKeySize {
+		return nil, fmt.Errorf("%s must decode to %d bytes", envVar, keys.SRWKeySize)
+	}
+	return key, nil
 }
 
 func httpClient() *http.Client { return &http.Client{Timeout: 15 * time.Second} }
