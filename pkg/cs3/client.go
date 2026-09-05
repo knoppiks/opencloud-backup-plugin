@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"path"
 	"strings"
 
 	gateway "github.com/cs3org/go-cs3apis/cs3/gateway/v1beta1"
@@ -22,8 +24,17 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// TokenHeader is reva's access-token gRPC metadata key (pkg/ctx.TokenHeader).
-const TokenHeader = "x-access-token"
+const (
+	// TokenHeader is reva's access-token gRPC metadata key (pkg/ctx.TokenHeader).
+	// The same header name is used on the data-gateway HTTP request.
+	TokenHeader = "x-access-token"
+	// TransferHeader carries the per-download transfer token returned by
+	// InitiateFileDownload (phase-0-findings.md Spike 3, step 7).
+	TransferHeader = "X-Reva-Transfer"
+	// preferredDownloadProtocol is the protocol name OpenCloud returns for
+	// spaces-based downloads; any other protocol is accepted as a fallback.
+	preferredDownloadProtocol = "spaces"
+)
 
 // GatewayClient is the subset of the CS3 gateway API the reader uses. The
 // generated gateway.GatewayAPIClient satisfies it; tests provide a fake.
@@ -88,11 +99,32 @@ func (a StaticTokenAuth) Token(_ context.Context) (string, error) {
 type Client struct {
 	gw   GatewayClient
 	auth Authenticator
+	http *http.Client
+}
+
+var _ SpaceReader = (*Client)(nil)
+
+// ClientOption configures a Client.
+type ClientOption func(*Client)
+
+// WithHTTPClient sets the HTTP client used to stream file bytes from the reva
+// data gateway. Injected so deployments can supply their own TLS/proxy config
+// and tests can point at an httptest server.
+func WithHTTPClient(h *http.Client) ClientOption {
+	return func(c *Client) {
+		if h != nil {
+			c.http = h
+		}
+	}
 }
 
 // NewClient builds a Client from an injected gateway and authenticator.
-func NewClient(gw GatewayClient, auth Authenticator) *Client {
-	return &Client{gw: gw, auth: auth}
+func NewClient(gw GatewayClient, auth Authenticator, opts ...ClientOption) *Client {
+	c := &Client{gw: gw, auth: auth, http: http.DefaultClient}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // authContext attaches a freshly minted access token to ctx as gRPC metadata.
@@ -129,46 +161,67 @@ func (c *Client) ListSpaces(ctx context.Context) ([]Space, error) {
 	return spaces, nil
 }
 
-// Walk visits every entry under the space root (phase-2 keeps the interface;
-// full traversal is exercised by the snapshot pipeline in Phase 4). It performs
-// a depth-first walk via ListContainer.
+// ListDir returns the direct children of one space-relative directory via
+// ListContainer. relDir is space-relative with no leading "./"; the empty string
+// denotes the space root.
+func (c *Client) ListDir(ctx context.Context, space Space, relDir string) ([]Entry, error) {
+	authCtx, _, err := c.authContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.listDir(authCtx, space, cleanRel(relDir))
+}
+
+// listDir performs the ListContainer call on an already-authenticated context.
+func (c *Client) listDir(ctx context.Context, space Space, relDir string) ([]Entry, error) {
+	res, err := c.gw.ListContainer(ctx, &provider.ListContainerRequest{
+		Ref: reference(space, relDir),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cs3 list container: %w", err)
+	}
+	if err := statusErr(res.GetStatus(), "ListContainer"); err != nil {
+		return nil, err
+	}
+
+	infos := res.GetInfos()
+	entries := make([]Entry, 0, len(infos))
+	for _, info := range infos {
+		name := baseName(info.GetPath())
+		if name == "" || name == "." {
+			continue
+		}
+		entries = append(entries, Entry{
+			Path:      path.Join(relDir, name),
+			IsDir:     info.GetType() == provider.ResourceType_RESOURCE_TYPE_CONTAINER,
+			Size:      int64(info.GetSize()),
+			MTimeUnix: int64(info.GetMtime().GetSeconds()),
+		})
+	}
+	return entries, nil
+}
+
+// Walk visits every entry under the space root depth-first, calling fn for each.
+// A directory is reported before its children.
 func (c *Client) Walk(ctx context.Context, space Space, fn func(Entry) error) error {
 	authCtx, _, err := c.authContext(ctx)
 	if err != nil {
 		return err
 	}
-	return c.walk(authCtx, space, ".", fn)
+	return c.walk(authCtx, space, "", fn)
 }
 
 func (c *Client) walk(ctx context.Context, space Space, relDir string, fn func(Entry) error) error {
-	ref := &provider.Reference{
-		ResourceId: spaceRootID(space),
-		Path:       relDir,
-	}
-	res, err := c.gw.ListContainer(ctx, &provider.ListContainerRequest{Ref: ref})
+	entries, err := c.listDir(ctx, space, relDir)
 	if err != nil {
-		return fmt.Errorf("cs3 list container: %w", err)
-	}
-	if err := statusErr(res.GetStatus(), "ListContainer"); err != nil {
 		return err
 	}
-	for _, info := range res.GetInfos() {
-		rel := "./" + strings.TrimPrefix(baseName(info.GetPath()), "/")
-		if relDir != "." {
-			rel = strings.TrimSuffix(relDir, "/") + "/" + baseName(info.GetPath())
-		}
-		isDir := info.GetType() == provider.ResourceType_RESOURCE_TYPE_CONTAINER
-		e := Entry{
-			Path:      rel,
-			IsDir:     isDir,
-			Size:      int64(info.GetSize()),
-			MTimeUnix: int64(info.GetMtime().GetSeconds()),
-		}
+	for _, e := range entries {
 		if err := fn(e); err != nil {
 			return err
 		}
-		if isDir {
-			if err := c.walk(ctx, space, rel, fn); err != nil {
+		if e.IsDir {
+			if err := c.walk(ctx, space, e.Path, fn); err != nil {
 				return err
 			}
 		}
@@ -176,19 +229,30 @@ func (c *Client) walk(ctx context.Context, space Space, relDir string, fn func(E
 	return nil
 }
 
-// OpenFile streams one space-relative file. The reference is built from the
-// space root plus relative path — a bare file id fails (phase-0-findings Spike
-// 3, "Critical gotcha"). Full streaming (data-gateway HTTP GET) is wired in
-// Phase 4; Phase 2 only needs the read-model boundary, so this returns a clear
-// not-yet-implemented error rather than a partial download path.
-func (c *Client) OpenFile(ctx context.Context, space Space, relPath string) (io.ReadCloser, error) {
-	authCtx, _, err := c.authContext(ctx)
+// OpenFile streams one space-relative file starting at offset. The CS3 reference
+// is built from the space root plus relative path — a bare file id fails
+// (phase-0-findings.md Spike 3, "Critical gotcha").
+//
+// InitiateFileDownload yields a data-gateway URL plus a transfer token; the
+// bytes are then fetched over HTTP carrying both the worker access token and the
+// transfer token (Spike 3, steps 6–7). A non-zero offset is requested with a
+// Range header and, if the gateway ignores it, satisfied by discarding the
+// leading bytes so callers always observe the requested position.
+func (c *Client) OpenFile(ctx context.Context, space Space, relPath string, offset int64) (io.ReadCloser, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("cs3 open file: negative offset")
+	}
+	rel := cleanRel(relPath)
+	if rel == "" {
+		return nil, fmt.Errorf("cs3 open file: empty path")
+	}
+
+	authCtx, token, err := c.authContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rel := "./" + strings.TrimPrefix(relPath, "/")
 	res, err := c.gw.InitiateFileDownload(authCtx, &provider.InitiateFileDownloadRequest{
-		Ref: &provider.Reference{ResourceId: spaceRootID(space), Path: rel},
+		Ref: reference(space, rel),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("cs3 initiate download: %w", err)
@@ -196,9 +260,69 @@ func (c *Client) OpenFile(ctx context.Context, space Space, relPath string) (io.
 	if err := statusErr(res.GetStatus(), "InitiateFileDownload"); err != nil {
 		return nil, err
 	}
-	// The HTTP data-gateway streaming step (x-access-token + x-reva-transfer)
-	// belongs to the Phase-4 pipeline; keep the boundary honest here.
-	return nil, fmt.Errorf("cs3 open file: streaming not implemented until phase 4")
+	endpoint, transfer := pickDownloadProtocol(res.GetProtocols())
+	if endpoint == "" {
+		return nil, fmt.Errorf("cs3 initiate download: no download endpoint returned")
+	}
+
+	return c.stream(ctx, endpoint, token, transfer, offset)
+}
+
+// stream performs the data-gateway GET and returns the body positioned at
+// offset. It never includes tokens in error messages.
+func (c *Client) stream(ctx context.Context, endpoint, accessToken, transferToken string, offset int64) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cs3 download request: %w", err)
+	}
+	req.Header.Set(TokenHeader, accessToken)
+	if transferToken != "" {
+		req.Header.Set(TransferHeader, transferToken)
+	}
+	if offset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cs3 download: %w", err)
+	}
+	switch resp.StatusCode {
+	case http.StatusPartialContent:
+		// Server honoured the range; body already starts at offset.
+		return resp.Body, nil
+	case http.StatusOK:
+		if offset == 0 {
+			return resp.Body, nil
+		}
+		// Range ignored: skip forward so the caller's contract still holds.
+		if _, err := io.CopyN(io.Discard, resp.Body, offset); err != nil {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("cs3 download: seek to offset %d: %w", offset, err)
+		}
+		return resp.Body, nil
+	default:
+		_ = resp.Body.Close()
+		// Status only — the response body may echo internal detail.
+		return nil, fmt.Errorf("cs3 download: unexpected status %d", resp.StatusCode)
+	}
+}
+
+// pickDownloadProtocol selects the spaces protocol when offered, else the first
+// protocol advertising an endpoint.
+func pickDownloadProtocol(protocols []*gateway.FileDownloadProtocol) (endpoint, transferToken string) {
+	for _, p := range protocols {
+		if p.GetDownloadEndpoint() == "" {
+			continue
+		}
+		if p.GetProtocol() == preferredDownloadProtocol {
+			return p.GetDownloadEndpoint(), p.GetToken()
+		}
+		if endpoint == "" {
+			endpoint, transferToken = p.GetDownloadEndpoint(), p.GetToken()
+		}
+	}
+	return endpoint, transferToken
 }
 
 // toSpace maps a CS3 StorageSpace into our model, extracting membership from the
@@ -209,9 +333,19 @@ func toSpace(s *provider.StorageSpace) Space {
 		Name:    s.GetName(),
 		Type:    s.GetSpaceType(),
 		Owner:   s.GetOwner().GetId().GetOpaqueId(),
+		Root:    toResourceID(s.GetRoot()),
 		Members: parseMembers(s),
 	}
 	return sp
+}
+
+// toResourceID copies the space root triple verbatim.
+func toResourceID(id *provider.ResourceId) ResourceID {
+	return ResourceID{
+		StorageID: id.GetStorageId(),
+		SpaceID:   id.GetSpaceId(),
+		OpaqueID:  id.GetOpaqueId(),
+	}
 }
 
 // parseMembers reads the space's Opaque "grants" map into principal->role. The
@@ -260,17 +394,59 @@ func roleLabel(v json.RawMessage) string {
 	return string(v)
 }
 
-func spaceRootID(space Space) *provider.ResourceId {
-	// OpenCloud space ids are composite (storageid$spaceid!opaqueid). Phase 2
-	// only surfaces the id via ListSpaces; the Walk/OpenFile data path (Phase 4)
-	// needs a correctly split ResourceId, so this reconstruction is a Phase-4
-	// refinement — it is not exercised by the Phase-2 read model. For now we keep
-	// the composite id in all parts as a best-effort placeholder.
-	return &provider.ResourceId{
-		StorageId: space.ID,
-		SpaceId:   space.ID,
-		OpaqueId:  space.ID,
+// reference builds the space-relative CS3 reference the data path requires: the
+// space root resource id plus a reva-style relative path ("." for the root,
+// "./sub/file" otherwise). A bare resource-id reference resolves to "/" on the
+// data server and fails (phase-0-findings.md Spike 3, "Critical gotcha").
+func reference(space Space, rel string) *provider.Reference {
+	p := "."
+	if rel != "" {
+		p = "./" + rel
 	}
+	return &provider.Reference{
+		ResourceId: spaceRootID(space),
+		Path:       p,
+	}
+}
+
+// spaceRootID returns the space root resource id. OpenCloud space ids are
+// composite (storageid$spaceid[!opaqueid]); when the gateway did not surface a
+// root triple we split the composite id rather than guessing.
+func spaceRootID(space Space) *provider.ResourceId {
+	if !space.Root.Zero() {
+		return &provider.ResourceId{
+			StorageId: space.Root.StorageID,
+			SpaceId:   space.Root.SpaceID,
+			OpaqueId:  space.Root.OpaqueID,
+		}
+	}
+	storageID, spaceID, opaqueID := splitSpaceID(space.ID)
+	return &provider.ResourceId{StorageId: storageID, SpaceId: spaceID, OpaqueId: opaqueID}
+}
+
+// splitSpaceID decomposes "storageid$spaceid!opaqueid". Missing components fall
+// back to the space id itself, which is what a single-segment id means.
+func splitSpaceID(id string) (storageID, spaceID, opaqueID string) {
+	storageID, spaceID = id, id
+	if i := strings.Index(id, "$"); i >= 0 {
+		storageID, spaceID = id[:i], id[i+1:]
+	}
+	opaqueID = spaceID
+	if i := strings.Index(spaceID, "!"); i >= 0 {
+		spaceID, opaqueID = spaceID[:i], spaceID[i+1:]
+	}
+	return storageID, spaceID, opaqueID
+}
+
+// cleanRel normalises a space-relative path to slash-separated form with no
+// leading "./" or "/" and no trailing slash. The empty string means the root.
+func cleanRel(rel string) string {
+	rel = strings.TrimPrefix(rel, "./")
+	rel = strings.Trim(rel, "/")
+	if rel == "" || rel == "." {
+		return ""
+	}
+	return path.Clean(rel)
 }
 
 func statusErr(st *rpc.Status, op string) error {

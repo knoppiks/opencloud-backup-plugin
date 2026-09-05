@@ -168,6 +168,53 @@ than drifting.
   space grants via the `ListStorageSpaces` opaque map; no separate sharing API
   needed.
 
+### Amendments from Phase 4
+
+These refine *how* locked decisions are implemented; none reopens one.
+
+- **CS3 → kopia uses a virtual filesystem, not a staging directory**
+  (phase-4 "Option B"). kopia's `fs` interfaces are implemented directly over
+  CS3, so no Space is ever staged on disk. Files are exposed as **`fs.File`**
+  rather than `fs.StreamingFile`, because kopia's cache-hit check skips the size
+  comparison for streaming files — a content change that preserved mtime would
+  otherwise be silently missed. This couples us to a non-guaranteed kopia API,
+  so kopia stays pinned and the adapter is thin and behaviour-tested.
+
+- **Decision #10, implementation hardened.** It is not enough to *not call*
+  kopia's count-based retention: the uploader applies it automatically while
+  checkpointing long runs. Every backup therefore pins a source-level retention
+  policy with all counters set to zero, which kopia interprets as "keep
+  everything". Expiry happens exclusively in the separate prune job, by
+  time-based `keep-within`.
+
+- **Prune never deletes the newest snapshot**, even when it is older than the
+  retention window. A Space whose backups stopped must not silently lose its last
+  copy. Retention depth is the protection (threat model); zero copies is not a
+  retention outcome anyone asked for.
+
+- **A partially-read Space is a failed run, not a thin backup.** kopia records
+  per-entry read failures in the manifest and still returns success. We reject
+  such a manifest and do **not** persist it, so a run that could not read every
+  file is reported as failed rather than producing a snapshot that silently
+  omits data. The error carries counts only, never the failing paths.
+
+- **The Space→target binding is user-owned and lives in `pkg/spacecfg`,**
+  separate from the admin-owned `pkg/targets`. A binding is only stored after a
+  server-side grant check (`targets.Authorizer.MayUse`); a client-supplied target
+  id is never trusted, and "not granted" is indistinguishable from "no such
+  target". This keeps decision #12's enforcement boundary explicit in the
+  package layout.
+
+- **Optional first-start seeding of one default target** (`targets.Bootstrap`,
+  disabled by default). It only runs when the target store is empty, so it can
+  never override admin configuration, and the seeded credentials are TW-sealed
+  exactly like admin-entered ones (#14). Rationale: preserve "one click, then
+  forget" on a fresh deployment before the admin UI (Phase 8) exists.
+
+- **Ownership is skipped on restore.** Permissions and ownership are out of
+  backup scope (#4) and the virtual source carries no real uid/gid, so restoring
+  ownership would only attempt — and fail — a chown to root.
+
 ---
 
 ## Trust & key model

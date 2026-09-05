@@ -56,8 +56,9 @@ spec:
         #   value: "71881883-1768-46bd-a24d-a356a2afdf7f"
         # - name: ADMIN_SUBJECT_ALLOWLIST
         #   value: ""
-        # CS3 read path (decisions.md #11). The service-account id/secret come
-        # from a Secret in the scheduler phase; wired here so /spaces works.
+        # CS3 read path (decisions.md #11). The worker authenticates with an
+        # OpenCloud service account; the id/secret are Secret-backed and are the
+        # same custody class as the wrapping keys.
         - name: CS3_GATEWAY_ADDR
           value: "opencloud-gateway:9142"
         # - name: OC_SERVICE_ACCOUNT_ID
@@ -73,14 +74,41 @@ spec:
             secretKeyRef:
               name: opencloud-backup-wrap-keys
               key: srw-wrapping-key
+        # Phase 4 — the Target Wrap key decrypts the stored S3 target credentials
+        # in worker memory at run time (decisions.md #14). Distinct from SRW so
+        # the two rotate independently. Without it backup runs stay unavailable.
+        - name: TW_KEY
+          valueFrom:
+            secretKeyRef:
+              name: opencloud-backup-wrap-keys
+              key: tw-wrapping-key
+        # Phase 4 — pipeline tuning. All optional.
+        #   BACKUP_PARALLELISM                 files hashed/uploaded concurrently
+        #                                      (0 = one per CPU).
+        #   BACKUP_UPLOAD_BYTES_PER_SECOND     bandwidth cap towards the target
+        #   BACKUP_DOWNLOAD_BYTES_PER_SECOND   (0 = unlimited).
+        #   BACKUP_WORK_DIR                    parent of the per-run kopia
+        #                                      config/cache; defaults to /tmp.
+        # - name: BACKUP_PARALLELISM
+        #   value: "4"
+        # - name: BACKUP_UPLOAD_BYTES_PER_SECOND
+        #   value: "10485760"
+        - name: BACKUP_WORK_DIR
+          value: "/tmp"
         envFrom:
         - configMapRef:
             name: opencloud-backup-bootstrap-target
-        # Wrapping keys (SRW + TW) and the OC service-account credentials are
-        # injected from Secrets in a later phase; the placeholder Secret exists
-        # now (secret-wrap-keys.yaml -> opencloud-backup-wrap-keys). Target S3
-        # credentials are NOT injected here — they are admin-entered and stored
-        # TW-wrapped in the app (decisions.md #12/#14). Never echo secrets to logs.
+        # Bootstrap credentials for the optional default target, if enabled.
+        # They are sealed with the TW key on first start and only ciphertext is
+        # kept (decisions.md #14). Admin-managed targets need none of this.
+        # - name: BOOTSTRAP_S3_ACCESS_KEY_ID
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: bootstrap-s3-access-key-id } }
+        # - name: BOOTSTRAP_S3_SECRET_ACCESS_KEY
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: bootstrap-s3-secret-access-key } }
+        #
+        # Target S3 credentials for admin-managed targets are NOT injected here —
+        # they are admin-entered and stored TW-wrapped in the app
+        # (decisions.md #12/#14). Never echo secrets to logs.
         resources:
           requests:
             cpu: 50m

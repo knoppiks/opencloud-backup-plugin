@@ -30,6 +30,23 @@ type fakeGateway struct {
 	spacesErr   error
 	spaceStatus rpc.Code
 
+	// dirs maps a reference path ("." or "./sub") to its listed children.
+	dirs map[string][]*provider.ResourceInfo
+	// listedPaths records every reference path passed to ListContainer.
+	listedPaths []string
+	// listStatus overrides the ListContainer status code.
+	listStatus rpc.Code
+
+	// downloadEndpoint/downloadToken drive InitiateFileDownload responses.
+	downloadEndpoint string
+	downloadToken    string
+	downloadProtocol string
+	downloadStatus   rpc.Code
+	// downloadedRefPath records the reference path of the last download.
+	downloadedRefPath string
+	// downloadRootID records the reference resource id of the last download.
+	downloadRootID *provider.ResourceId
+
 	// lastTokenSeen records the x-access-token metadata seen on ListStorageSpaces.
 	lastTokenSeen string
 }
@@ -67,14 +84,54 @@ func (f *fakeGateway) ListStorageSpaces(ctx context.Context, _ *provider.ListSto
 	}, nil
 }
 
-func (f *fakeGateway) ListContainer(context.Context, *provider.ListContainerRequest, ...grpc.CallOption) (*provider.ListContainerResponse, error) {
-	return &provider.ListContainerResponse{Status: okStatus(rpc.Code_CODE_OK)}, nil
+func (f *fakeGateway) ListContainer(_ context.Context, in *provider.ListContainerRequest, _ ...grpc.CallOption) (*provider.ListContainerResponse, error) {
+	p := in.GetRef().GetPath()
+	f.listedPaths = append(f.listedPaths, p)
+	return &provider.ListContainerResponse{
+		Status: okStatus(f.listStatus),
+		Infos:  f.dirs[p],
+	}, nil
 }
+
 func (f *fakeGateway) Stat(context.Context, *provider.StatRequest, ...grpc.CallOption) (*provider.StatResponse, error) {
 	return &provider.StatResponse{Status: okStatus(rpc.Code_CODE_OK)}, nil
 }
-func (f *fakeGateway) InitiateFileDownload(context.Context, *provider.InitiateFileDownloadRequest, ...grpc.CallOption) (*gateway.InitiateFileDownloadResponse, error) {
-	return &gateway.InitiateFileDownloadResponse{Status: okStatus(rpc.Code_CODE_OK)}, nil
+
+func (f *fakeGateway) InitiateFileDownload(_ context.Context, in *provider.InitiateFileDownloadRequest, _ ...grpc.CallOption) (*gateway.InitiateFileDownloadResponse, error) {
+	f.downloadedRefPath = in.GetRef().GetPath()
+	f.downloadRootID = in.GetRef().GetResourceId()
+	proto := f.downloadProtocol
+	if proto == "" {
+		proto = "spaces"
+	}
+	return &gateway.InitiateFileDownloadResponse{
+		Status: okStatus(f.downloadStatus),
+		Protocols: []*gateway.FileDownloadProtocol{{
+			Protocol:         proto,
+			DownloadEndpoint: f.downloadEndpoint,
+			Token:            f.downloadToken,
+		}},
+	}, nil
+}
+
+// dirInfo builds a container ResourceInfo as ListContainer returns it (the CS3
+// Path is absolute; only its base name is meaningful to the walker).
+func dirInfo(name string) *provider.ResourceInfo {
+	return &provider.ResourceInfo{
+		Path:  "/" + name,
+		Type:  provider.ResourceType_RESOURCE_TYPE_CONTAINER,
+		Mtime: &types.Timestamp{Seconds: 100},
+	}
+}
+
+// fileInfo builds a file ResourceInfo with an explicit size and mtime.
+func fileInfo(name string, size uint64, mtime uint64) *provider.ResourceInfo {
+	return &provider.ResourceInfo{
+		Path:  "/" + name,
+		Type:  provider.ResourceType_RESOURCE_TYPE_FILE,
+		Size:  size,
+		Mtime: &types.Timestamp{Seconds: mtime},
+	}
 }
 
 func personalSpace(id, name, owner string) *provider.StorageSpace {

@@ -10,13 +10,11 @@
 //     manifests older than the window, then run full maintenance GC
 //     (decisions.md #10; phase-0-findings.md Spike 2, "Pruning / retention").
 //   - Prune runs as a separate job from backup (decisions.md #9 Tier 1).
-//
-// The engine is implemented in Phase 4. This file defines the boundary interface
-// only.
 package snapshot
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -40,21 +38,89 @@ type Info struct {
 	TotalBytes int64
 }
 
-// Engine is the repo-per-Space lifecycle boundary. The DK (repo password) is
-// passed per call and never retained or logged.
+// Location addresses the S3 target holding a Space's repo. Credentials are
+// plaintext and therefore exist only in worker memory for the duration of a run
+// (decisions.md #14); they are never logged and never serialized.
+type Location struct {
+	// Endpoint is host:port with no scheme (kopia's S3 driver requirement,
+	// phase-0-findings.md Spike 2).
+	Endpoint string
+	Region   string
+	Bucket   string
+	// Prefix namespaces this deployment inside the bucket. The per-Space repo
+	// lives beneath it at "<Prefix>spaces/<space-id>/" (see RepoPrefix).
+	Prefix string
+	// AccessKeyID / SecretAccessKey are the target's S3 credentials. Never
+	// logged, never returned by any API.
+	AccessKeyID     string
+	SecretAccessKey string
+	// DisableTLS talks plain HTTP (in-cluster Garage).
+	DisableTLS bool
+}
+
+// Redacted returns a copy safe to include in logs: credentials removed.
+func (l Location) Redacted() Location {
+	l.AccessKeyID = ""
+	l.SecretAccessKey = ""
+	return l
+}
+
+// Repo identifies one Space's kopia repository: where it lives, which Space it
+// belongs to, and the key that opens it.
+//
+// DK is the repo password. It must never be logged, serialized, or included in
+// an error message; the caller owns the buffer and zeroizes it after the run.
+type Repo struct {
+	Location Location
+	Space    SpaceRef
+	DK       []byte
+}
+
+// Node is one entry in a Source tree. It carries exactly the metadata that is
+// in backup scope: name, structure, size, mtime (decisions.md #4).
+type Node struct {
+	// Name is the base name of the entry within its parent directory.
+	Name string
+	// IsDir reports whether the entry is a directory.
+	IsDir bool
+	// Size is the file size in bytes (0 for directories).
+	Size int64
+	// ModTime is the modification time; preserved through snapshot and restore.
+	ModTime time.Time
+}
+
+// Source is the tree the engine snapshots, kept deliberately free of kopia
+// types so the CS3-backed implementation (Phase 4 Option B: stream on demand,
+// no staging) and any future staging implementation are swappable, and so tests
+// can supply a trivial fake.
+//
+// Paths are slash-separated and relative to the source root, with no leading
+// "./" or "/". The empty path denotes the root directory.
+type Source interface {
+	// Name is the root directory name recorded in the snapshot.
+	Name() string
+	// List returns the direct children of the directory at dir.
+	List(ctx context.Context, dir string) ([]Node, error)
+	// Open streams the file at path starting at offset bytes. The caller closes
+	// the returned reader.
+	Open(ctx context.Context, path string, offset int64) (io.ReadCloser, error)
+}
+
+// Engine is the repo-per-Space lifecycle boundary. The DK travels inside Repo
+// and is never retained or logged.
 type Engine interface {
-	// Snapshot creates a snapshot of srcDir into the space's repo and returns
-	// the new snapshot's info.
-	Snapshot(ctx context.Context, ref SpaceRef, dk []byte, srcDir string) (Info, error)
+	// Snapshot creates a snapshot of src in the space's repo, creating the repo
+	// on first use, and returns the new snapshot's info.
+	Snapshot(ctx context.Context, repo Repo, src Source) (Info, error)
 	// RestoreAll materialises the given snapshot fully into outDir.
-	RestoreAll(ctx context.Context, ref SpaceRef, dk []byte, id SnapshotID, outDir string) error
+	RestoreAll(ctx context.Context, repo Repo, id SnapshotID, outDir string) error
 	// RestoreFile materialises a single file/subtree (space-relative path) into
 	// outDir. Backlog for v1 UI, but the engine boundary supports it
 	// (decisions.md #3).
-	RestoreFile(ctx context.Context, ref SpaceRef, dk []byte, id SnapshotID, relPath, outDir string) error
+	RestoreFile(ctx context.Context, repo Repo, id SnapshotID, relPath, outDir string) error
 	// Prune deletes snapshots older than now-window (time-based keep-within) and
 	// runs maintenance GC. Runs as a separate job (decisions.md #9 Tier 1).
-	Prune(ctx context.Context, ref SpaceRef, dk []byte, window time.Duration) error
+	Prune(ctx context.Context, repo Repo, window time.Duration) error
 	// List returns the snapshots currently in the space's repo, newest first.
-	List(ctx context.Context, ref SpaceRef, dk []byte) ([]Info, error)
+	List(ctx context.Context, repo Repo) ([]Info, error)
 }
