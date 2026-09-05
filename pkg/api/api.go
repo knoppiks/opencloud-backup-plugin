@@ -16,6 +16,7 @@ import (
 	"net/http"
 
 	"opencloud-backup-plugin/pkg/cs3"
+	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -28,6 +29,12 @@ type Server struct {
 	adminResolver AdminResolver
 	spaces        cs3.SpaceReader
 	authorizer    targets.Authorizer
+
+	// keyStore persists wrapped Data Keys; srw adds the server-side wrap at
+	// setup time. Both hold ciphertext / server-held key material only — no
+	// plaintext DK or RK is ever stored or returned (decisions.md, Phase 3).
+	keyStore keys.Store
+	srw      srwWrapper
 
 	// ready reports readiness for GET /readyz; defaults to always-ready.
 	ready func(context.Context) error
@@ -47,6 +54,13 @@ func WithSpaceReader(r cs3.SpaceReader) Option { return func(s *Server) { s.spac
 
 // WithAuthorizer sets the target authorizer backing GET /targets.
 func WithAuthorizer(a targets.Authorizer) Option { return func(s *Server) { s.authorizer = a } }
+
+// WithKeyStore sets the wrapped-key store backing the backup key endpoints.
+func WithKeyStore(st keys.Store) Option { return func(s *Server) { s.keyStore = st } }
+
+// WithSRWWrapper sets the Server Runtime Wrap holder used at key setup. It is
+// satisfied by *keys.SRWWrapper.
+func WithSRWWrapper(w srwWrapper) Option { return func(s *Server) { s.srw = w } }
 
 // WithReadiness sets the readiness probe for GET /readyz.
 func WithReadiness(fn func(context.Context) error) Option {
@@ -81,6 +95,12 @@ func (s *Server) routes() {
 	}
 	s.mux.Handle("GET /api/v1/spaces", authed(s.handleListSpaces))
 	s.mux.Handle("GET /api/v1/targets", authed(s.handleListTargets))
+
+	// Backup key ceremony (Phase 3). All three are space-scoped and enforce CS3
+	// membership server-side; none ever returns plaintext key material.
+	s.mux.Handle("POST /api/v1/spaces/{id}/backup/setup", authed(s.handleKeySetup))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/keystatus", authed(s.handleKeyStatus))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/recovery-envelope", authed(s.handleRecoveryEnvelope))
 
 	// Admin API scaffold: Authenticate -> ResolveAdmin -> RequireAdmin. The
 	// concrete admin target/grant endpoints are added in the target-store phase;

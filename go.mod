@@ -10,8 +10,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.2
 	github.com/aws/smithy-go v1.27.4
 	github.com/cs3org/go-cs3apis v0.0.0-20260424072047-8d9ef7076ae9
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/kopia/kopia v0.23.1
 	github.com/testcontainers/testcontainers-go v0.43.0
+	golang.org/x/crypto v0.52.0
 	google.golang.org/grpc v1.82.1
 )
 
@@ -52,7 +54,6 @@ require (
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -110,7 +111,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
