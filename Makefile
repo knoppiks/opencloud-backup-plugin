@@ -47,6 +47,10 @@ fmt: ## Format code.
 k8s-validate: ## Validate K8s manifests offline (kubeconform).
 	kubeconform -strict -summary deploy/
 
+.PHONY: secret-scan
+secret-scan: ## Scan the full git history for committed secrets (gitleaks).
+	gitleaks git . --redact --no-banner
+
 .PHONY: dev-up
 dev-up: ## Start dev Garage, then the test OpenCloud fixture.
 	docker compose -f $(DEV_COMPOSE) up -d
