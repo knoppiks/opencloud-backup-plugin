@@ -8,6 +8,10 @@ BINARIES      := backupd takeout decrypt
 OPENCLOUD_DIR := test/fixtures/opencloud
 DEV_COMPOSE   := docker-compose.dev.yml
 
+# Platforms the offline recovery CLI must build for. It is the family's last
+# resort, so it ships for every desktop OS (phase-5 exit criteria).
+DECRYPT_PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+
 .DEFAULT_GOAL := build
 
 .PHONY: help
@@ -21,6 +25,17 @@ build: ## Build all binaries into $(DIST).
 	@for b in $(BINARIES); do \
 		echo "building $$b"; \
 		CGO_ENABLED=0 $(GO) build -trimpath -o $(DIST)/$$b ./cmd/$$b || exit 1; \
+	done
+
+.PHONY: decrypt-release
+decrypt-release: ## Cross-build the offline decrypt CLI for every supported OS.
+	@mkdir -p $(DIST)
+	@for p in $(DECRYPT_PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; \
+		ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
+		echo "building decrypt for $$os/$$arch"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w" \
+			-o $(DIST)/decrypt-$$os-$$arch$$ext ./cmd/decrypt || exit 1; \
 	done
 
 .PHONY: test

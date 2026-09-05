@@ -120,6 +120,30 @@ func TestRecoveryKeyChecksumCatchesTypos(t *testing.T) {
 	}
 }
 
+// The last character of a Recovery Key carries padding bits. A typo confined to
+// them would decode to identical bytes, so it must be rejected outright rather
+// than sail past the checksum.
+func TestRecoveryKeyRejectsEveryLastCharacterTypo(t *testing.T) {
+	display, _, err := GenerateRecoveryKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runes := []rune(display)
+	idx := len(runes) - 1
+	orig := runes[idx]
+
+	for _, c := range crockford {
+		if c == orig {
+			continue
+		}
+		runes[idx] = c
+		if _, err := DecodeRecoveryKey(string(runes)); err == nil {
+			t.Fatalf("typo %q -> %q was accepted", string(orig), string(c))
+		}
+	}
+}
+
 func TestRecoveryKeyRejectsGarbage(t *testing.T) {
 	cases := map[string]string{
 		"empty":            "",

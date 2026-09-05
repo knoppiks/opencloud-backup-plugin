@@ -21,16 +21,18 @@ var epoch = time.Date(2026, 7, 8, 9, 10, 11, 0, time.UTC)
 
 // harness wires a Runner over in-memory stores and a fake engine.
 type harness struct {
-	runner  *Runner
-	reader  *fakeReader
-	engine  *fakeEngine
-	configs *spacecfg.MemoryStore
-	targets *targets.MemoryStore
-	keys    *keys.MemoryStore
-	jobs    *jobs.MemoryStore
-	clock   *testutil.FakeClock
-	dk      []byte
-	logs    *bytes.Buffer
+	runner    *Runner
+	reader    *fakeReader
+	engine    *fakeEngine
+	configs   *spacecfg.MemoryStore
+	targets   *targets.MemoryStore
+	keys      *keys.MemoryStore
+	jobs      *jobs.MemoryStore
+	clock     *testutil.FakeClock
+	dk        []byte
+	rk        []byte
+	envelopes *fakePublisher
+	logs      *bytes.Buffer
 }
 
 func newHarness(t *testing.T) *harness {
@@ -51,32 +53,35 @@ func newHarness(t *testing.T) *harness {
 	wrapper := newSRWWrapper(t)
 
 	h := &harness{
-		reader:  reader,
-		engine:  &fakeEngine{info: snapshot.Info{ID: "snap-1", FileCount: 2, TotalBytes: 15}},
-		configs: spacecfg.NewMemoryStore(),
-		targets: targets.NewMemoryStore(),
-		keys:    keys.NewMemoryStore(),
-		clock:   testutil.NewFakeClock(epoch),
-		logs:    &bytes.Buffer{},
+		reader:    reader,
+		engine:    &fakeEngine{info: snapshot.Info{ID: "snap-1", FileCount: 2, TotalBytes: 15}},
+		configs:   spacecfg.NewMemoryStore(),
+		targets:   targets.NewMemoryStore(),
+		keys:      keys.NewMemoryStore(),
+		clock:     testutil.NewFakeClock(epoch),
+		envelopes: &fakePublisher{},
+		logs:      &bytes.Buffer{},
 	}
 	h.jobs = jobs.NewMemoryStoreWithClock(h.clock)
 
 	seedTarget(t, h.targets, sealer)
 	seedConfig(t, h.configs, testSpaceID, testTargetID)
 	h.dk = seedKeys(t, h.keys, wrapper, testSpaceID)
+	h.rk = seedRK(t, h.keys, testSpaceID, h.dk)
 
 	runner, err := NewRunner(Deps{
-		Spaces:  reader,
-		Configs: h.configs,
-		Targets: h.targets,
-		Sealer:  sealer,
-		Keys:    h.keys,
-		Unwrap:  wrapper,
-		Engine:  h.engine,
-		Jobs:    h.jobs,
-		Locks:   h.jobs,
-		Logger:  slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Clock:   h.clock,
+		Spaces:    reader,
+		Configs:   h.configs,
+		Targets:   h.targets,
+		Sealer:    sealer,
+		Keys:      h.keys,
+		Unwrap:    wrapper,
+		Engine:    h.engine,
+		Jobs:      h.jobs,
+		Locks:     h.jobs,
+		Envelopes: h.envelopes,
+		Logger:    slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Clock:     h.clock,
 	})
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
@@ -364,6 +369,129 @@ func TestRunBackup_LogsNoSecrets(t *testing.T) {
 	}
 	if bytes.Contains([]byte(logged), h.dk) {
 		t.Fatal("logs leaked raw data key bytes")
+	}
+}
+
+// A Take-Out must be self-contained, so every run publishes the Space's
+// RK-wrapped envelope to the target (Path A works with OpenCloud down).
+func TestRunBackup_PublishesRecoveryEnvelopeToTarget(t *testing.T) {
+	h := newHarness(t)
+
+	if _, err := h.runner.RunBackup(context.Background(), testSpaceID); err != nil {
+		t.Fatalf("RunBackup: %v", err)
+	}
+
+	published := h.envelopes.published()
+	if len(published) != 1 {
+		t.Fatalf("published %d envelopes, want 1", len(published))
+	}
+	call := published[0]
+	if call.spaceID != testSpaceID {
+		t.Fatalf("published for space %q", call.spaceID)
+	}
+	if call.target.Prefix != "oc/" || call.target.S3.Bucket != "backups" {
+		t.Fatalf("published to the wrong target: %+v", call.target)
+	}
+	if call.target.S3.AccessKeyID == "" || call.target.S3.SecretAccessKey == "" {
+		t.Fatal("publisher was not given the target's opened credentials")
+	}
+
+	// What is published must be exactly the stored RK envelope — the ciphertext
+	// the user's Recovery Key opens, never the SRW wrap and never a raw key.
+	stored, err := h.keys.GetRK(testSpaceID)
+	if err != nil {
+		t.Fatalf("GetRK: %v", err)
+	}
+	if !bytes.Equal(call.blob, stored.Blob) {
+		t.Fatal("published envelope differs from the stored recovery envelope")
+	}
+	if bytes.Contains(call.blob, h.dk) || bytes.Contains(call.blob, h.rk) {
+		t.Fatal("published envelope contains raw key material")
+	}
+}
+
+// Publication is best-effort: the snapshot is still valid and still restorable
+// through Path B, so a target that rejects the write must not fail the backup.
+func TestRunBackup_EnvelopePublishFailureDoesNotFailTheRun(t *testing.T) {
+	h := newHarness(t)
+	h.envelopes.err = errors.New("target rejected the write")
+
+	if _, err := h.runner.RunBackup(context.Background(), testSpaceID); err != nil {
+		t.Fatalf("RunBackup: %v", err)
+	}
+	if !bytes.Contains(h.logs.Bytes(), []byte("could not publish recovery envelope")) {
+		t.Fatal("a failed publication must be logged")
+	}
+}
+
+// A Space set up before envelope publication existed has no RK envelope stored;
+// that must degrade to a warning, not a failed backup.
+func TestRunBackup_WithoutStoredRecoveryEnvelope(t *testing.T) {
+	h := newHarness(t)
+	h.keys = keys.NewMemoryStore()
+
+	sealer := newSealer(t)
+	wrapper := newSRWWrapper(t)
+	seedKeys(t, h.keys, wrapper, testSpaceID)
+	seedTarget(t, h.targets, sealer)
+
+	runner, err := NewRunner(Deps{
+		Spaces:    h.reader,
+		Configs:   h.configs,
+		Targets:   h.targets,
+		Sealer:    sealer,
+		Keys:      h.keys,
+		Unwrap:    wrapper,
+		Engine:    h.engine,
+		Jobs:      h.jobs,
+		Locks:     h.jobs,
+		Envelopes: h.envelopes,
+		Logger:    slog.New(slog.NewTextHandler(h.logs, nil)),
+		Clock:     h.clock,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+
+	if _, err := runner.RunBackup(context.Background(), testSpaceID); err != nil {
+		t.Fatalf("RunBackup: %v", err)
+	}
+	if len(h.envelopes.published()) != 0 {
+		t.Fatal("nothing may be published when no recovery envelope is stored")
+	}
+	if !bytes.Contains(h.logs.Bytes(), []byte("no recovery envelope stored")) {
+		t.Fatal("the missing envelope must be reported")
+	}
+}
+
+// Envelope publication is optional wiring; without it a run still succeeds.
+func TestRunBackup_WithoutPublisherConfigured(t *testing.T) {
+	h := newHarness(t)
+
+	sealer := newSealer(t)
+	wrapper := newSRWWrapper(t)
+	store := keys.NewMemoryStore()
+	dk := seedKeys(t, store, wrapper, testSpaceID)
+	seedRK(t, store, testSpaceID, dk)
+	seedTarget(t, h.targets, sealer)
+
+	runner, err := NewRunner(Deps{
+		Spaces:  h.reader,
+		Configs: h.configs,
+		Targets: h.targets,
+		Sealer:  sealer,
+		Keys:    store,
+		Unwrap:  wrapper,
+		Engine:  h.engine,
+		Jobs:    h.jobs,
+		Locks:   h.jobs,
+		Clock:   h.clock,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	if _, err := runner.RunBackup(context.Background(), testSpaceID); err != nil {
+		t.Fatalf("RunBackup: %v", err)
 	}
 }
 

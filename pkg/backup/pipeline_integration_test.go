@@ -39,6 +39,7 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/spacecfg"
+	"opencloud-backup-plugin/pkg/takeout"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -61,6 +62,8 @@ type garagePipeline struct {
 	jobs   *jobs.MemoryStore
 	garage *testutil.Garage
 	repo   snapshot.Repo
+	// rk is the Space's raw Recovery Key, as the user would hold it.
+	rk []byte
 	// bigFile is the >multipart-threshold payload seeded into the Space.
 	bigFile []byte
 }
@@ -106,6 +109,7 @@ func newGaragePipeline(ctx context.Context, t *testing.T) *garagePipeline {
 	seedGarageTarget(t, targetStore, sealer, garage)
 	seedConfig(t, configs, testSpaceID, testTargetID)
 	dk := seedKeys(t, keyStore, wrapper, testSpaceID)
+	rk := seedRK(t, keyStore, testSpaceID, dk)
 
 	runner, err := NewRunner(Deps{
 		Spaces:  reader,
@@ -117,7 +121,10 @@ func newGaragePipeline(ctx context.Context, t *testing.T) *garagePipeline {
 		Engine:  engine,
 		Jobs:    jobStore,
 		Locks:   jobStore,
-		Logger:  slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		// The real publisher: every run leaves the RK-wrapped envelope on the
+		// target, which is what makes a Take-Out self-contained.
+		Envelopes: takeout.S3Publisher{},
+		Logger:    slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 	})
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
@@ -129,6 +136,7 @@ func newGaragePipeline(ctx context.Context, t *testing.T) *garagePipeline {
 		reader:  reader,
 		jobs:    jobStore,
 		garage:  garage,
+		rk:      rk,
 		bigFile: big,
 		repo: snapshot.Repo{
 			Location: garageLocation(garage),
@@ -189,12 +197,24 @@ func TestIntegration_BackupProducesEncryptedObfuscatedObjects(t *testing.T) {
 		t.Fatal("no objects written to the target")
 	}
 
-	// Every object must live under this Space's repository prefix.
+	// Every object belongs to this Space: either a repository blob, or the
+	// Space's published recovery envelope. The envelope sits outside the repo
+	// prefix on purpose — everything under it is kopia-owned (Phase 5).
 	wantPrefix := snapshot.RepoPrefix(p.repo.Location, p.repo.Space)
+	envelopeKey := snapshot.EnvelopeKey(p.repo.Location, p.repo.Space)
+	sawEnvelope := false
 	for _, key := range objectKeys {
-		if !strings.HasPrefix(key, wantPrefix) {
-			t.Fatalf("object %q is outside the per-space repo prefix %q", key, wantPrefix)
+		switch {
+		case strings.HasPrefix(key, wantPrefix):
+		case key == envelopeKey:
+			sawEnvelope = true
+		default:
+			t.Fatalf("object %q belongs to neither the repo prefix %q nor the envelope %q",
+				key, wantPrefix, envelopeKey)
 		}
+	}
+	if !sawEnvelope {
+		t.Fatalf("recovery envelope %q was not published to the target", envelopeKey)
 	}
 
 	assertNoPlaintext(ctx, t, p.garage, objectKeys)

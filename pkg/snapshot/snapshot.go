@@ -106,6 +106,25 @@ type Source interface {
 	Open(ctx context.Context, path string, offset int64) (io.ReadCloser, error)
 }
 
+// RestoredEntry is one node of a snapshot being streamed back out. It mirrors
+// Node's in-scope metadata (structure, size, mtime — decisions.md #4) and adds a
+// lazy reader so a restore can write straight into its destination without ever
+// staging the Space on disk (the same stance the backup path takes).
+type RestoredEntry struct {
+	// Path is the slash-separated path relative to the snapshot root.
+	Path string
+	// IsDir reports whether the entry is a directory. Directories are reported
+	// before their children.
+	IsDir bool
+	// Size is the file size in bytes (0 for directories).
+	Size int64
+	// ModTime is the recorded modification time.
+	ModTime time.Time
+	// Open streams the file's contents. It is nil for directories, and the
+	// caller closes the returned reader.
+	Open func(ctx context.Context) (io.ReadCloser, error)
+}
+
 // Engine is the repo-per-Space lifecycle boundary. The DK travels inside Repo
 // and is never retained or logged.
 type Engine interface {
@@ -114,6 +133,10 @@ type Engine interface {
 	Snapshot(ctx context.Context, repo Repo, src Source) (Info, error)
 	// RestoreAll materialises the given snapshot fully into outDir.
 	RestoreAll(ctx context.Context, repo Repo, id SnapshotID, outDir string) error
+	// Walk streams the given snapshot's tree, depth-first, a directory before
+	// its children. It is the restore-into-OpenCloud path's counterpart to
+	// Source: nothing is written to disk.
+	Walk(ctx context.Context, repo Repo, id SnapshotID, fn func(context.Context, RestoredEntry) error) error
 	// RestoreFile materialises a single file/subtree (space-relative path) into
 	// outDir. Backlog for v1 UI, but the engine boundary supports it
 	// (decisions.md #3).

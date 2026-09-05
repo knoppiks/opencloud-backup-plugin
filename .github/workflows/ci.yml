@@ -95,6 +95,28 @@ jobs:
         path: dist/backupd
         if-no-files-found: error
 
+  decrypt-cross-build:
+    name: offline decrypt CLI (linux/darwin/windows)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    # Phase-5 exit criterion: the last-resort recovery tool must build for every
+    # desktop OS a family member might have.
+    - name: cross-build decrypt
+      run: make decrypt-release
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: decrypt-cli
+        path: dist/decrypt-*
+        if-no-files-found: error
+
   manifests:
     name: k8s manifests (kubeconform)
     runs-on: ubuntu-latest

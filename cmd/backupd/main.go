@@ -32,8 +32,10 @@ import (
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
+	"opencloud-backup-plugin/pkg/restore"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/spacecfg"
+	"opencloud-backup-plugin/pkg/takeout"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -116,8 +118,11 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 		logger.Warn("no admin resolver configured; admin routes will 403 for everyone")
 	}
 
-	// --- CS3 space reader -------------------------------------------------
-	var spaceReader cs3.SpaceReader
+	// --- CS3 space reader / writer ---------------------------------------
+	var (
+		spaceReader cs3.SpaceReader
+		spaceWriter cs3.SpaceWriter
+	)
 	if addr := os.Getenv("CS3_GATEWAY_ADDR"); addr != "" {
 		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
@@ -132,6 +137,7 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 		}
 		client := cs3.NewClient(gw, auth, cs3.WithHTTPClient(dataGatewayClient()))
 		spaceReader = client
+		spaceWriter = client
 		opts = append(opts, api.WithSpaceReader(client))
 	} else {
 		logger.Warn("CS3_GATEWAY_ADDR unset; /api/v1/spaces will be unavailable")
@@ -230,13 +236,38 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 			Engine:  engine,
 			Jobs:    jobStore,
 			Locks:   jobStore,
-			Logger:  logger,
+			// Publishing the RK-wrapped envelope to the target is what makes an
+			// admin Take-Out self-contained, so Path A works with OpenCloud
+			// down. It is ciphertext the server cannot open (Phase 5).
+			Envelopes: takeout.S3Publisher{},
+			Logger:    logger,
 		})
 		if err != nil {
 			return nil, cleanup, err
 		}
 		opts = append(opts, api.WithBackupRunner(runner))
-		logger.Info("backup pipeline enabled", "parallelism", parallelism)
+
+		// Restore Path B: same collaborators, plus the CS3 write path. It is a
+		// user-only capability; the API gates every route on membership.
+		restorer, err := restore.NewRunner(restore.Deps{
+			Spaces:  spaceReader,
+			Writer:  spaceWriter,
+			Configs: spaceConfigs,
+			Targets: targetStore,
+			Sealer:  credSealer,
+			Keys:    keyStore,
+			Unwrap:  srwWrapper,
+			Engine:  engine,
+			Jobs:    jobStore,
+			Locks:   jobStore,
+			Logger:  logger,
+		})
+		if err != nil {
+			return nil, cleanup, err
+		}
+		opts = append(opts, api.WithRestoreRunner(restorer))
+
+		logger.Info("backup and restore pipelines enabled", "parallelism", parallelism)
 	} else {
 		logger.Warn("backup pipeline disabled; CS3_GATEWAY_ADDR, SRW_KEY and TW_KEY are all required")
 	}

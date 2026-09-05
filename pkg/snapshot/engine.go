@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path"
@@ -22,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kopia/kopia/fs"
 	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/repo/blob"
 	"github.com/kopia/kopia/repo/content"
@@ -235,6 +237,63 @@ func (e *KopiaEngine) restore(ctx context.Context, r Repo, id SnapshotID, relPat
 			return fmt.Errorf("snapshot: restore: %w", err)
 		}
 		return nil
+	})
+}
+
+// Walk streams a snapshot's tree without writing anything to disk. It is the
+// restore-into-OpenCloud path (Path B): entries are handed to fn one at a time
+// and file bytes are pulled from the repository on demand.
+//
+// Entries out of backup scope (symlinks, unknown types — decisions.md #4) are
+// skipped rather than reported, so a caller never has to know kopia's type set.
+func (e *KopiaEngine) Walk(ctx context.Context, r Repo, id SnapshotID, fn func(context.Context, RestoredEntry) error) error {
+	if fn == nil {
+		return fmt.Errorf("snapshot: walk callback required")
+	}
+
+	return e.withRepo(ctx, r, false, func(ctx context.Context, rep repo.Repository) error {
+		man, err := findManifest(ctx, rep, sourceInfo(r.Space), id)
+		if err != nil {
+			return err
+		}
+		root, err := snapshotfs.SnapshotRoot(rep, man)
+		if err != nil {
+			return fmt.Errorf("snapshot: open snapshot root: %w", err)
+		}
+		dir, ok := root.(fs.Directory)
+		if !ok {
+			return fmt.Errorf("snapshot: snapshot root is not a directory")
+		}
+		return walkDir(ctx, dir, "", fn)
+	})
+}
+
+// walkDir recurses through one directory of a snapshot.
+func walkDir(ctx context.Context, dir fs.Directory, prefix string, fn func(context.Context, RestoredEntry) error) error {
+	return fs.IterateEntries(ctx, dir, func(ctx context.Context, entry fs.Entry) error {
+		rel := path.Join(prefix, entry.Name())
+		switch t := entry.(type) {
+		case fs.Directory:
+			if err := fn(ctx, RestoredEntry{
+				Path:    rel,
+				IsDir:   true,
+				ModTime: entry.ModTime(),
+			}); err != nil {
+				return err
+			}
+			return walkDir(ctx, t, rel, fn)
+		case fs.File:
+			return fn(ctx, RestoredEntry{
+				Path:    rel,
+				Size:    entry.Size(),
+				ModTime: entry.ModTime(),
+				Open: func(ctx context.Context) (io.ReadCloser, error) {
+					return t.Open(ctx)
+				},
+			})
+		default:
+			return nil
+		}
 	})
 }
 

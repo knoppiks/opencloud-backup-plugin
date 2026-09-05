@@ -61,11 +61,36 @@ disaster-recovery path: OpenCloud fully down, only S3 + Recovery Key.
 
 ## Exit criteria
 
-- [ ] Path A acceptance test green **with OpenCloud stopped** (success
+- [x] Path A acceptance test green **with OpenCloud stopped** (success
       metric 3).
-- [ ] `decrypt` binaries build for linux/darwin/windows.
-- [ ] Path B restore green incl. authorization negatives (success metric 4).
-- [ ] Envelope-version compatibility test (v1 blob restores with current CLI).
+      `pkg/backup/patha_integration_test.go` (Garage; every CS3 call is made to
+      fail before the take-out runs) and
+      `TestIntegration_OpenCloudPathAWithDeploymentStopped` in
+      `pkg/backup/ocis_integration_test.go`, which runs `OC_FIXTURE_DOWN_CMD`
+      (`test/fixtures/opencloud/down.sh`) before extracting.
+- [x] `decrypt` binaries build for linux/darwin/windows.
+      `make decrypt-release` (linux/darwin amd64+arm64, windows amd64), enforced
+      by the `decrypt-cross-build` CI job.
+- [x] Path B restore green incl. authorization negatives (success metric 4).
+      `pkg/restore/pathb_integration_test.go` (real repo on Garage, restores land
+      in `Restore/<ts>/`, live files untouched) and `pkg/api/restore_test.go`
+      (non-member 403, admin-non-member 403, unauthenticated 401).
+- [x] Envelope-version compatibility test (v1 blob restores with current CLI).
+      `pkg/takeout` decrypts v1 envelopes produced by `pkg/keys` throughout, and
+      `TestDecryptRejectsFutureEnvelopeVersion` pins the forward-compatibility
+      behaviour (an unknown version is reported as "get a newer tool", never as
+      "wrong key").
+
+## Implementation notes (as built)
+
+- The RK-wrapped envelope is published to the target on every backup run, so a
+  Take-Out is self-contained; see the Phase-5 amendments in `decisions.md`.
+- A Take-Out is a standard kopia *filesystem* repository (blob-level copy), not a
+  verbatim object copy — the two kopia drivers do not share a layout.
+- `takeout` has no key input, and an audit test in `cmd/takeout` fails the build
+  if one is ever added.
+- Path B streams from kopia into CS3 with no staging, via `snapshot.Engine.Walk`.
+- Operator/user runbook: "Recovery runbook" in `README.md`.
 
 ## Risks / notes
 

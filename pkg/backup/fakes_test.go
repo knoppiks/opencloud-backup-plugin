@@ -15,6 +15,7 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/spacecfg"
+	"opencloud-backup-plugin/pkg/takeout"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -203,6 +204,10 @@ func (e *fakeEngine) RestoreFile(context.Context, snapshot.Repo, snapshot.Snapsh
 	return nil
 }
 
+func (e *fakeEngine) Walk(context.Context, snapshot.Repo, snapshot.SnapshotID, func(context.Context, snapshot.RestoredEntry) error) error {
+	return nil
+}
+
 func (e *fakeEngine) Prune(context.Context, snapshot.Repo, time.Duration) error { return nil }
 
 func (e *fakeEngine) List(context.Context, snapshot.Repo) ([]snapshot.Info, error) { return nil, nil }
@@ -266,6 +271,57 @@ func seedKeys(t *testing.T, store *keys.MemoryStore, wrapper *keys.SRWWrapper, s
 		t.Fatalf("PutSRW: %v", err)
 	}
 	return dk
+}
+
+// seedRK stores the Space's RK-wrapped envelope, as the key ceremony does, and
+// returns the raw Recovery Key.
+func seedRK(t *testing.T, store *keys.MemoryStore, spaceID string, dk []byte) []byte {
+	t.Helper()
+	_, rk, err := keys.GenerateRecoveryKey()
+	if err != nil {
+		t.Fatalf("GenerateRecoveryKey: %v", err)
+	}
+	wrapped, err := keys.WrapWithRK(dk, rk, keys.DefaultArgonParams)
+	if err != nil {
+		t.Fatalf("WrapWithRK: %v", err)
+	}
+	if err := store.PutRK(spaceID, wrapped); err != nil {
+		t.Fatalf("PutRK: %v", err)
+	}
+	return rk
+}
+
+// fakePublisher records envelope publications instead of talking to S3.
+type fakePublisher struct {
+	mu sync.Mutex
+
+	calls []publishCall
+	err   error
+}
+
+type publishCall struct {
+	target  takeout.PublishTarget
+	spaceID string
+	blob    []byte
+}
+
+var _ takeout.Publisher = (*fakePublisher)(nil)
+
+func (p *fakePublisher) Publish(_ context.Context, target takeout.PublishTarget, spaceID string, blob []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls = append(p.calls, publishCall{
+		target:  target,
+		spaceID: spaceID,
+		blob:    append([]byte(nil), blob...),
+	})
+	return p.err
+}
+
+func (p *fakePublisher) published() []publishCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]publishCall(nil), p.calls...)
 }
 
 // seedConfig binds the Space to the test target.

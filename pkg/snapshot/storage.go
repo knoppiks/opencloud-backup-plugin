@@ -24,14 +24,37 @@ import (
 	"github.com/kopia/kopia/repo/blob/throttling"
 )
 
-// spacesSegment namespaces per-Space repositories inside a target's prefix.
-const spacesSegment = "spaces"
+const (
+	// spacesSegment namespaces per-Space repositories inside a target's prefix.
+	spacesSegment = "spaces"
+	// keysSegment namespaces the per-Space key envelopes published alongside —
+	// deliberately *not* inside — the repositories.
+	keysSegment = "keys"
+	// envelopeObject is the file name of a Space's RK-wrapped Data Key envelope.
+	envelopeObject = "recovery.ocbke"
+)
 
 // RepoPrefix returns the object-key prefix of one Space's repository, always
 // with a trailing slash: "<prefix>spaces/<space-id>/".
 func RepoPrefix(loc Location, ref SpaceRef) string {
 	p := path.Join(strings.Trim(loc.Prefix, "/"), spacesSegment, ref.SpaceID)
 	return strings.TrimPrefix(p, "/") + "/"
+}
+
+// EnvelopeKey returns the object key of a Space's RK-wrapped Data Key envelope:
+// "<prefix>keys/<space-id>/recovery.ocbke".
+//
+// The envelope is published to the target so a Take-Out is self-contained and
+// Path A works with OpenCloud fully down (decisions.md, restore-paths contract).
+// It is ciphertext — useless without the user's Recovery Key — so it sits in the
+// same trust class as the encrypted repository already stored there.
+//
+// It lives *outside* RepoPrefix on purpose: everything under a repository prefix
+// is kopia-owned, and a foreign blob there could be reported as unknown or
+// reclaimed by maintenance.
+func EnvelopeKey(loc Location, ref SpaceRef) string {
+	p := path.Join(strings.Trim(loc.Prefix, "/"), keysSegment, ref.SpaceID, envelopeObject)
+	return strings.TrimPrefix(p, "/")
 }
 
 // StorageOpener opens the blob storage backing a Space's repository. It is an
@@ -110,6 +133,39 @@ func (o FilesystemOpener) Open(ctx context.Context, r Repo, createIfMissing bool
 	}
 
 	st, err := filesystem.New(ctx, &filesystem.Options{Path: dir}, createIfMissing)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: open local storage: %w", err)
+	}
+	return st, nil
+}
+
+// DirOpener opens a repository that already sits at one exact directory, with
+// no per-Space layout applied. It is what the offline decrypt CLI uses: a
+// Take-Out has been copied out of S3 into a local folder, and the repository is
+// simply *there* (Phase 5, Path A).
+//
+// Keeping it separate from FilesystemOpener keeps the last-resort recovery path
+// as short as possible — no prefix arithmetic between the user and their data.
+type DirOpener struct {
+	// Dir is the directory holding the repository's blobs.
+	Dir string
+}
+
+var _ StorageOpener = DirOpener{}
+
+// Open builds filesystem-backed blob storage rooted at Dir. It never creates the
+// directory: the offline path only ever reads an existing Take-Out.
+func (o DirOpener) Open(ctx context.Context, _ Repo, createIfMissing bool) (blob.Storage, error) {
+	if o.Dir == "" {
+		return nil, fmt.Errorf("snapshot: repository directory not configured")
+	}
+	if createIfMissing {
+		if err := os.MkdirAll(o.Dir, 0o700); err != nil {
+			return nil, fmt.Errorf("snapshot: create local storage dir: %w", err)
+		}
+	}
+
+	st, err := filesystem.New(ctx, &filesystem.Options{Path: o.Dir}, createIfMissing)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot: open local storage: %w", err)
 	}
