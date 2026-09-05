@@ -1,0 +1,19 @@
+# gitleaks configuration.
+#
+# decisions.md forbids key material (DK, RK, SRW keys, wrapped blobs) from ever
+# reaching logs, the admin UI, or this repository. CI therefore scans the full
+# git history on every pull request.
+#
+# The default ruleset is used as-is. The only exceptions are the fixed
+# throwaway credentials baked into the local dev/test fixtures, which
+# authenticate against ephemeral containers started by `make dev-up` and grant
+# no access to anything real.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Throwaway admin:admin credentials for the ephemeral OpenCloud test fixture"
+condition = "AND"
+paths = ['''^test/fixtures/''']
+regexes = ['''^admin:admin$''']
