@@ -44,6 +44,11 @@ type Server struct {
 	runner       backupRunner
 	jobStore     jobs.Store
 
+	// restorer serves the snapshot picker and Path B restores. It is a
+	// user-only capability: every route it backs is member-gated, and there is
+	// no admin equivalent (decisions.md #2).
+	restorer restoreRunner
+
 	// ready reports readiness for GET /readyz; defaults to always-ready.
 	ready func(context.Context) error
 }
@@ -81,6 +86,10 @@ func WithBackupRunner(r backupRunner) Option { return func(s *Server) { s.runner
 
 // WithJobStore sets the job store backing the run-history endpoint.
 func WithJobStore(st jobs.Store) Option { return func(s *Server) { s.jobStore = st } }
+
+// WithRestoreRunner sets the worker that lists snapshots and executes Path B
+// restores. It is satisfied by *restore.Runner.
+func WithRestoreRunner(r restoreRunner) Option { return func(s *Server) { s.restorer = r } }
 
 // WithReadiness sets the readiness probe for GET /readyz.
 func WithReadiness(fn func(context.Context) error) Option {
@@ -128,6 +137,11 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/spaces/{id}/backup/config", authed(s.handlePutBackupConfig))
 	s.mux.Handle("POST /api/v1/spaces/{id}/backup/run", authed(s.handleRunBackup))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs", authed(s.handleListRuns))
+
+	// Restore (Phase 5, Path B). Member-gated like everything space-scoped;
+	// an admin who is not a member is refused exactly like any non-member.
+	s.mux.Handle("GET /api/v1/spaces/{id}/snapshots", authed(s.handleListSnapshots))
+	s.mux.Handle("POST /api/v1/spaces/{id}/restore", authed(s.handleRestore))
 
 	// Admin API scaffold: Authenticate -> ResolveAdmin -> RequireAdmin. The
 	// concrete admin target/grant endpoints are added in the target-store phase;

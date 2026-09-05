@@ -178,5 +178,12 @@ func base32Decode(s string) ([]byte, error) {
 			out = append(out, byte((acc>>bits)&0xff))
 		}
 	}
+	// 21 payload bytes do not divide into 5-bit groups, so the final character
+	// carries padding bits. base32Encode always writes them as zero; anything
+	// else is a mistyped key. Without this check a typo confined to the padding
+	// bits would decode to the same bytes and slip past the checksum.
+	if bits > 0 && acc&((1<<bits)-1) != 0 {
+		return nil, fmt.Errorf("%w: trailing bits (mistyped?)", ErrBadRecoveryKey)
+	}
 	return out, nil
 }

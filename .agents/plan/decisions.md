@@ -215,6 +215,61 @@ These refine *how* locked decisions are implemented; none reopens one.
   backup scope (#4) and the virtual source carries no real uid/gid, so restoring
   ownership would only attempt — and fail — a chown to root.
 
+### Amendments from Phase 5
+
+These refine *how* the restore paths are implemented; none reopens a locked
+decision.
+
+- **The RK-wrapped envelope is published to the S3 target on every backup run**
+  (`<prefix>keys/<space-id>/recovery.ocbke`). Path A must work with OpenCloud
+  fully down, and `takeout` has S3 access only, so the envelope cannot live
+  exclusively in the service's key store. What is published is ciphertext the
+  server itself cannot open (the RK is never held or learned server-side), so
+  this does not widen what the buddy store can read: it is the same trust class
+  as the encrypted repository already there. Publication failure is logged, not
+  fatal — the snapshot is still valid and still restorable via Path B.
+  The envelope deliberately sits **outside** the kopia repo prefix: everything
+  under a repository prefix is kopia-owned and maintenance may reclaim blobs it
+  does not recognise.
+  *Threat-model delta:* a leaked S3 **write** credential can overwrite or delete
+  the envelope, exactly as it can the repository (decision #8 already accepts
+  this; immutability Tiers 2/3 bound it). It cannot *read* anything new.
+
+- **A Take-Out is a standard kopia filesystem repository, not a raw object
+  copy.** kopia's S3 driver stores flat blob ids while its filesystem driver
+  shards and suffixes them, so objects synced verbatim out of a bucket would not
+  reopen locally. The copy therefore runs at kopia's *blob* level. The pleasant
+  consequence: a Take-Out is openable by our `decrypt` CLI **and** by a stock
+  kopia release — worth having for a last-resort artefact. Copying blobs needs no
+  Data Key, which is what keeps `takeout` structurally unable to decrypt.
+
+- **`takeout` has no key input at all, and this is enforced by test.** Not a
+  convention: `cmd/takeout` is audited for key-accepting flags and for any
+  reference to the unwrap APIs. S3 credentials come from the environment, never
+  from flags (command lines are world-readable).
+
+- **The Recovery Key is never a command-line argument.** `decrypt` prompts
+  without echo, or reads one line from stdin when piped.
+
+- **Path B streams from kopia straight into CS3 (no staging).** The snapshot
+  engine grew a `Walk` that yields entries with lazy readers, mirroring the
+  Phase-4 decision that no Space is ever staged on disk.
+
+- **Path B restores never overwrite.** Each run writes into its own
+  `Restore/<timestamp>/` folder (timestamp is filename-safe, no colons). A
+  restore and a backup for one Space share the per-Space run lock, so they cannot
+  overlap.
+
+- **Path B is member-only, with no admin variant.** The restore endpoints are
+  gated on CS3 membership exactly like the rest of the space-scoped API; an
+  OpenCloud admin who is not a member gets 403 (reaffirms #2/#15). The client
+  cannot choose a restore destination — the request carries a snapshot id and
+  nothing else.
+
+- **Path B unwraps via SRW, not the Recovery Key.** The plaintext RK still never
+  crosses the network; a user restoring through the UI is authorized by their
+  session, and the worker uses the server wrap it already holds (decision #1).
+
 ---
 
 ## Trust & key model
@@ -234,7 +289,9 @@ These refine *how* locked decisions are implemented; none reopens one.
   DK wraps; **no hand-rolled crypto.**
 - **Envelope format is a long-term compatibility promise** — versioned from day
   one (the standalone decrypt CLI must parse it forever). The TW-wrapped
-  credential blob is versioned for the same reason.
+  credential blob is versioned for the same reason. The **Take-Out manifest**
+  (`manifest.json`) joins the same promise: `decrypt` must keep reading every
+  version of a Take-Out it has ever produced.
 
 ---
 

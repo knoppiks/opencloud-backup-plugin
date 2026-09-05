@@ -49,6 +49,21 @@ type fakeGateway struct {
 
 	// lastTokenSeen records the x-access-token metadata seen on ListStorageSpaces.
 	lastTokenSeen string
+
+	// --- write path (restore Path B) ---
+	// createdDirs records every reference path passed to CreateContainer.
+	createdDirs []string
+	// createStatus overrides the CreateContainer status code.
+	createStatus rpc.Code
+	// uploadEndpoint/uploadToken/uploadProtocol drive InitiateFileUpload.
+	uploadEndpoint string
+	uploadToken    string
+	uploadProtocol string
+	uploadStatus   rpc.Code
+	// uploadedRefPath records the reference path of the last upload initiation,
+	// uploadOpaque its opaque map.
+	uploadedRefPath string
+	uploadOpaque    map[string]string
 }
 
 func okStatus(c rpc.Code) *rpc.Status {
@@ -110,6 +125,31 @@ func (f *fakeGateway) InitiateFileDownload(_ context.Context, in *provider.Initi
 			Protocol:         proto,
 			DownloadEndpoint: f.downloadEndpoint,
 			Token:            f.downloadToken,
+		}},
+	}, nil
+}
+
+func (f *fakeGateway) CreateContainer(_ context.Context, in *provider.CreateContainerRequest, _ ...grpc.CallOption) (*provider.CreateContainerResponse, error) {
+	f.createdDirs = append(f.createdDirs, in.GetRef().GetPath())
+	return &provider.CreateContainerResponse{Status: okStatus(f.createStatus)}, nil
+}
+
+func (f *fakeGateway) InitiateFileUpload(_ context.Context, in *provider.InitiateFileUploadRequest, _ ...grpc.CallOption) (*gateway.InitiateFileUploadResponse, error) {
+	f.uploadedRefPath = in.GetRef().GetPath()
+	f.uploadOpaque = map[string]string{}
+	for k, v := range in.GetOpaque().GetMap() {
+		f.uploadOpaque[k] = string(v.GetValue())
+	}
+	proto := f.uploadProtocol
+	if proto == "" {
+		proto = "simple"
+	}
+	return &gateway.InitiateFileUploadResponse{
+		Status: okStatus(f.uploadStatus),
+		Protocols: []*gateway.FileUploadProtocol{{
+			Protocol:       proto,
+			UploadEndpoint: f.uploadEndpoint,
+			Token:          f.uploadToken,
 		}},
 	}, nil
 }

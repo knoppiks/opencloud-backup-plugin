@@ -32,8 +32,10 @@ import (
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
+	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/spacecfg"
+	"opencloud-backup-plugin/pkg/takeout"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -65,6 +67,11 @@ type Deps struct {
 	Engine  snapshot.Engine
 	Jobs    jobs.Store
 	Locks   jobs.Locker
+	// Envelopes publishes the Space's RK-wrapped Data Key envelope to the
+	// target, so an admin Take-Out is self-contained and Path A works with
+	// OpenCloud down. Optional: when nil, publication is skipped and Path A
+	// depends on the envelope being exported some other way.
+	Envelopes takeout.Publisher
 	// Logger receives operational detail. It must never be handed key material;
 	// the Runner only logs identifiers, counts and sanitized error text.
 	Logger *slog.Logger
@@ -266,7 +273,7 @@ func (r *Runner) snapshotSpace(ctx context.Context, space cs3.Space) (snapshot.I
 		return snapshot.Info{}, fmt.Errorf("backup: read space configuration: %w", err)
 	}
 
-	location, err := r.resolveTarget(ctx, cfg.TargetID)
+	target, err := r.resolveTarget(ctx, cfg.TargetID)
 	if err != nil {
 		return snapshot.Info{}, err
 	}
@@ -278,8 +285,12 @@ func (r *Runner) snapshotSpace(ctx context.Context, space cs3.Space) (snapshot.I
 	// The plaintext Data Key exists only for this call (decisions.md #1).
 	defer keys.Zeroize(dk)
 
+	// Publish the recovery envelope before the data it protects: a snapshot the
+	// user cannot reach with their Recovery Key is worth less than no snapshot.
+	r.publishEnvelope(ctx, space.ID, target)
+
 	info, err := r.deps.Engine.Snapshot(ctx, snapshot.Repo{
-		Location: location,
+		Location: target.location,
 		Space:    snapshot.SpaceRef{SpaceID: space.ID},
 		DK:       dk,
 	}, NewSpaceSource(r.deps.Spaces, space))
@@ -305,41 +316,97 @@ func (r *Runner) resolveSpace(ctx context.Context, spaceID string) (cs3.Space, e
 	return cs3.Space{}, ErrSpaceNotFound
 }
 
-// resolveTarget loads the configured target and TW-unwraps its credentials into
-// a snapshot.Location. The returned Location holds plaintext credentials and
-// must never be logged; use Location.Redacted() for diagnostics.
-func (r *Runner) resolveTarget(ctx context.Context, targetID string) (snapshot.Location, error) {
+// resolvedTarget is a target with its credentials opened for this run, in the
+// two shapes the run needs: kopia's repository location and a plain object-store
+// configuration for the key envelope. Both hold plaintext credentials and must
+// never be logged.
+type resolvedTarget struct {
+	location snapshot.Location
+	s3       objstore.S3Config
+	prefix   string
+}
+
+// resolveTarget loads the configured target and TW-unwraps its credentials.
+// Use snapshot.Location.Redacted() for diagnostics.
+func (r *Runner) resolveTarget(ctx context.Context, targetID string) (resolvedTarget, error) {
 	if targetID == "" {
-		return snapshot.Location{}, ErrNotConfigured
+		return resolvedTarget{}, ErrNotConfigured
 	}
 
 	target, err := r.deps.Targets.GetTarget(ctx, targetID)
 	if err != nil {
 		var notFound targets.ErrNotFound
 		if errors.As(err, &notFound) {
-			return snapshot.Location{}, ErrTargetUnavailable
+			return resolvedTarget{}, ErrTargetUnavailable
 		}
-		return snapshot.Location{}, fmt.Errorf("backup: read target: %w", err)
+		return resolvedTarget{}, fmt.Errorf("backup: read target: %w", err)
 	}
 
 	creds, err := r.deps.Sealer.Open(target.WrappedCreds)
 	if err != nil {
 		// Never distinguish wrong-key from tampered, never echo the blob.
 		r.deps.Logger.Error("could not open target credentials", "target", targetID)
-		return snapshot.Location{}, ErrTargetUnavailable
+		return resolvedTarget{}, ErrTargetUnavailable
 	}
 
-	return snapshot.Location{
-		Endpoint: target.Endpoint,
-		Region:   target.Region,
-		Bucket:   target.Bucket,
-		Prefix:   target.Prefix,
-		// Go cannot zeroize strings; these copies die with the run and are
-		// never logged or persisted (decisions.md #14, "where Go allows").
-		AccessKeyID:     creds.AccessKeyID,
-		SecretAccessKey: creds.SecretAccessKey,
-		DisableTLS:      target.DisableTLS,
+	return resolvedTarget{
+		location: snapshot.Location{
+			Endpoint: target.Endpoint,
+			Region:   target.Region,
+			Bucket:   target.Bucket,
+			Prefix:   target.Prefix,
+			// Go cannot zeroize strings; these copies die with the run and are
+			// never logged or persisted (decisions.md #14, "where Go allows").
+			AccessKeyID:     creds.AccessKeyID,
+			SecretAccessKey: creds.SecretAccessKey,
+			DisableTLS:      target.DisableTLS,
+		},
+		s3: objstore.S3Config{
+			Endpoint:        target.Endpoint,
+			Region:          target.Region,
+			Bucket:          target.Bucket,
+			AccessKeyID:     creds.AccessKeyID,
+			SecretAccessKey: creds.SecretAccessKey,
+			UsePathStyle:    target.UsePathStyle,
+			DisableTLS:      target.DisableTLS,
+		},
+		prefix: target.Prefix,
 	}, nil
+}
+
+// publishEnvelope copies the Space's RK-wrapped Data Key envelope to the target
+// so an admin Take-Out is self-contained (Path A works with OpenCloud down).
+//
+// The envelope is ciphertext the server cannot open, so this does not weaken the
+// trust model. A failure here is logged but does not fail the run: the snapshot
+// itself is still valid and still restorable through Path B, and refusing to
+// back a Space up because one small object could not be written would trade a
+// real protection for a theoretical one.
+func (r *Runner) publishEnvelope(ctx context.Context, spaceID string, target resolvedTarget) {
+	if r.deps.Envelopes == nil {
+		return
+	}
+
+	wrapped, err := r.deps.Keys.GetRK(spaceID)
+	if err != nil {
+		var notFound keys.ErrNotFound
+		if errors.As(err, &notFound) {
+			r.deps.Logger.Warn("no recovery envelope stored for space; take-out will not be self-contained",
+				"space", spaceID)
+			return
+		}
+		r.deps.Logger.Warn("could not read recovery envelope", "space", spaceID, "err", err)
+		return
+	}
+
+	if err := r.deps.Envelopes.Publish(ctx, takeout.PublishTarget{
+		S3:     target.s3,
+		Prefix: target.prefix,
+	}, spaceID, wrapped.Blob); err != nil {
+		// The error describes the target, never the envelope contents.
+		r.deps.Logger.Error("could not publish recovery envelope to target",
+			"space", spaceID, "err", err)
+	}
 }
 
 // unwrapDataKey recovers the Space's Data Key from its SRW envelope. This is the
