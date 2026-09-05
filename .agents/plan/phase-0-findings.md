@@ -313,3 +313,87 @@ Spike app (throwaway): `spikes/webext/` (Vite + `@opencloud-eu/extension-sdk`).
 Vite 8 + `@opencloud-eu/extension-sdk` (module federation), Vue 3 + TS,
 vue-router 5, vue3-gettext, design system from `@opencloud-eu/web-pkg`. Ship the
 built `dist/` into `web/assets/apps/opencloud-backup/`.
+
+---
+
+## Admin-role detection spike ✅ (server-side pinned; client-side deferred)
+
+**Outcome:** server-side admin detection validated against the live OpenCloud
+7.3.0 fixture and **pinned**. Ran ahead of Phase 2 (it is a Phase-2 prerequisite,
+decisions.md #13). The client-side CASL gate is deferred to Phase 8 (the web
+extension does not exist yet); the fallback is documented below regardless.
+
+### Server-side mechanism (pinned)
+
+The OIDC **access token carries no role/group claim** — `claims_supported` from
+`/.well-known/openid-configuration` is `iss, sub, aud, exp, iat, name,
+family_name, given_name, email, email_verified` only, and `scopes_supported`
+exposes no roles/groups scope. **Therefore admin status must be resolved via the
+graph API, not from the token.** (The "cheap token-claim path" the spike asked
+about does not exist on 7.3.0.)
+
+Detection call (as the caller, forwarding their bearer token):
+
+```
+GET https://<oc>/graph/v1.0/me?$expand=appRoleAssignments
+```
+
+Map any `appRoleAssignments[].appRoleId` equal to the **Admin** app-role id →
+`isAdmin = true`. The app-role bundle on 7.3.0 (`GET /graph/v1.0/applications`,
+application `OpenCloud` id `a1159abb-1cd7-4e7a-9f76-0c0c6c1118ab`):
+
+| Role | appRoleId |
+|---|---|
+| User Light | `38071a68-456a-4553-846a-fa67bf5596cc` |
+| User | `d7beeea8-8ff4-406b-8fb6-ab2dd81e6b11` |
+| **Admin** | **`71881883-1768-46bd-a24d-a356a2afdf7f`** |
+| Space Admin | `2aadd357-682c-406b-8874-293091995fdd` |
+
+**Verified:**
+
+- Seeded **admin** (`admin`) → assignment `appRoleId
+  71881883-1768-46bd-a24d-a356a2afdf7f` → `isAdmin=true`.
+- Seeded **normal user** (`testuser`, created via `POST /graph/v1.0/users`, gets
+  the default **User** role) → assignment `appRoleId
+  d7beeea8-8ff4-406b-8fb6-ab2dd81e6b11` → `isAdmin=false`.
+
+These are the standard oCIS/OpenCloud static role-bundle UUIDs (stable across
+deployments of the same distribution), but Phase 2 treats the admin id as
+**configurable** (env/config), defaulting to the value above, so a differently
+provisioned instance can override it without a code change.
+
+### Fallback (decisions.md #13)
+
+Graph detection proved **reliable** on 7.3.0, so it is the primary mechanism.
+The documented fallback — an **operator-provided allow-list of admin subject
+IDs** — is still implemented in Phase 2 as an alternative `AdminResolver` for
+instances where graph detection is undesirable or the role bundle differs.
+Selection is config-driven; the two resolvers satisfy the same interface.
+
+### Client-side (deferred to Phase 8)
+
+Not executed: the web extension is a Phase-8 deliverable and does not exist yet.
+When built, gate the admin view with `@opencloud-eu/web-pkg`'s ability model
+(`useAbility()`), e.g. `can('create-all', 'Drive')` / an admin-settings ability;
+the exact CASL subject/action is to be pinned during Phase 8 against the same
+fixture. This does **not** block Phase 2 (server-side enforcement is the security
+boundary; the client gate is UX only — decisions.md #15).
+
+### OIDC facts (for the Phase-2 middleware)
+
+- Discovery: `GET https://<oc>/.well-known/openid-configuration`.
+- **Issuer:** `https://<oc>` (fixture: `https://localhost:9200`).
+- **JWKS:** `https://<oc>/konnect/v1/jwks.json` (Konnect); RSA keys, `kid`s
+  `private-key` and `default`.
+- **Signing algs:** `RS256, RS384, RS512, PS256, PS384, PS512`.
+- Token endpoint is PKCE-only (`grant_type=password` → `unsupported_grant_type`),
+  so no ROPC shortcut for tests; unit tests validate against a **fake JWKS
+  server** and the integration test uses a browser-obtained token (or is skipped
+  when none is provided).
+
+### Fixture change
+
+`test/fixtures/opencloud/seed.sh` now also seeds the **normal user** `testuser`
+(idempotent; password `Test-User-1!`) and appends `OC_ADMIN_APP_ROLE_ID`,
+`OC_NORMAL_USER_ID`, `OC_ADMIN_USER_ID` to `fixture.env`. `down.sh --purge` still
+yields a clean slate (the user lives only in the disposable `data/` volume).
