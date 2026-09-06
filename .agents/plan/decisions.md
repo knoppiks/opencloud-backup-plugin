@@ -124,6 +124,11 @@ than drifting.
     decision #2 rather than weakening it; the admin is a *configuration* actor,
     not a *data* actor.
 
+16. **The service's own state lives in OpenCloud, over CS3** — a dedicated Space
+    no end user belongs to, not a database. See "Amendments from Phase 6" for the
+    rationale, the validation, and the constraints it imposes (single instance;
+    no transactions; state Space must not be a user's Space).
+
 ---
 
 ## Still open (must be resolved in Phase 0, may amend decisions)
@@ -269,6 +274,83 @@ decision.
 - **Path B unwraps via SRW, not the Recovery Key.** The plaintext RK still never
   crosses the network; a user restoring through the UI is authorized by their
   session, and the worker uses the server wrap it already holds (decision #1).
+
+### Amendments from Phase 6
+
+- **New decision #16 (locked): the service's own state lives in OpenCloud, over
+  CS3 — not in a database.** Schedules, run history, wrapped key envelopes and
+  target records are documents in a **dedicated Space** reached with the service
+  account (`pkg/cs3state`), behind the small `pkg/state` document-store
+  interface. This *supersedes the phase-6 plan's "backend: SQLite"*.
+  Rationale: the deployment already has one durable, operated, backed-up storage
+  system; adding a database and its volume for a family-scale plugin is
+  infrastructure nobody asked for.
+  **Validated against OpenCloud 7.3.0** (`pkg/cs3state` integration test): the
+  service account can create folders, write, *overwrite*, list and delete, and
+  run history survives a new store instance.
+  *Constraints this imposes, which are binding:*
+  - The state Space must be one **no end user is a member of**. A member could
+    delete the service's memory, and it is not a user's document.
+  - A CS3 Space is a filesystem: **no transactions, no compare-and-set**. Nothing
+    is built on pretending otherwise (see the lock decision below).
+  - An update is delete-then-write, so it is not atomic. Every record is either
+    re-derivable or rewritten on the next write; this is the price of not adding
+    a database, and it is accepted.
+  - Only ciphertext (SRW/TW envelopes) and metadata are stored — never plaintext
+    key material. That is defence in depth, not a licence to relax the first
+    constraint.
+
+- **Mutual exclusion is process-local; the durable lease only covers crashes.**
+  Two runs racing inside one process are prevented by a mutex — exact and cheap.
+  The persisted lease exists so a process that *died* holding a Space is cleaned
+  up: it carries an expiry, is renewed while the run lives, and `Recover` marks
+  the abandoned run failed and frees the Space. The durable half deliberately
+  does **not** attempt cross-process exclusion, because the backend has no CAS
+  and faking it would be the subtle bug rather than a fix for it.
+  **Running two instances against one state Space is unsupported** — the
+  single-instance deployment target is now a correctness requirement, not just a
+  simplification.
+
+- **Due-ness is derived from the last *attempt*, not the last success**, and from
+  stored history rather than an in-memory registry. Two consequences fall out and
+  both are wanted: downtime catches up **exactly once** (one overdue occurrence,
+  which then becomes the new baseline), and a Space whose runs keep failing
+  retries on its normal schedule instead of hammering a broken target every tick.
+  The stale-backup notification, not a retry loop, is what stops that failure
+  being silent.
+
+- **Jitter is derived from the Space id, not randomised.** Spaces sharing a
+  schedule are spread across the window, and each keeps its slot across restarts
+  instead of wandering.
+
+- **Notifications split by audience, and decision #15 wins over the phase plan.**
+  The phase-6 plan said "notify space owner + admin" on failure. Space members
+  get per-space events (run failed, backup stale). The **operator gets
+  operational events only, carrying no space id and no user** (target unusable) —
+  enforced in `pkg/notify` by validation, not convention. Telling an admin that
+  *this* Space is failing would hand them exactly the visibility #15 denies them.
+  Delivery: events are always **recorded** (durable, served by the API) and
+  delivered best-effort. v1 sinks are structured logs and SMTP for operator
+  events. OpenCloud's own notification service was the plan's first choice but no
+  Phase-0 spike established a usable API for an external plugin, so it is not
+  implemented on speculation; it becomes another sink when verified. Member
+  events have no email path yet (that needs the user directory) — they are
+  recorded and served, not dropped.
+
+- **Live progress during a run is not tracked.** Job records carry the file and
+  byte counts a run *processed*, written when it finishes. Streaming progress
+  would mean wiring kopia's uploader-progress interface through the snapshot
+  engine boundary; the status board reports "running since <time>" plus the last
+  completed run's counts instead. Deferred to Phase 8 if the UI proves it needs
+  more.
+
+- **Retention of run history is time-based too** (`JOB_HISTORY_DAYS`, default one
+  year), pruned on its own slow cadence. Consistent with decision #10: nothing in
+  this system expires by count.
+
+- **The history endpoint stayed `GET .../backup/runs`** (the phase plan wrote
+  `.../backup/jobs`). It is the Phase-4 route, it now takes `?limit=`, and
+  renaming a live contract to match a planning doc would be churn for nothing.
 
 ---
 

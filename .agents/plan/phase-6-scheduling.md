@@ -54,11 +54,33 @@ via SRW, durable job state, failure notifications.
 
 ## Exit criteria
 
-- [ ] Unattended scheduled run completes end-to-end with **no user session**
+- [x] Unattended scheduled run completes end-to-end with **no user session**
       (SRW path proven — success metric relies on this).
-- [ ] Restart-safety: kill/restart service, no duplicate or lost runs.
-- [ ] Stale-backup notification fires in test.
-- [ ] Status/history API consumed by tests (contract ready for Phase 8).
+      *`TestIntegration_ScheduledRunNeedsNoUserSession` (Garage).*
+- [x] Restart-safety: kill/restart service, no duplicate or lost runs.
+      *`TestIntegration_ScheduledRunSurvivesARestart`,
+      `TestIntegration_CrashedRunIsRecovered`.*
+- [x] Stale-backup notification fires in test.
+      *`TestIntegration_StaleBackupIsReported`, plus `pkg/notify` unit tests.*
+- [x] Status/history API consumed by tests (contract ready for Phase 8).
+      *`pkg/api/schedule_test.go`. The history route stayed `.../backup/runs`
+      (see decisions.md, Phase-6 amendments).*
+
+## Outcome (what actually shipped)
+
+Deviations from the plan above, all recorded in `decisions.md`:
+
+- **Not SQLite.** State lives in OpenCloud over CS3 (`pkg/cs3state`, decision
+  #16), behind the `pkg/state` document-store interface. Validated against
+  OpenCloud 7.3.0. The single-instance target became a *correctness requirement*:
+  the backend has no transactions, so cross-process mutual exclusion is not
+  attempted.
+- **Persistence reaches further than jobs.** Schedules, key envelopes and target
+  records are durable too — otherwise a restarted service schedules runs it
+  cannot perform.
+- **Admin notifications narrowed** to operational events with no space or user
+  identity, per locked decision #15.
+- **Live progress not tracked**; counts are recorded when a run finishes.
 
 ## Risks / notes
 

@@ -29,21 +29,21 @@ import (
 // no plaintext credentials: the sealed credential blob lives in the store and is
 // opened only at run time (decisions.md #14).
 type Target struct {
-	ID           string
-	Name         string
-	Endpoint     string
-	Region       string
-	Bucket       string
-	Prefix       string
-	UsePathStyle bool
-	DisableTLS   bool
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Endpoint     string `json:"endpoint"`
+	Region       string `json:"region,omitempty"`
+	Bucket       string `json:"bucket"`
+	Prefix       string `json:"prefix,omitempty"`
+	UsePathStyle bool   `json:"use_path_style,omitempty"`
+	DisableTLS   bool   `json:"disable_tls,omitempty"`
 	// WrappedCreds is the TW-wrapped S3 credential blob (never plaintext, never
 	// logged, never returned by any read API). Versioned like the key envelope.
-	WrappedCreds []byte
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	WrappedCreds []byte    `json:"wrapped_creds,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitzero"`
+	UpdatedAt    time.Time `json:"updated_at,omitzero"`
 	// Version is the WrappedCreds envelope version (compatibility promise).
-	Version int
+	Version int `json:"version,omitempty"`
 }
 
 // PublicView is the least-disclosure projection returned to end users
@@ -76,12 +76,12 @@ const (
 // Grant binds a target to an audience. Exactly one of the scope-specific fields
 // is set, per Scope.
 type Grant struct {
-	TargetID string
-	Scope    GrantScope
+	TargetID string     `json:"target_id"`
+	Scope    GrantScope `json:"scope"`
 	// UserSub is set when Scope == ScopeUser.
-	UserSub string
+	UserSub string `json:"user_sub,omitempty"`
 	// SpaceID is set when Scope == ScopeSpace.
-	SpaceID string
+	SpaceID string `json:"space_id,omitempty"`
 }
 
 // PlainCreds are S3 credentials in plaintext. They exist only transiently:

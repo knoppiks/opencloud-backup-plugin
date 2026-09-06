@@ -47,9 +47,11 @@ type configResponse struct {
 	SpaceID       string `json:"space_id"`
 	TargetID      string `json:"target_id"`
 	RetentionDays int    `json:"retention_days"`
-	Enabled       bool   `json:"enabled"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
+	// Schedule is the cron expression scheduled runs follow.
+	Schedule  string `json:"schedule"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 // runResponse acknowledges an accepted run.
@@ -61,11 +63,17 @@ type runResponse struct {
 
 // jobResponse is the client view of one run.
 type jobResponse struct {
-	ID         string `json:"id"`
-	Kind       string `json:"kind"`
-	State      string `json:"state"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	State string `json:"state"`
+	// Trigger says whether a person or the schedule started this run.
+	Trigger    string `json:"trigger,omitempty"`
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
+	FinishedAt string `json:"finished_at,omitempty"`
+	// FileCount and TotalBytes are the logical counts the run processed.
+	FileCount  int64  `json:"file_count,omitempty"`
+	TotalBytes int64  `json:"total_bytes,omitempty"`
 	SnapshotID string `json:"snapshot_id,omitempty"`
 	// Error is the sanitized message the runner recorded.
 	Error string `json:"error,omitempty"`
@@ -132,10 +140,21 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Changing the target or retention must not silently drop the Space's
+	// schedule: schedules are set through their own endpoint.
+	schedule := ""
+	if existing, err := s.spaceConfigs.Get(r.Context(), spaceID); err == nil {
+		schedule = existing.Schedule
+	} else if !isConfigNotFound(err) {
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not read backup configuration")
+		return
+	}
+
 	cfg, err := s.spaceConfigs.Put(r.Context(), spacecfg.Config{
 		SpaceID:         spaceID,
 		TargetID:        req.TargetID,
 		RetentionWindow: time.Duration(req.RetentionDays) * 24 * time.Hour,
+		Schedule:        schedule,
 		Enabled:         req.Enabled,
 	})
 	if err != nil {
@@ -169,7 +188,10 @@ func (s *Server) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleListRuns returns a Space's run history, newest first.
+// handleListRuns returns a Space's run history, newest first. An optional
+// ?limit= bounds the response; the store reads only what it returns, so a
+// status board asking for five runs costs five reads regardless of how long the
+// history is.
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	_, spaceID, ok := s.spaceScoped(w, r)
 	if !ok {
@@ -180,24 +202,40 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list, err := s.jobStore.List(r.Context(), spaceID)
+	limit, ok := parseLimit(w, r)
+	if !ok {
+		return
+	}
+
+	list, err := s.jobStore.ListRecent(r.Context(), spaceID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
 		return
 	}
 	out := make([]jobResponse, 0, len(list))
 	for _, j := range list {
-		out = append(out, jobResponse{
-			ID:         j.ID,
-			Kind:       string(j.Kind),
-			State:      string(j.State),
-			CreatedAt:  formatTime(j.CreatedAt),
-			UpdatedAt:  formatTime(j.UpdatedAt),
-			SnapshotID: j.SnapshotID,
-			Error:      j.Error,
-		})
+		out = append(out, toJobResponse(j))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runs": out})
+}
+
+// toJobResponse projects a job record for the client. Everything it carries is
+// metadata the caller is already entitled to: no paths, no key material, and
+// only the sanitized error the runner recorded.
+func toJobResponse(j jobs.Job) jobResponse {
+	return jobResponse{
+		ID:         j.ID,
+		Kind:       string(j.Kind),
+		State:      string(j.State),
+		Trigger:    string(j.Trigger),
+		CreatedAt:  formatTime(j.CreatedAt),
+		UpdatedAt:  formatTime(j.UpdatedAt),
+		FinishedAt: formatTime(j.FinishedAt),
+		FileCount:  j.FileCount,
+		TotalBytes: j.TotalBytes,
+		SnapshotID: j.SnapshotID,
+		Error:      j.Error,
+	}
 }
 
 // writeRunError maps the runner's sentinel errors onto status codes without
@@ -243,6 +281,7 @@ func toConfigResponse(c spacecfg.Config) configResponse {
 		SpaceID:       c.SpaceID,
 		TargetID:      c.TargetID,
 		RetentionDays: int(c.EffectiveRetentionWindow() / (24 * time.Hour)),
+		Schedule:      c.EffectiveSchedule(),
 		Enabled:       c.Enabled,
 		CreatedAt:     formatTime(c.CreatedAt),
 		UpdatedAt:     formatTime(c.UpdatedAt),

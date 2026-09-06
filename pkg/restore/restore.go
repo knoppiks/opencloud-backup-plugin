@@ -252,7 +252,11 @@ func (r *Runner) finish(ctx context.Context, pending run) (Result, error) {
 		return Result{}, err
 	}
 
-	if err := r.deps.Jobs.UpdateState(ctx, pending.job.ID, jobs.StateSucceeded, ""); err != nil {
+	if err := r.deps.Jobs.Finish(ctx, pending.job.ID, jobs.Outcome{
+		State:      jobs.StateSucceeded,
+		FileCount:  stats.files,
+		TotalBytes: stats.bytes,
+	}); err != nil {
 		r.deps.Logger.Warn("could not record job success", "job", pending.job.ID, "err", err)
 	}
 
@@ -449,7 +453,10 @@ func (r *Runner) unwrapDataKey(spaceID string) ([]byte, error) {
 
 // fail records a sanitized failure on the job record.
 func (r *Runner) fail(ctx context.Context, jobID, spaceID string, cause error) {
-	if err := r.deps.Jobs.UpdateState(ctx, jobID, jobs.StateFailed, userMessage(cause)); err != nil {
+	if err := r.deps.Jobs.Finish(ctx, jobID, jobs.Outcome{
+		State: jobs.StateFailed,
+		Error: userMessage(cause),
+	}); err != nil {
 		r.deps.Logger.Warn("could not record job failure", "job", jobID, "err", err)
 	}
 	r.deps.Logger.Error("restore run failed", "space", spaceID, "job", jobID, "err", cause)

@@ -97,18 +97,7 @@ func (m *MemoryStore) Status(spaceID string) (Status, error) {
 	if !ok {
 		return Status{SpaceID: spaceID}, nil
 	}
-	hasRK := rec.RK.Kind == WrapRK
-	hasSRW := rec.SRW.Kind == WrapSRW
-	return Status{
-		SpaceID:    spaceID,
-		Configured: hasRK && hasSRW,
-		HasRK:      hasRK,
-		HasSRW:     hasSRW,
-		RKVersion:  rec.RK.Version,
-		SRWVersion: rec.SRW.Version,
-		CreatedAt:  rec.CreatedAt,
-		UpdatedAt:  rec.UpdatedAt,
-	}, nil
+	return statusOf(*rec), nil
 }
 
 // Delete removes a space's key record. Used by tests and teardown; it does not

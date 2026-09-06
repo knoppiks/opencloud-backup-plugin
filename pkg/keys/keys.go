@@ -33,13 +33,13 @@ const DKSize = 32
 // a blob with nothing but the RK.
 type WrappedDK struct {
 	// Version is the envelope format version (see EnvelopeVersion).
-	Version int
+	Version int `json:"version"`
 	// Kind distinguishes an RK-wrapped envelope from an SRW-wrapped one.
-	Kind WrapKind
+	Kind WrapKind `json:"kind"`
 	// Blob is the opaque wrapped key material. Never logged.
-	Blob []byte
+	Blob []byte `json:"blob,omitempty"`
 	// CreatedAt records when this envelope was produced. Metadata only.
-	CreatedAt time.Time
+	CreatedAt time.Time `json:"created_at,omitzero"`
 }
 
 // WrapKind records which key wrapped a DK.
@@ -77,11 +77,11 @@ func (k WrapKind) String() string {
 // RK envelope itself, so the record stays simple and the envelope stays
 // self-contained.
 type SpaceKeys struct {
-	SpaceID   string
-	RK        WrappedDK
-	SRW       WrappedDK
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	SpaceID   string    `json:"space_id"`
+	RK        WrappedDK `json:"rk,omitzero"`
+	SRW       WrappedDK `json:"srw,omitzero"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Store persists and retrieves wrapped Data Keys per Space. It never stores or

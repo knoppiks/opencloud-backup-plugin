@@ -47,6 +47,8 @@ type GatewayClient interface {
 	// The write path (restore Path B).
 	CreateContainer(ctx context.Context, in *provider.CreateContainerRequest, opts ...grpc.CallOption) (*provider.CreateContainerResponse, error)
 	InitiateFileUpload(ctx context.Context, in *provider.InitiateFileUploadRequest, opts ...grpc.CallOption) (*gateway.InitiateFileUploadResponse, error)
+	// Delete backs the service's own state Space only; no restore path uses it.
+	Delete(ctx context.Context, in *provider.DeleteRequest, opts ...grpc.CallOption) (*provider.DeleteResponse, error)
 }
 
 // Authenticator obtains a reva access token for the worker credential. The
@@ -304,6 +306,11 @@ func (c *Client) stream(ctx context.Context, endpoint, accessToken, transferToke
 			return nil, fmt.Errorf("cs3 download: seek to offset %d: %w", offset, err)
 		}
 		return resp.Body, nil
+	case http.StatusNotFound:
+		_ = resp.Body.Close()
+		// The gateway answers a missing file on the data path with a plain 404;
+		// callers distinguish "not there" from "went wrong" (pkg/cs3state).
+		return nil, ErrNotFound
 	default:
 		_ = resp.Body.Close()
 		// Status only — the response body may echo internal detail.

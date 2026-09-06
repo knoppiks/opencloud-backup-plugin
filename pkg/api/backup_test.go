@@ -270,12 +270,12 @@ func TestListRuns_ReturnsHistoryNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	env := newBackupTestEnv(t)
 
-	first, err := env.jobs.Create(ctx, jobs.Job{SpaceID: "space-alice", Kind: jobs.KindBackup, State: jobs.StateSucceeded})
+	first, err := env.jobs.Create(ctx, jobs.Job{SpaceID: "space-alice", Kind: jobs.KindBackup, State: jobs.StateRunning})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := env.jobs.SetSnapshotID(ctx, first.ID, "snap-1"); err != nil {
-		t.Fatalf("SetSnapshotID: %v", err)
+	if err := env.jobs.Finish(ctx, first.ID, jobs.Outcome{State: jobs.StateSucceeded, SnapshotID: "snap-1"}); err != nil {
+		t.Fatalf("Finish: %v", err)
 	}
 	if _, err := env.jobs.Create(ctx, jobs.Job{SpaceID: "space-bob", Kind: jobs.KindBackup}); err != nil {
 		t.Fatalf("Create other: %v", err)

@@ -55,14 +55,8 @@ func (m *MemoryStore) Get(_ context.Context, spaceID string) (Config, error) {
 
 // Put creates or replaces a Space's configuration, preserving CreatedAt.
 func (m *MemoryStore) Put(_ context.Context, c Config) (Config, error) {
-	if c.SpaceID == "" {
-		return Config{}, fmt.Errorf("spacecfg: space id required")
-	}
-	if c.TargetID == "" {
-		return Config{}, fmt.Errorf("spacecfg: target id required")
-	}
-	if c.RetentionWindow < 0 {
-		return Config{}, fmt.Errorf("spacecfg: retention window must not be negative")
+	if err := validate(c); err != nil {
+		return Config{}, err
 	}
 
 	m.mu.Lock()
@@ -87,6 +81,21 @@ func (m *MemoryStore) Delete(_ context.Context, spaceID string) error {
 		return ErrNotFound{SpaceID: spaceID}
 	}
 	delete(m.configs, spaceID)
+	return nil
+}
+
+// validate rejects a configuration that could not be acted on. It is shared by
+// both Store implementations so they accept exactly the same records.
+func validate(c Config) error {
+	if c.SpaceID == "" {
+		return fmt.Errorf("spacecfg: space id required")
+	}
+	if c.TargetID == "" {
+		return fmt.Errorf("spacecfg: target id required")
+	}
+	if c.RetentionWindow < 0 {
+		return fmt.Errorf("spacecfg: retention window must not be negative")
+	}
 	return nil
 }
 
