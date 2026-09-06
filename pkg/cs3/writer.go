@@ -49,6 +49,9 @@ const (
 // clobbering (decisions.md #3).
 var ErrAlreadyExists = errors.New("cs3: resource already exists")
 
+// ErrNotFound is returned when a space-relative path does not exist.
+var ErrNotFound = errors.New("cs3: resource not found")
+
 // SpaceWriter is the write boundary onto OpenCloud, used by restores.
 type SpaceWriter interface {
 	// MakeDir creates one space-relative directory. It is idempotent: an
@@ -57,6 +60,40 @@ type SpaceWriter interface {
 	// Upload writes size bytes from r to a space-relative path, creating the
 	// file. modTime is preserved where the server supports it.
 	Upload(ctx context.Context, space Space, relPath string, size int64, modTime time.Time, r io.Reader) error
+	// Delete removes one space-relative path, returning ErrNotFound when it
+	// does not exist.
+	//
+	// A restore never calls this — restores only ever create (decisions.md #3).
+	// It exists for the service's own state, which lives in its own Space and
+	// has to be able to drop a released lock or an expired job record.
+	Delete(ctx context.Context, space Space, relPath string) error
+}
+
+// Delete removes a file or directory inside a Space.
+func (c *Client) Delete(ctx context.Context, space Space, relPath string) error {
+	rel := cleanRel(relPath)
+	if rel == "" {
+		// Deleting a space root is never something this service should do.
+		return fmt.Errorf("cs3 delete: refusing to delete a space root")
+	}
+
+	authCtx, _, err := c.authContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	res, err := c.gw.Delete(authCtx, &provider.DeleteRequest{Ref: reference(space, rel)})
+	if err != nil {
+		return fmt.Errorf("cs3 delete: %w", err)
+	}
+	switch res.GetStatus().GetCode() {
+	case rpc.Code_CODE_OK:
+		return nil
+	case rpc.Code_CODE_NOT_FOUND:
+		return fmt.Errorf("%w: %s", ErrNotFound, rel)
+	default:
+		return fmt.Errorf("cs3 Delete: code=%s", res.GetStatus().GetCode())
+	}
 }
 
 var _ SpaceWriter = (*Client)(nil)

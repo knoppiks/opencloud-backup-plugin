@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -114,6 +115,12 @@ func (w *fakeWriter) Upload(_ context.Context, _ cs3.Space, relPath string, size
 	defer w.mu.Unlock()
 	w.files[relPath] = writtenFile{data: data, size: size, modTime: modTime}
 	return nil
+}
+
+// Delete satisfies cs3.SpaceWriter. A restore never deletes anything, and this
+// fake fails loudly if one ever tries.
+func (w *fakeWriter) Delete(_ context.Context, _ cs3.Space, relPath string) error {
+	return fmt.Errorf("restore attempted to delete %q; restores never delete", relPath)
 }
 
 func (w *fakeWriter) written() map[string]writtenFile {

@@ -95,6 +95,46 @@ spec:
         #   value: "10485760"
         - name: BACKUP_WORK_DIR
           value: "/tmp"
+        # Phase 6 — durable state. The service keeps its own memory (schedules,
+        # run history, wrapped key envelopes, target records) in a dedicated
+        # OpenCloud Space reached over CS3 with the service account. That Space
+        # must be one NO END USER IS A MEMBER OF: a member could delete the
+        # service's state, and this is not a user's document. Without it the
+        # service falls back to in-memory state and says so at startup —
+        # schedules and history then die with the pod.
+        - name: STATE_SPACE_ID
+          value: ""
+        # - name: STATE_PREFIX
+        #   value: ".backup-service-state"
+        # Phase 6 — scheduling. All optional.
+        #   SCHEDULE_TIMEZONE          schedules are local time to the family,
+        #                              e.g. "Europe/Berlin" (default UTC).
+        #   SCHEDULER_MAX_CONCURRENT   simultaneous scheduled runs (default 2).
+        #   JOB_HISTORY_DAYS           how long finished runs are kept
+        #                              (default 365; time-based, like every
+        #                              retention here — decisions.md #10).
+        # - name: SCHEDULE_TIMEZONE
+        #   value: "Europe/Berlin"
+        # - name: SCHEDULER_MAX_CONCURRENT
+        #   value: "2"
+        # - name: JOB_HISTORY_DAYS
+        #   value: "365"
+        # Phase 6 — operator notifications. Space members' notifications are
+        # recorded and served through the API; these settings only add email
+        # delivery for OPERATOR events, which never name a Space or a user
+        # (decisions.md #15). Without them notifications are recorded and logged.
+        # - name: NOTIFY_OPERATOR_EMAIL
+        #   value: "admin@example.org"
+        # - name: SMTP_HOST
+        #   value: "smtp.example.org"
+        # - name: SMTP_PORT
+        #   value: "587"
+        # - name: SMTP_FROM
+        #   value: "backup@example.org"
+        # - name: SMTP_USERNAME
+        #   value: "backup"
+        # - name: SMTP_PASSWORD
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: smtp-password } }
         envFrom:
         - configMapRef:
             name: opencloud-backup-bootstrap-target

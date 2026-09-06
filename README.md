@@ -57,6 +57,16 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
   S3-compatible).
 - **Two recovery paths:** admin Take-Out + offline decrypt (works even when
   OpenCloud is completely down), and user-driven restore back into OpenCloud.
+- **Scheduling:** each Space runs on a schedule (nightly by default), unattended
+  and server-side, with a per-Space lock so runs never overlap. Runs are staggered
+  so they do not all start at once, at most a couple run at a time, and a service
+  restart neither repeats a run nor loses one. If a Space stops backing up
+  successfully, its members are told — a backup that quietly died is the failure
+  this is most worried about.
+- **No database.** The service keeps its own state (schedules, run history,
+  wrapped key envelopes, target records) in a dedicated OpenCloud Space, so a
+  deployment needs no second storage system. That Space must not be one an end
+  user belongs to.
 
 ## Recovery runbook
 

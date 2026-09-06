@@ -49,6 +49,11 @@ type Server struct {
 	// no admin equivalent (decisions.md #2).
 	restorer restoreRunner
 
+	// schedules answers "when does this Space run next" using the scheduler's
+	// own arithmetic; notifications serves a Space's own event feed (Phase 6).
+	schedules     scheduleAdvisor
+	notifications notificationReader
+
 	// ready reports readiness for GET /readyz; defaults to always-ready.
 	ready func(context.Context) error
 }
@@ -90,6 +95,16 @@ func WithJobStore(st jobs.Store) Option { return func(s *Server) { s.jobStore = 
 // WithRestoreRunner sets the worker that lists snapshots and executes Path B
 // restores. It is satisfied by *restore.Runner.
 func WithRestoreRunner(r restoreRunner) Option { return func(s *Server) { s.restorer = r } }
+
+// WithScheduleAdvisor sets the source of "next run" times. It is satisfied by
+// *scheduler.Scheduler.
+func WithScheduleAdvisor(a scheduleAdvisor) Option { return func(s *Server) { s.schedules = a } }
+
+// WithNotificationStore sets the store backing a Space's notification feed. It
+// is satisfied by *notify.StateStore.
+func WithNotificationStore(n notificationReader) Option {
+	return func(s *Server) { s.notifications = n }
+}
 
 // WithReadiness sets the readiness probe for GET /readyz.
 func WithReadiness(fn func(context.Context) error) Option {
@@ -137,6 +152,14 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/spaces/{id}/backup/config", authed(s.handlePutBackupConfig))
 	s.mux.Handle("POST /api/v1/spaces/{id}/backup/run", authed(s.handleRunBackup))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs", authed(s.handleListRuns))
+
+	// Scheduling and status (Phase 6). Same membership gate; a schedule is
+	// only accepted for a Space already bound to a granted target, so this is
+	// not a second way to configure backup.
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/status", authed(s.handleBackupStatus))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/schedule", authed(s.handleGetSchedule))
+	s.mux.Handle("PUT /api/v1/spaces/{id}/backup/schedule", authed(s.handlePutSchedule))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/notifications", authed(s.handleListNotifications))
 
 	// Restore (Phase 5, Path B). Member-gated like everything space-scoped;
 	// an admin who is not a member is refused exactly like any non-member.

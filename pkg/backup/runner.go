@@ -146,10 +146,24 @@ type run struct {
 	release   func()
 }
 
-// RunBackup performs one backup run for a Space and waits for it to finish.
-// The scheduler (Phase 6) and tests use this; the HTTP trigger uses StartBackup.
+// RunBackup performs one user-requested backup run and waits for it to finish.
+// The HTTP trigger uses StartBackup; this is the synchronous variant.
 func (r *Runner) RunBackup(ctx context.Context, spaceID string) (Result, error) {
-	pending, err := r.begin(ctx, spaceID)
+	return r.run(ctx, spaceID, jobs.TriggerManual)
+}
+
+// RunScheduled performs one unattended run for the scheduler. It differs from
+// RunBackup only in what the job record says started it — which is what lets
+// the status board tell "your backup ran last night" from "you pressed the
+// button". The credentials and the code path are identical: the SRW-wrapped
+// Data Key (decisions.md #1), with no user session involved.
+func (r *Runner) RunScheduled(ctx context.Context, spaceID string) (Result, error) {
+	return r.run(ctx, spaceID, jobs.TriggerSchedule)
+}
+
+// run executes one backup run to completion.
+func (r *Runner) run(ctx context.Context, spaceID string, trigger jobs.Trigger) (Result, error) {
+	pending, err := r.begin(ctx, spaceID, trigger)
 	if err != nil {
 		return Result{}, err
 	}
@@ -162,7 +176,7 @@ func (r *Runner) RunBackup(ctx context.Context, spaceID string) (Result, error) 
 // run lock — is resolved before returning, so the caller gets a real answer
 // rather than a job that immediately fails.
 func (r *Runner) StartBackup(ctx context.Context, spaceID string) (string, error) {
-	pending, err := r.begin(ctx, spaceID)
+	pending, err := r.begin(ctx, spaceID, jobs.TriggerManual)
 	if err != nil {
 		return "", err
 	}
@@ -180,7 +194,7 @@ func (r *Runner) StartBackup(ctx context.Context, spaceID string) (string, error
 
 // begin takes the Space's run lock and opens a job record. On error the lock is
 // already released.
-func (r *Runner) begin(ctx context.Context, spaceID string) (run, error) {
+func (r *Runner) begin(ctx context.Context, spaceID string, trigger jobs.Trigger) (run, error) {
 	if spaceID == "" {
 		return run{}, ErrSpaceNotFound
 	}
@@ -205,6 +219,7 @@ func (r *Runner) begin(ctx context.Context, spaceID string) (run, error) {
 		SpaceID: spaceID,
 		Kind:    jobs.KindBackup,
 		State:   jobs.StateRunning,
+		Trigger: trigger,
 	})
 	if err != nil {
 		release()
@@ -224,10 +239,12 @@ func (r *Runner) finish(ctx context.Context, pending run) (Result, error) {
 		return Result{}, err
 	}
 
-	if err := r.deps.Jobs.SetSnapshotID(ctx, pending.job.ID, string(info.ID)); err != nil {
-		r.deps.Logger.Warn("could not record snapshot id", "job", pending.job.ID, "err", err)
-	}
-	if err := r.deps.Jobs.UpdateState(ctx, pending.job.ID, jobs.StateSucceeded, ""); err != nil {
+	if err := r.deps.Jobs.Finish(ctx, pending.job.ID, jobs.Outcome{
+		State:      jobs.StateSucceeded,
+		SnapshotID: string(info.ID),
+		FileCount:  info.FileCount,
+		TotalBytes: info.TotalBytes,
+	}); err != nil {
 		r.deps.Logger.Warn("could not record job success", "job", pending.job.ID, "err", err)
 	}
 
@@ -432,7 +449,10 @@ func (r *Runner) unwrapDataKey(spaceID string) ([]byte, error) {
 
 // fail records a sanitized failure on the job record.
 func (r *Runner) fail(ctx context.Context, jobID, spaceID string, cause error) {
-	if err := r.deps.Jobs.UpdateState(ctx, jobID, jobs.StateFailed, userMessage(cause)); err != nil {
+	if err := r.deps.Jobs.Finish(ctx, jobID, jobs.Outcome{
+		State: jobs.StateFailed,
+		Error: userMessage(cause),
+	}); err != nil {
 		r.deps.Logger.Warn("could not record job failure", "job", jobID, "err", err)
 	}
 	r.deps.Logger.Error("backup run failed", "space", spaceID, "job", jobID, "err", cause)

@@ -11,9 +11,11 @@ require (
 	github.com/aws/smithy-go v1.27.4
 	github.com/cs3org/go-cs3apis v0.0.0-20260424072047-8d9ef7076ae9
 	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/hashicorp/cronexpr v1.1.3
 	github.com/kopia/kopia v0.23.1
 	github.com/testcontainers/testcontainers-go v0.43.0
 	golang.org/x/crypto v0.52.0
+	golang.org/x/term v0.45.0
 	google.golang.org/grpc v1.82.1
 )
 
@@ -59,7 +61,6 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/hashicorp/cronexpr v1.1.3 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
@@ -115,7 +116,6 @@ require (
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect

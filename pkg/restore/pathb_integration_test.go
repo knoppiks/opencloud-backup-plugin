@@ -218,6 +218,12 @@ func (m *memSpace) Upload(_ context.Context, _ cs3.Space, relPath string, size i
 	return nil
 }
 
+// Delete satisfies cs3.SpaceWriter. A restore never deletes anything, so
+// reaching this is a bug worth failing on.
+func (m *memSpace) Delete(_ context.Context, _ cs3.Space, relPath string) error {
+	return fmt.Errorf("memSpace: restore attempted to delete %q", relPath)
+}
+
 // --- fixture ---------------------------------------------------------------
 
 type fixture struct {

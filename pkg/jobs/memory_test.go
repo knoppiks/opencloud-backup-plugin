@@ -65,7 +65,7 @@ func TestCreate_Validation(t *testing.T) {
 	}
 }
 
-func TestUpdateState_AndSnapshotID(t *testing.T) {
+func TestFinish_RecordsOutcomeInOneWrite(t *testing.T) {
 	ctx := context.Background()
 	store, clock := newStore(t)
 
@@ -75,11 +75,13 @@ func TestUpdateState_AndSnapshotID(t *testing.T) {
 	}
 
 	clock.Advance(time.Minute)
-	if err := store.SetSnapshotID(ctx, j.ID, "snap-1"); err != nil {
-		t.Fatalf("SetSnapshotID: %v", err)
-	}
-	if err := store.UpdateState(ctx, j.ID, StateSucceeded, ""); err != nil {
-		t.Fatalf("UpdateState: %v", err)
+	if err := store.Finish(ctx, j.ID, Outcome{
+		State:      StateSucceeded,
+		SnapshotID: "snap-1",
+		FileCount:  7,
+		TotalBytes: 4096,
+	}); err != nil {
+		t.Fatalf("Finish: %v", err)
 	}
 
 	got, err := store.Get(ctx, j.ID)
@@ -89,29 +91,142 @@ func TestUpdateState_AndSnapshotID(t *testing.T) {
 	if got.State != StateSucceeded || got.SnapshotID != "snap-1" {
 		t.Fatalf("job = %+v", got)
 	}
-	if !got.UpdatedAt.Equal(epoch.Add(time.Minute)) {
-		t.Fatalf("UpdatedAt = %v", got.UpdatedAt)
+	if got.FileCount != 7 || got.TotalBytes != 4096 {
+		t.Fatalf("counts not recorded: %+v", got)
+	}
+	if !got.UpdatedAt.Equal(epoch.Add(time.Minute)) || !got.FinishedAt.Equal(epoch.Add(time.Minute)) {
+		t.Fatalf("timestamps = %+v", got)
 	}
 	if !got.CreatedAt.Equal(epoch) {
 		t.Fatalf("CreatedAt changed: %v", got.CreatedAt)
 	}
+	if got.Duration() != time.Minute {
+		t.Fatalf("Duration = %v", got.Duration())
+	}
 }
 
-func TestUpdateState_Validation(t *testing.T) {
+func TestFinish_Validation(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newStore(t)
 
 	var nf ErrNotFound
-	if err := store.UpdateState(ctx, "absent", StateFailed, "x"); !errors.As(err, &nf) {
-		t.Fatalf("UpdateState error = %v, want ErrNotFound", err)
-	}
-	if err := store.SetSnapshotID(ctx, "absent", "s"); !errors.As(err, &nf) {
-		t.Fatalf("SetSnapshotID error = %v, want ErrNotFound", err)
+	if err := store.Finish(ctx, "absent", Outcome{State: StateFailed}); !errors.As(err, &nf) {
+		t.Fatalf("Finish error = %v, want ErrNotFound", err)
 	}
 
 	j, _ := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup})
-	if err := store.UpdateState(ctx, j.ID, "", ""); err == nil {
-		t.Fatal("empty state must be rejected")
+	if err := store.Finish(ctx, j.ID, Outcome{State: StateRunning}); !errors.Is(err, ErrNotTerminal) {
+		t.Fatalf("non-terminal Finish = %v, want ErrNotTerminal", err)
+	}
+}
+
+func TestCreate_DefaultsToManualTrigger(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newStore(t)
+
+	j, err := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if j.Trigger != TriggerManual {
+		t.Fatalf("Trigger = %q, want %q", j.Trigger, TriggerManual)
+	}
+
+	scheduled, err := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup, Trigger: TriggerSchedule})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if scheduled.Trigger != TriggerSchedule {
+		t.Fatalf("Trigger = %q, want %q", scheduled.Trigger, TriggerSchedule)
+	}
+}
+
+func TestListRecent_AppliesLimit(t *testing.T) {
+	ctx := context.Background()
+	store, clock := newStore(t)
+
+	var ids []string
+	for range 5 {
+		j, err := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		ids = append(ids, j.ID)
+		clock.Advance(time.Minute)
+	}
+
+	got, err := store.ListRecent(ctx, "s1", 2)
+	if err != nil {
+		t.Fatalf("ListRecent: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 jobs, got %d", len(got))
+	}
+	if got[0].ID != ids[4] || got[1].ID != ids[3] {
+		t.Fatal("ListRecent must return the newest jobs, newest first")
+	}
+
+	all, err := store.ListRecent(ctx, "s1", 0)
+	if err != nil {
+		t.Fatalf("ListRecent all: %v", err)
+	}
+	if len(all) != 5 {
+		t.Fatalf("limit 0 must mean all, got %d", len(all))
+	}
+}
+
+func TestPruneBefore_KeepsRunningAndRecentJobs(t *testing.T) {
+	ctx := context.Background()
+	store, clock := newStore(t)
+
+	old, _ := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup, State: StateRunning})
+	if err := store.Finish(ctx, old.ID, Outcome{State: StateSucceeded}); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	stuck, _ := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup, State: StateRunning})
+
+	clock.Advance(48 * time.Hour)
+	recent, _ := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup, State: StateRunning})
+	if err := store.Finish(ctx, recent.ID, Outcome{State: StateFailed, Error: "nope"}); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	removed, err := store.PruneBefore(ctx, epoch.Add(24*time.Hour))
+	if err != nil {
+		t.Fatalf("PruneBefore: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed = %d, want 1", removed)
+	}
+
+	if _, err := store.Get(ctx, old.ID); err == nil {
+		t.Fatal("finished job older than the cutoff must be pruned")
+	}
+	// A run still marked running is never pruned: recovery, not retention,
+	// decides its fate.
+	if _, err := store.Get(ctx, stuck.ID); err != nil {
+		t.Fatalf("running job was pruned: %v", err)
+	}
+	if _, err := store.Get(ctx, recent.ID); err != nil {
+		t.Fatalf("recent job was pruned: %v", err)
+	}
+}
+
+func TestLastOf(t *testing.T) {
+	list := []Job{
+		{ID: "3", Kind: KindBackup, State: StateFailed},
+		{ID: "2", Kind: KindRestore, State: StateSucceeded},
+		{ID: "1", Kind: KindBackup, State: StateSucceeded},
+	}
+
+	if j, ok := LastOf(list, KindBackup, ""); !ok || j.ID != "3" {
+		t.Fatalf("last backup = %+v, %v", j, ok)
+	}
+	if j, ok := LastOf(list, KindBackup, StateSucceeded); !ok || j.ID != "1" {
+		t.Fatalf("last successful backup = %+v, %v", j, ok)
+	}
+	if _, ok := LastOf(list, KindPrune, ""); ok {
+		t.Fatal("no prune job exists")
 	}
 }
 

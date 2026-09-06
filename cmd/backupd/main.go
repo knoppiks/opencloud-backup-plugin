@@ -1,11 +1,12 @@
 // Command backupd is the main backup service: HTTP API + worker + scheduler.
 // It stays thin — all logic lives in /pkg/* behind interfaces (AGENTS.md layout
 // rule). Phase 2 wired the authenticated user API over the CS3 gateway; Phase 4
-// adds the backup pipeline (CS3 -> kopia -> S3 target) behind a manual trigger.
+// added the backup pipeline (CS3 -> kopia -> S3 target); Phase 6 makes it run
+// unattended: durable state, a scheduler, and notifications.
 //
 // Secrets arrive only through Secret-backed environment variables and are never
-// logged: SRW_KEY (Data-Key custody), TW_KEY (target-credential custody), and
-// the OpenCloud service-account credentials.
+// logged: SRW_KEY (Data-Key custody), TW_KEY (target-credential custody),
+// SMTP_PASSWORD, and the OpenCloud service-account credentials.
 package main
 
 import (
@@ -19,8 +20,13 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+
+	// The timezone database is embedded so schedules can be expressed in the
+	// family's local time from a scratch container (SCHEDULE_TIMEZONE).
+	_ "time/tzdata"
 
 	gateway "github.com/cs3org/go-cs3apis/cs3/gateway/v1beta1"
 	"github.com/kopia/kopia/repo/blob/throttling"
@@ -30,19 +36,36 @@ import (
 	"opencloud-backup-plugin/pkg/api"
 	"opencloud-backup-plugin/pkg/backup"
 	"opencloud-backup-plugin/pkg/cs3"
+	"opencloud-backup-plugin/pkg/cs3state"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
+	"opencloud-backup-plugin/pkg/notify"
 	"opencloud-backup-plugin/pkg/restore"
+	"opencloud-backup-plugin/pkg/scheduler"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/spacecfg"
+	"opencloud-backup-plugin/pkg/state"
 	"opencloud-backup-plugin/pkg/takeout"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
+// schedulerDrainTimeout bounds how long shutdown waits for in-flight scheduled
+// runs. A backup can legitimately take hours, so waiting for one to finish is
+// not an option; a run cut short here fails through the normal path, or — if
+// the process dies first — is recovered from its lease on the next start.
+const schedulerDrainTimeout = 30 * time.Second
+
+// service is everything main runs: the HTTP API and, when configured, the
+// scheduler that makes backups unattended.
+type service struct {
+	api       *api.Server
+	scheduler *scheduler.Scheduler
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	srv, cleanup, err := buildServer(context.Background(), logger)
+	svc, cleanup, err := buildService(context.Background(), logger)
 	if err != nil {
 		logger.Error("startup failed", "err", err)
 		os.Exit(1)
@@ -52,12 +75,23 @@ func main() {
 	addr := envOr("BACKUPD_ADDR", ":8080")
 	httpSrv := &http.Server{
 		Addr:              addr,
-		Handler:           srv.Handler(),
+		Handler:           svc.api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	var workers sync.WaitGroup
+	if svc.scheduler != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			if err := svc.scheduler.Run(ctx); err != nil {
+				logger.Error("scheduler stopped", "err", err)
+			}
+		}()
+	}
 
 	go func() {
 		logger.Info("backupd listening", "addr", addr)
@@ -76,12 +110,31 @@ func main() {
 		logger.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
 	}
+	if !waitFor(&workers, schedulerDrainTimeout) {
+		logger.Warn("scheduled runs did not stop in time; their locks expire on their own")
+	}
 }
 
-// buildServer wires the API from environment configuration. Missing OIDC/CS3
-// config is tolerated so the health endpoint stays up (protected routes then
-// fail closed), but a misconfigured value that we can detect is a hard error.
-func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(), error) {
+// waitFor waits for wg, reporting whether it finished within d.
+func waitFor(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// buildService wires the API and scheduler from environment configuration.
+// Missing OIDC/CS3 config is tolerated so the health endpoint stays up
+// (protected routes then fail closed), but a misconfigured value that we can
+// detect is a hard error.
+func buildService(ctx context.Context, logger *slog.Logger) (service, func(), error) {
 	var opts []api.Option
 	cleanup := func() {}
 
@@ -90,7 +143,7 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 	if issuer != "" {
 		ks, err := api.DiscoverKeySet(ctx, issuer, httpClient(), time.Hour)
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 		v, err := api.NewOIDCValidator(api.OIDCConfig{
 			Issuer:   issuer,
@@ -98,7 +151,7 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 			KeySet:   ks,
 		})
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 		opts = append(opts, api.WithTokenValidator(v))
 	} else {
@@ -122,11 +175,12 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 	var (
 		spaceReader cs3.SpaceReader
 		spaceWriter cs3.SpaceWriter
+		cs3Client   *cs3.Client
 	)
 	if addr := os.Getenv("CS3_GATEWAY_ADDR"); addr != "" {
 		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 		cleanup = func() { _ = conn.Close() }
 		gw := gateway.NewGatewayAPIClient(conn)
@@ -138,32 +192,41 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 		client := cs3.NewClient(gw, auth, cs3.WithHTTPClient(dataGatewayClient()))
 		spaceReader = client
 		spaceWriter = client
+		cs3Client = client
 		opts = append(opts, api.WithSpaceReader(client))
 	} else {
 		logger.Warn("CS3_GATEWAY_ADDR unset; /api/v1/spaces will be unavailable")
 	}
 
+	// --- durable state (Phase 6) -----------------------------------------
+	// Everything the service remembers — schedules, run history, wrapped key
+	// envelopes, target records — lives in a dedicated OpenCloud Space. See
+	// pkg/cs3state for the trade-offs; the short version is that a scheduler
+	// whose memory dies with the process cannot tell a missed run from a fresh
+	// install.
+	backing, err := buildStateStore(cs3Client, logger)
+	if err != nil {
+		return service{}, cleanup, err
+	}
+
 	// --- target store / authorizer ---------------------------------------
-	// Phase 2 uses the in-memory store as the reference authorizer; a persistent
-	// store lands with the admin target-management phase. Bootstrap seeding
-	// (non-secret metadata) is out of scope here.
-	targetStore := targets.NewMemoryStore()
+	targetStore := targets.NewStateStore(backing)
 	opts = append(opts, api.WithAuthorizer(targetStore))
 
 	// --- key service (Phase 3) -------------------------------------------
 	// The SRW key is cluster/KMS custody (decisions.md #1): it arrives via a
 	// Secret-backed env var, is used to wrap/unwrap DKs, and is NEVER logged.
 	// Without it the backup key endpoints stay unavailable rather than running
-	// in a degraded, insecure mode.
+	// in a degraded, insecure mode. The store holds wrapped envelopes only.
 	var srwWrapper *keys.SRWWrapper
-	keyStore := keys.NewMemoryStore()
+	keyStore := keys.NewStateStore(backing, nil)
 	if srwKey, err := loadWrapKey("SRW_KEY"); err != nil {
-		return nil, cleanup, err
+		return service{}, cleanup, err
 	} else if srwKey != nil {
 		srwWrapper, err = keys.NewSRWWrapper(srwKey)
 		keys.Zeroize(srwKey)
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 		opts = append(opts, api.WithKeyStore(keyStore), api.WithSRWWrapper(srwWrapper))
 		logger.Info("key service enabled")
@@ -176,12 +239,12 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 	// target-credential custody rotate independently.
 	var credSealer targets.CredSealer
 	if twKey, err := loadWrapKey("TW_KEY"); err != nil {
-		return nil, cleanup, err
+		return service{}, cleanup, err
 	} else if twKey != nil {
 		credSealer, err = targets.NewCredSealer(twKey)
 		keys.Zeroize(twKey)
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 		logger.Info("target credential sealing enabled")
 	} else {
@@ -195,7 +258,7 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 		cfg := bootstrapConfig()
 		seeded, err := targets.Bootstrap(ctx, targetStore, credSealer, cfg)
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 		if seeded {
 			// Name and bucket are non-secret; credentials are never logged.
@@ -204,18 +267,52 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 	}
 
 	// --- backup pipeline (Phase 4) ---------------------------------------
-	spaceConfigs := spacecfg.NewMemoryStore()
-	jobStore := jobs.NewMemoryStore()
+	spaceConfigs := spacecfg.NewStateStore(backing, nil)
+	jobStore := jobs.NewStateStore(backing, nil)
 	opts = append(opts, api.WithSpaceConfigStore(spaceConfigs), api.WithJobStore(jobStore))
+
+	// The run lock is a lease so a crashed process cannot hold a Space forever.
+	locker, err := jobs.NewLeaseLocker(backing, jobs.LeaseOptions{Logger: logger})
+	if err != nil {
+		return service{}, cleanup, err
+	}
+	// Anything left running by a previous incarnation is closed out before this
+	// one starts scheduling, so history never shows an eternal "running".
+	if recovered, err := locker.Recover(ctx, jobStore); err != nil {
+		logger.Warn("could not recover abandoned runs at startup", "err", err)
+	} else if recovered > 0 {
+		logger.Warn("closed out runs abandoned by a previous process", "jobs", recovered)
+	}
+
+	// --- notifications (Phase 6) -----------------------------------------
+	events := notify.NewStateStore(backing, nil)
+	notifier, err := buildNotifier(events, logger)
+	if err != nil {
+		return service{}, cleanup, err
+	}
+	monitor, err := notify.NewMonitor(notify.MonitorDeps{
+		Configs:  spaceConfigs,
+		Jobs:     jobStore,
+		Events:   events,
+		Notifier: notifier,
+		Logger:   logger,
+	}, notify.MonitorOptions{})
+	if err != nil {
+		return service{}, cleanup, err
+	}
+	reporter := notify.NewReporter(notifier, classifyRunFailure, logger)
+	opts = append(opts, api.WithNotificationStore(events))
+
+	var sched *scheduler.Scheduler
 
 	if spaceReader != nil && srwWrapper != nil && credSealer != nil {
 		limits, err := bandwidthLimits()
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 		parallelism, err := envInt("BACKUP_PARALLELISM", 0)
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 
 		engine, err := snapshot.NewEngine(snapshot.S3Opener{Limits: limits}, snapshot.EngineOptions{
@@ -223,7 +320,7 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 			WorkDir:     os.Getenv("BACKUP_WORK_DIR"),
 		})
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 
 		runner, err := backup.NewRunner(backup.Deps{
@@ -235,7 +332,7 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 			Unwrap:  srwWrapper,
 			Engine:  engine,
 			Jobs:    jobStore,
-			Locks:   jobStore,
+			Locks:   locker,
 			// Publishing the RK-wrapped envelope to the target is what makes an
 			// admin Take-Out self-contained, so Path A works with OpenCloud
 			// down. It is ciphertext the server cannot open (Phase 5).
@@ -243,7 +340,7 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 			Logger:    logger,
 		})
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 		opts = append(opts, api.WithBackupRunner(runner))
 
@@ -259,15 +356,38 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 			Unwrap:  srwWrapper,
 			Engine:  engine,
 			Jobs:    jobStore,
-			Locks:   jobStore,
+			Locks:   locker,
 			Logger:  logger,
 		})
 		if err != nil {
-			return nil, cleanup, err
+			return service{}, cleanup, err
 		}
 		opts = append(opts, api.WithRestoreRunner(restorer))
 
 		logger.Info("backup and restore pipelines enabled", "parallelism", parallelism)
+
+		// --- scheduler (Phase 6) ------------------------------------------
+		schedOpts, err := schedulerOptions()
+		if err != nil {
+			return service{}, cleanup, err
+		}
+		sched, err = scheduler.New(scheduler.Deps{
+			Configs: spaceConfigs,
+			Jobs:    jobStore,
+			Runner: scheduler.RunnerFunc(func(ctx context.Context, spaceID string) error {
+				_, err := runner.RunScheduled(ctx, spaceID)
+				return err
+			}),
+			Recoverer:     locker,
+			Clock:         scheduler.SystemClock(),
+			Logger:        logger,
+			OnRunFinished: reporter.RunFinished,
+			OnTick:        monitor.Sweep,
+		}, schedOpts)
+		if err != nil {
+			return service{}, cleanup, err
+		}
+		opts = append(opts, api.WithScheduleAdvisor(sched))
 	} else {
 		logger.Warn("backup pipeline disabled; CS3_GATEWAY_ADDR, SRW_KEY and TW_KEY are all required")
 	}
@@ -275,7 +395,113 @@ func buildServer(ctx context.Context, logger *slog.Logger) (*api.Server, func(),
 	// --- readiness --------------------------------------------------------
 	opts = append(opts, api.WithReadiness(readiness(spaceReader)))
 
-	return api.NewServer(opts...), cleanup, nil
+	return service{api: api.NewServer(opts...), scheduler: sched}, cleanup, nil
+}
+
+// buildStateStore chooses where the service keeps its own state. Without a
+// state Space it degrades to memory and says so loudly: that mode is only
+// sensible for a smoke test, because schedules, history and key envelopes then
+// vanish on restart.
+func buildStateStore(client *cs3.Client, logger *slog.Logger) (state.Store, error) {
+	spaceID := os.Getenv("STATE_SPACE_ID")
+	if spaceID == "" || client == nil {
+		logger.Warn("STATE_SPACE_ID unset or CS3 unavailable; service state is in memory only. " +
+			"Schedules, run history and key envelopes will not survive a restart")
+		return state.NewMemoryStore(), nil
+	}
+
+	store, err := cs3state.New(client, cs3state.Options{
+		SpaceID: spaceID,
+		Prefix:  envOr("STATE_PREFIX", cs3state.DefaultPrefix),
+	})
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("service state persisted in OpenCloud", "space", spaceID)
+	return store, nil
+}
+
+// buildNotifier wires the delivery sinks. Logs are always a sink; SMTP is added
+// when the operator configured a mail server. The password is read from a
+// Secret-backed variable and never logged.
+func buildNotifier(events notify.Store, logger *slog.Logger) (*notify.Notifier, error) {
+	sinks := []notify.Sink{notify.LogSink{Logger: logger}}
+
+	port, err := envInt("SMTP_PORT", 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg := notify.SMTPConfig{
+		Host:       os.Getenv("SMTP_HOST"),
+		Port:       port,
+		Username:   os.Getenv("SMTP_USERNAME"),
+		Password:   os.Getenv("SMTP_PASSWORD"),
+		From:       os.Getenv("SMTP_FROM"),
+		OperatorTo: os.Getenv("NOTIFY_OPERATOR_EMAIL"),
+	}
+	if cfg.Valid() {
+		sink, err := notify.NewSMTPSink(cfg)
+		if err != nil {
+			return nil, err
+		}
+		sinks = append(sinks, sink)
+		logger.Info("operator notifications will be emailed", "host", cfg.Host, "port", cfg.Port)
+	} else {
+		logger.Info("no SMTP configuration; notifications are recorded and logged only")
+	}
+
+	return notify.New(events, notify.Options{Sinks: sinks, Logger: logger})
+}
+
+// schedulerOptions reads the scheduler's tuning from the environment.
+func schedulerOptions() (scheduler.Options, error) {
+	maxConcurrent, err := envInt("SCHEDULER_MAX_CONCURRENT", 0)
+	if err != nil {
+		return scheduler.Options{}, err
+	}
+	historyDays, err := envInt("JOB_HISTORY_DAYS", 0)
+	if err != nil {
+		return scheduler.Options{}, err
+	}
+
+	opts := scheduler.Options{
+		MaxConcurrent: maxConcurrent,
+		HistoryWindow: time.Duration(historyDays) * 24 * time.Hour,
+		Location:      time.UTC,
+	}
+	if name := os.Getenv("SCHEDULE_TIMEZONE"); name != "" {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			return scheduler.Options{}, fmt.Errorf("SCHEDULE_TIMEZONE %q is not a known timezone", name)
+		}
+		opts.Location = loc
+	}
+	return opts, nil
+}
+
+// classifyRunFailure decides who hears about a failed run. Only failures the
+// operator can actually fix produce an operator event, and that event never
+// names the Space (decisions.md #15) — which is why the classification lives
+// here, where both the pipeline's errors and the notifier are in scope.
+func classifyRunFailure(err error) notify.Classification {
+	switch {
+	case errors.Is(err, backup.ErrTargetUnavailable):
+		return notify.Classification{
+			MemberMessage:   "The backup target is unavailable, so this space was not backed up.",
+			Operational:     true,
+			OperatorMessage: "A backup target could not be used. Check its endpoint, bucket and credentials.",
+		}
+	case errors.Is(err, backup.ErrNotConfigured):
+		return notify.Classification{
+			MemberMessage: "Backup is not set up for this space, so nothing was backed up.",
+		}
+	case errors.Is(err, backup.ErrRunInProgress), errors.Is(err, context.Canceled):
+		// Neither is a failure anybody needs to hear about: one means a run was
+		// already happening, the other that the service was shutting down.
+		return notify.Classification{Silent: true}
+	default:
+		return notify.DefaultClassification()
+	}
 }
 
 // bootstrapConfig reads the optional default-target configuration. The

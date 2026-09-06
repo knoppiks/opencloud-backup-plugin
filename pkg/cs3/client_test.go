@@ -64,6 +64,12 @@ type fakeGateway struct {
 	// uploadOpaque its opaque map.
 	uploadedRefPath string
 	uploadOpaque    map[string]string
+
+	// --- delete path (the service's own state space) ---
+	// deletedRefPath records the reference path of the last delete, and
+	// deleteStatus overrides its status code.
+	deletedRefPath string
+	deleteStatus   rpc.Code
 }
 
 func okStatus(c rpc.Code) *rpc.Status {
@@ -132,6 +138,11 @@ func (f *fakeGateway) InitiateFileDownload(_ context.Context, in *provider.Initi
 func (f *fakeGateway) CreateContainer(_ context.Context, in *provider.CreateContainerRequest, _ ...grpc.CallOption) (*provider.CreateContainerResponse, error) {
 	f.createdDirs = append(f.createdDirs, in.GetRef().GetPath())
 	return &provider.CreateContainerResponse{Status: okStatus(f.createStatus)}, nil
+}
+
+func (f *fakeGateway) Delete(_ context.Context, in *provider.DeleteRequest, _ ...grpc.CallOption) (*provider.DeleteResponse, error) {
+	f.deletedRefPath = in.GetRef().GetPath()
+	return &provider.DeleteResponse{Status: okStatus(f.deleteStatus)}, nil
 }
 
 func (f *fakeGateway) InitiateFileUpload(_ context.Context, in *provider.InitiateFileUploadRequest, _ ...grpc.CallOption) (*gateway.InitiateFileUploadResponse, error) {

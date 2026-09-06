@@ -1,8 +1,12 @@
 package jobs
 
-// In-memory Store + Locker. This is the implementation Phase 4 wires; Phase 6
-// replaces it with a persistent store (and, if the service is ever scaled out,
-// a lock that is not process-local — noted in the phase-6 plan).
+// In-memory Store + Locker: the reference implementation and the test double.
+//
+// The service runs the state-backed store (state.go) in production, because a
+// scheduler whose history dies with the process cannot tell a missed run from a
+// fresh install. This implementation stays because it is the fastest possible
+// double for the runner and API tests, and because it defines the behaviour the
+// persistent store is tested against.
 
 import (
 	"context"
@@ -13,15 +17,6 @@ import (
 	"sync"
 	"time"
 )
-
-// Clock supplies the current time, injected so tests are deterministic.
-type Clock interface {
-	Now() time.Time
-}
-
-type systemClock struct{}
-
-func (systemClock) Now() time.Time { return time.Now().UTC() }
 
 // MemoryStore is a concurrency-safe in-memory Store and Locker.
 type MemoryStore struct {
@@ -55,21 +50,9 @@ func NewMemoryStoreWithClock(clock Clock) *MemoryStore {
 
 // Create records a new job, generating an id and timestamps when absent.
 func (m *MemoryStore) Create(_ context.Context, j Job) (Job, error) {
-	if j.SpaceID == "" {
-		return Job{}, fmt.Errorf("jobs: space id required")
-	}
-	if j.Kind == "" {
-		return Job{}, fmt.Errorf("jobs: kind required")
-	}
-	if j.State == "" {
-		j.State = StatePending
-	}
-	if j.ID == "" {
-		id, err := newID()
-		if err != nil {
-			return Job{}, err
-		}
-		j.ID = id
+	j, err := prepare(j, m.clock.Now())
+	if err != nil {
+		return Job{}, err
 	}
 
 	m.mu.Lock()
@@ -77,9 +60,6 @@ func (m *MemoryStore) Create(_ context.Context, j Job) (Job, error) {
 	if _, exists := m.jobs[j.ID]; exists {
 		return Job{}, fmt.Errorf("jobs: duplicate job id")
 	}
-
-	now := m.clock.Now()
-	j.CreatedAt, j.UpdatedAt = now, now
 	m.jobs[j.ID] = j
 	return j, nil
 }
@@ -96,7 +76,12 @@ func (m *MemoryStore) Get(_ context.Context, id string) (Job, error) {
 }
 
 // List returns a Space's jobs, newest first.
-func (m *MemoryStore) List(_ context.Context, spaceID string) ([]Job, error) {
+func (m *MemoryStore) List(ctx context.Context, spaceID string) ([]Job, error) {
+	return m.ListRecent(ctx, spaceID, 0)
+}
+
+// ListRecent returns at most limit of a Space's jobs, newest first.
+func (m *MemoryStore) ListRecent(_ context.Context, spaceID string, limit int) ([]Job, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -106,49 +91,43 @@ func (m *MemoryStore) List(_ context.Context, spaceID string) ([]Job, error) {
 			out = append(out, j)
 		}
 	}
-	sort.Slice(out, func(i, k int) bool {
-		if out[i].CreatedAt.Equal(out[k].CreatedAt) {
-			return out[i].ID < out[k].ID
+	sortNewestFirst(out)
+	return applyLimit(out, limit), nil
+}
+
+// Finish records a terminal state and the run's outcome.
+func (m *MemoryStore) Finish(_ context.Context, id string, out Outcome) error {
+	if !out.State.Terminal() {
+		return ErrNotTerminal
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok {
+		return ErrNotFound{ID: id}
+	}
+	m.jobs[id] = applyOutcome(j, out, m.clock.Now())
+	return nil
+}
+
+// PruneBefore deletes finished jobs created before cutoff.
+func (m *MemoryStore) PruneBefore(_ context.Context, cutoff time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	removed := 0
+	for id, j := range m.jobs {
+		if prunable(j, cutoff) {
+			delete(m.jobs, id)
+			removed++
 		}
-		return out[i].CreatedAt.After(out[k].CreatedAt)
-	})
-	return out, nil
+	}
+	return removed, nil
 }
 
-// UpdateState transitions a job and records a sanitized error message.
-func (m *MemoryStore) UpdateState(_ context.Context, id string, state State, errMsg string) error {
-	if state == "" {
-		return fmt.Errorf("jobs: state required")
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	j, ok := m.jobs[id]
-	if !ok {
-		return ErrNotFound{ID: id}
-	}
-	j.State = state
-	j.Error = errMsg
-	j.UpdatedAt = m.clock.Now()
-	m.jobs[id] = j
-	return nil
-}
-
-// SetSnapshotID records the snapshot a backup run produced.
-func (m *MemoryStore) SetSnapshotID(_ context.Context, id, snapshotID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	j, ok := m.jobs[id]
-	if !ok {
-		return ErrNotFound{ID: id}
-	}
-	j.SnapshotID = snapshotID
-	j.UpdatedAt = m.clock.Now()
-	m.jobs[id] = j
-	return nil
-}
-
-// Acquire takes the Space's run lock.
+// Acquire takes the Space's run lock. This lock is process-local and has no
+// lease: a MemoryStore dies with the process, so there is nothing to recover.
 func (m *MemoryStore) Acquire(_ context.Context, spaceID string) (func(), error) {
 	if spaceID == "" {
 		return nil, fmt.Errorf("jobs: space id required")
@@ -169,6 +148,74 @@ func (m *MemoryStore) Acquire(_ context.Context, spaceID string) (func(), error)
 			delete(m.held, spaceID)
 		})
 	}, nil
+}
+
+// --- shared helpers, used by both Store implementations --------------------
+
+// prepare validates and completes a new job record.
+func prepare(j Job, now time.Time) (Job, error) {
+	if j.SpaceID == "" {
+		return Job{}, fmt.Errorf("jobs: space id required")
+	}
+	if j.Kind == "" {
+		return Job{}, fmt.Errorf("jobs: kind required")
+	}
+	if j.State == "" {
+		j.State = StatePending
+	}
+	if j.Trigger == "" {
+		j.Trigger = TriggerManual
+	}
+	if j.ID == "" {
+		id, err := newID()
+		if err != nil {
+			return Job{}, err
+		}
+		j.ID = id
+	}
+	j.CreatedAt, j.UpdatedAt = now, now
+	return j, nil
+}
+
+// applyOutcome writes a terminal outcome onto a job record.
+func applyOutcome(j Job, out Outcome, now time.Time) Job {
+	j.State = out.State
+	j.Error = out.Error
+	if out.SnapshotID != "" {
+		j.SnapshotID = out.SnapshotID
+	}
+	if out.FileCount > 0 {
+		j.FileCount = out.FileCount
+	}
+	if out.TotalBytes > 0 {
+		j.TotalBytes = out.TotalBytes
+	}
+	j.UpdatedAt = now
+	j.FinishedAt = now
+	return j
+}
+
+// prunable reports whether a job is old enough and finished enough to drop.
+func prunable(j Job, cutoff time.Time) bool {
+	return j.State.Terminal() && j.CreatedAt.Before(cutoff)
+}
+
+// sortNewestFirst orders jobs by creation time descending, id breaking ties so
+// listings are stable.
+func sortNewestFirst(list []Job) {
+	sort.Slice(list, func(i, k int) bool {
+		if list[i].CreatedAt.Equal(list[k].CreatedAt) {
+			return list[i].ID < list[k].ID
+		}
+		return list[i].CreatedAt.After(list[k].CreatedAt)
+	})
+}
+
+func applyLimit(list []Job, limit int) []Job {
+	if limit > 0 && len(list) > limit {
+		return list[:limit]
+	}
+	return list
 }
 
 // newID returns a random, opaque job id.
