@@ -104,6 +104,87 @@ func TestStoreContract(t *testing.T) {
 	}
 }
 
+// Configuration is appended, not replaced: a Space that silently stops being
+// backed up because a write died halfway is the failure this service exists to
+// prevent.
+func TestStateStore_ConfigurationIsAppendOnly(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+	store := NewStateStore(backing, clock)
+
+	if _, err := store.Put(ctx, Config{SpaceID: "s1", TargetID: "t1", Enabled: true}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	clock.Advance(time.Hour)
+	if _, err := store.Put(ctx, Config{SpaceID: "s1", TargetID: "t2", Enabled: true}); err != nil {
+		t.Fatalf("Put update: %v", err)
+	}
+
+	versions, err := backing.List(ctx, configPrefix+"/s1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("versions = %v, want one per write", versions)
+	}
+	got, err := store.Get(ctx, "s1")
+	if err != nil || got.TargetID != "t2" {
+		t.Fatalf("Get = %+v (%v), want the newest version", got, err)
+	}
+}
+
+// A deployment that predates versioning keeps its schedules.
+func TestStateStore_ReadsPreVersionedConfigurations(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+
+	legacy := state.NewDocuments[Config](backing, legacyConfigPrefix)
+	if err := legacy.Create(ctx, Config{
+		SpaceID:   "s1",
+		TargetID:  "t1",
+		Enabled:   true,
+		CreatedAt: epoch,
+		UpdatedAt: epoch,
+	}, "s1"); err != nil {
+		t.Fatalf("seed legacy configuration: %v", err)
+	}
+
+	store := NewStateStore(backing, clock)
+	got, err := store.Get(ctx, "s1")
+	if err != nil || got.TargetID != "t1" {
+		t.Fatalf("Get = %+v (%v), want the pre-versioned configuration", got, err)
+	}
+	if list, err := store.List(ctx); err != nil || len(list) != 1 {
+		t.Fatalf("List = %+v (%v)", list, err)
+	}
+
+	// An edit supersedes it, keeps its CreatedAt, and leaves it in place.
+	clock.Advance(time.Hour)
+	updated, err := store.Put(ctx, Config{SpaceID: "s1", TargetID: "t2", Enabled: true})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if !updated.CreatedAt.Equal(epoch) {
+		t.Fatalf("CreatedAt = %v, want the pre-versioned one preserved", updated.CreatedAt)
+	}
+	if stored, err := legacy.Get(ctx, "s1"); err != nil || stored.TargetID != "t1" {
+		t.Fatalf("pre-versioned configuration = %+v (%v), want it untouched", stored, err)
+	}
+	if list, err := store.List(ctx); err != nil || len(list) != 1 {
+		t.Fatalf("List after the edit = %+v (%v), want the record listed once", list, err)
+	}
+
+	if err := store.Delete(ctx, "s1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	var nf ErrNotFound
+	if _, err := store.Get(ctx, "s1"); !errors.As(err, &nf) {
+		t.Fatalf("Get after delete: %v", err)
+	}
+}
+
 func TestStateStore_SurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	backing := state.NewMemoryStore()

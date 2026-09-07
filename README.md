@@ -66,7 +66,31 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
 - **No database.** The service keeps its own state (schedules, run history,
   wrapped key envelopes, target records) in a dedicated OpenCloud Space, so a
   deployment needs no second storage system. That Space must not be one an end
-  user belongs to.
+  user belongs to — see the runbook below.
+
+## Deployment: the state Space
+
+The service needs one OpenCloud Space of its own, and it is picky about which,
+because that Space holds the server-side copy of every wrapped Data Key.
+
+1. Create a **project Space** for the service — for example "Backup service
+   state" — and add **no members** to it. The service account reaches it with
+   owner scope; nobody else needs to.
+2. Set `STATE_SPACE_ID` to that Space's id.
+
+The service **refuses to start** if the configured Space is a personal Space or
+carries any member grant. A member could delete the folder without knowing what
+it was, and losing it would mean every unattended backup for the affected Spaces
+stopping until each user re-ran the key ceremony with their Recovery Key.
+
+What lives there is metadata and ciphertext only — wrapped key envelopes and
+wrapped target credentials, never plaintext keys. Records whose loss cannot be
+repaired are written append-only: a new version each time, the previous one left
+untouched, so a crash mid-write cannot destroy one.
+
+Without `STATE_SPACE_ID` the service runs with in-memory state and says so
+loudly at startup. Schedules, history and key envelopes then die with the
+process; that mode is for smoke tests only.
 
 ## Recovery runbook
 
@@ -129,8 +153,10 @@ as a background job.
 
 - **The Recovery Key is the whole story.** The server cannot reconstruct it. Lost
   key plus lost server means lost data — store it in a password manager now.
-- Every backup run republishes the encrypted key envelope to the target, so a
-  Take-Out is always self-contained.
+- Every backup run republishes the encrypted key envelopes to the target: the
+  user's recovery envelope, so a Take-Out is always self-contained, and the
+  service's own envelope, so losing the state Space costs a re-configuration
+  rather than the ability to run unattended backups at all.
 - Keep a copy of the `decrypt` binary somewhere that is not the server you are
   trying to recover.
 

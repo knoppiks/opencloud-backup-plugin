@@ -302,9 +302,9 @@ func (r *Runner) snapshotSpace(ctx context.Context, space cs3.Space) (snapshot.I
 	// The plaintext Data Key exists only for this call (decisions.md #1).
 	defer keys.Zeroize(dk)
 
-	// Publish the recovery envelope before the data it protects: a snapshot the
-	// user cannot reach with their Recovery Key is worth less than no snapshot.
-	r.publishEnvelope(ctx, space.ID, target)
+	// Publish the envelopes before the data they protect: a snapshot the user
+	// cannot reach with their Recovery Key is worth less than no snapshot.
+	r.publishEnvelopes(ctx, space.ID, target)
 
 	info, err := r.deps.Engine.Snapshot(ctx, snapshot.Repo{
 		Location: target.location,
@@ -391,28 +391,45 @@ func (r *Runner) resolveTarget(ctx context.Context, targetID string) (resolvedTa
 	}, nil
 }
 
-// publishEnvelope copies the Space's RK-wrapped Data Key envelope to the target
-// so an admin Take-Out is self-contained (Path A works with OpenCloud down).
+// publishEnvelopes copies the Space's wrapped Data Key envelopes to the target.
 //
-// The envelope is ciphertext the server cannot open, so this does not weaken the
-// trust model. A failure here is logged but does not fail the run: the snapshot
-// itself is still valid and still restorable through Path B, and refusing to
-// back a Space up because one small object could not be written would trade a
-// real protection for a theoretical one.
-func (r *Runner) publishEnvelope(ctx context.Context, spaceID string, target resolvedTarget) {
+//   - The RK-wrapped one makes an admin Take-Out self-contained (Path A works
+//     with OpenCloud down). It is ciphertext the server cannot open.
+//   - The SRW-wrapped one is the service's own copy, so the state Space stops
+//     being the only place it exists (decisions.md #16). It is openable with the
+//     cluster's SRW key, which is the recorded trade-off for being able to
+//     resume unattended backups after losing the state Space.
+//
+// A failure here is logged but does not fail the run: the snapshot itself is
+// still valid and still restorable through Path B, and refusing to back a Space
+// up because one small object could not be written would trade a real
+// protection for a theoretical one.
+func (r *Runner) publishEnvelopes(ctx context.Context, spaceID string, target resolvedTarget) {
 	if r.deps.Envelopes == nil {
 		return
 	}
 
-	wrapped, err := r.deps.Keys.GetRK(spaceID)
+	r.publishEnvelope(ctx, spaceID, target, "recovery", r.deps.Keys.GetRK)
+	r.publishEnvelope(ctx, spaceID, target, "server", r.deps.Keys.GetSRW)
+}
+
+// publishEnvelope copies one envelope, naming it in diagnostics by role only.
+func (r *Runner) publishEnvelope(
+	ctx context.Context,
+	spaceID string,
+	target resolvedTarget,
+	role string,
+	read func(string) (keys.WrappedDK, error),
+) {
+	wrapped, err := read(spaceID)
 	if err != nil {
 		var notFound keys.ErrNotFound
 		if errors.As(err, &notFound) {
-			r.deps.Logger.Warn("no recovery envelope stored for space; take-out will not be self-contained",
-				"space", spaceID)
+			r.deps.Logger.Warn("no key envelope stored for space; the target copy will be missing",
+				"space", spaceID, "envelope", role)
 			return
 		}
-		r.deps.Logger.Warn("could not read recovery envelope", "space", spaceID, "err", err)
+		r.deps.Logger.Warn("could not read key envelope", "space", spaceID, "envelope", role, "err", err)
 		return
 	}
 
@@ -421,8 +438,8 @@ func (r *Runner) publishEnvelope(ctx context.Context, spaceID string, target res
 		Prefix: target.prefix,
 	}, spaceID, wrapped.Blob); err != nil {
 		// The error describes the target, never the envelope contents.
-		r.deps.Logger.Error("could not publish recovery envelope to target",
-			"space", spaceID, "err", err)
+		r.deps.Logger.Error("could not publish key envelope to target",
+			"space", spaceID, "envelope", role, "err", err)
 	}
 }
 

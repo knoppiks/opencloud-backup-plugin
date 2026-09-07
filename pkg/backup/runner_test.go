@@ -372,9 +372,11 @@ func TestRunBackup_LogsNoSecrets(t *testing.T) {
 	}
 }
 
-// A Take-Out must be self-contained, so every run publishes the Space's
-// RK-wrapped envelope to the target (Path A works with OpenCloud down).
-func TestRunBackup_PublishesRecoveryEnvelopeToTarget(t *testing.T) {
+// Every run publishes both of the Space's envelopes: the RK-wrapped one so a
+// Take-Out is self-contained (Path A works with OpenCloud down), and the
+// SRW-wrapped one so the state Space is not the only place the service's own
+// copy exists (decisions.md #16).
+func TestRunBackup_PublishesEnvelopesToTarget(t *testing.T) {
 	h := newHarness(t)
 
 	if _, err := h.runner.RunBackup(context.Background(), testSpaceID); err != nil {
@@ -382,31 +384,39 @@ func TestRunBackup_PublishesRecoveryEnvelopeToTarget(t *testing.T) {
 	}
 
 	published := h.envelopes.published()
-	if len(published) != 1 {
-		t.Fatalf("published %d envelopes, want 1", len(published))
+	if len(published) != 2 {
+		t.Fatalf("published %d envelopes, want the recovery and the server one", len(published))
 	}
-	call := published[0]
-	if call.spaceID != testSpaceID {
-		t.Fatalf("published for space %q", call.spaceID)
-	}
-	if call.target.Prefix != "oc/" || call.target.S3.Bucket != "backups" {
-		t.Fatalf("published to the wrong target: %+v", call.target)
-	}
-	if call.target.S3.AccessKeyID == "" || call.target.S3.SecretAccessKey == "" {
-		t.Fatal("publisher was not given the target's opened credentials")
+	for _, call := range published {
+		if call.spaceID != testSpaceID {
+			t.Fatalf("published for space %q", call.spaceID)
+		}
+		if call.target.Prefix != "oc/" || call.target.S3.Bucket != "backups" {
+			t.Fatalf("published to the wrong target: %+v", call.target)
+		}
+		if call.target.S3.AccessKeyID == "" || call.target.S3.SecretAccessKey == "" {
+			t.Fatal("publisher was not given the target's opened credentials")
+		}
+		if bytes.Contains(call.blob, h.dk) || bytes.Contains(call.blob, h.rk) {
+			t.Fatal("published envelope contains raw key material")
+		}
 	}
 
-	// What is published must be exactly the stored RK envelope — the ciphertext
-	// the user's Recovery Key opens, never the SRW wrap and never a raw key.
-	stored, err := h.keys.GetRK(testSpaceID)
+	// What is published must be exactly the stored envelopes — ciphertext,
+	// never a raw key.
+	storedRK, err := h.keys.GetRK(testSpaceID)
 	if err != nil {
 		t.Fatalf("GetRK: %v", err)
 	}
-	if !bytes.Equal(call.blob, stored.Blob) {
-		t.Fatal("published envelope differs from the stored recovery envelope")
+	storedSRW, err := h.keys.GetSRW(testSpaceID)
+	if err != nil {
+		t.Fatalf("GetSRW: %v", err)
 	}
-	if bytes.Contains(call.blob, h.dk) || bytes.Contains(call.blob, h.rk) {
-		t.Fatal("published envelope contains raw key material")
+	if !bytes.Equal(published[0].blob, storedRK.Blob) {
+		t.Fatal("first published envelope differs from the stored recovery envelope")
+	}
+	if !bytes.Equal(published[1].blob, storedSRW.Blob) {
+		t.Fatal("second published envelope differs from the stored server envelope")
 	}
 }
 
@@ -419,7 +429,7 @@ func TestRunBackup_EnvelopePublishFailureDoesNotFailTheRun(t *testing.T) {
 	if _, err := h.runner.RunBackup(context.Background(), testSpaceID); err != nil {
 		t.Fatalf("RunBackup: %v", err)
 	}
-	if !bytes.Contains(h.logs.Bytes(), []byte("could not publish recovery envelope")) {
+	if !bytes.Contains(h.logs.Bytes(), []byte("could not publish key envelope")) {
 		t.Fatal("a failed publication must be logged")
 	}
 }
@@ -456,10 +466,20 @@ func TestRunBackup_WithoutStoredRecoveryEnvelope(t *testing.T) {
 	if _, err := runner.RunBackup(context.Background(), testSpaceID); err != nil {
 		t.Fatalf("RunBackup: %v", err)
 	}
-	if len(h.envelopes.published()) != 0 {
-		t.Fatal("nothing may be published when no recovery envelope is stored")
+	// Only the server envelope exists, so only it is published, and the missing
+	// recovery envelope is reported rather than failing the run.
+	published := h.envelopes.published()
+	if len(published) != 1 {
+		t.Fatalf("published %d envelopes, want only the server one", len(published))
 	}
-	if !bytes.Contains(h.logs.Bytes(), []byte("no recovery envelope stored")) {
+	stored, err := h.keys.GetSRW(testSpaceID)
+	if err != nil {
+		t.Fatalf("GetSRW: %v", err)
+	}
+	if !bytes.Equal(published[0].blob, stored.Blob) {
+		t.Fatal("the published envelope is not the stored server envelope")
+	}
+	if !bytes.Contains(h.logs.Bytes(), []byte("no key envelope stored")) {
 		t.Fatal("the missing envelope must be reported")
 	}
 }

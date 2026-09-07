@@ -172,7 +172,10 @@ func (l *LeaseLocker) write(ctx context.Context, spaceID string, now time.Time) 
 		AcquiredAt: now,
 		ExpiresAt:  now.Add(l.ttl),
 	}
-	if err := l.docs.Put(ctx, rec, spaceID); err != nil {
+	// A lease is re-derivable state: it expires on its own, and losing one
+	// costs at worst a run that has to wait for the TTL. Replacing it in place
+	// is what renewal means.
+	if err := l.docs.Replace(ctx, rec, spaceID); err != nil {
 		return fmt.Errorf("jobs: write run lease: %w", err)
 	}
 	return nil

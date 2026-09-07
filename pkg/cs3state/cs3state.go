@@ -129,26 +129,50 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
-// Put stores value under key, replacing any previous value.
-func (s *Store) Put(ctx context.Context, key string, value []byte) error {
-	if len(value) > maxDocumentBytes {
-		return fmt.Errorf("cs3state: state document is implausibly large")
-	}
-	space, err := s.resolve(ctx)
+// Create stores value under key, refusing to replace an existing document.
+//
+// Whether the upload itself would clobber is a property of the OpenCloud
+// version underneath (pinned by TestIntegration_CS3StateOverwriteSemantics), so
+// the guard does not rely on it: the parent folder is listed first, and a reva
+// ALREADY_EXISTS is mapped on top of that. The listing is what makes this safe
+// on a server that overwrites silently.
+func (s *Store) Create(ctx context.Context, key string, value []byte) error {
+	space, full, err := s.prepareWrite(ctx, key, value)
 	if err != nil {
 		return err
 	}
 
-	full := s.pathFor(key)
-	if err := s.ensureDir(ctx, space, path.Dir(full)); err != nil {
+	exists, err := s.exists(ctx, space, full)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return state.ErrExists{Key: key}
+	}
+
+	if err := s.upload(ctx, space, full, value); err != nil {
+		if errors.Is(err, cs3.ErrAlreadyExists) {
+			return state.ErrExists{Key: key}
+		}
+		return fmt.Errorf("cs3state: write state: %w", err)
+	}
+	return nil
+}
+
+// Replace stores value under key, discarding any previous value.
+//
+// The upload path may refuse to clobber (restores must never overwrite), so a
+// replacement can degrade to delete-then-write. That is not atomic: a crash
+// between the two loses the record. Only records the service can re-derive
+// after a restart may be written this way — leases, which expire, and job
+// records, which the next run rewrites. Everything whose loss is permanent is
+// append-only instead (see state.Versions).
+func (s *Store) Replace(ctx context.Context, key string, value []byte) error {
+	space, full, err := s.prepareWrite(ctx, key, value)
+	if err != nil {
 		return err
 	}
 
-	// The upload path refuses to clobber (restores must never overwrite), so an
-	// update is delete-then-write. That is not atomic: a crash between the two
-	// loses one record. Every record this store holds is either re-derivable
-	// (leases, job state) or re-uploaded on the next write, and the alternative
-	// — a second storage system — is what this package exists to avoid.
 	err = s.upload(ctx, space, full, value)
 	if errors.Is(err, cs3.ErrAlreadyExists) {
 		if delErr := s.client.Delete(ctx, space, full); delErr != nil && !errors.Is(delErr, cs3.ErrNotFound) {
@@ -160,6 +184,40 @@ func (s *Store) Put(ctx context.Context, key string, value []byte) error {
 		return fmt.Errorf("cs3state: write state: %w", err)
 	}
 	return nil
+}
+
+// prepareWrite validates a write and makes sure its folder exists.
+func (s *Store) prepareWrite(ctx context.Context, key string, value []byte) (cs3.Space, string, error) {
+	if len(value) > maxDocumentBytes {
+		return cs3.Space{}, "", fmt.Errorf("cs3state: state document is implausibly large")
+	}
+	space, err := s.resolve(ctx)
+	if err != nil {
+		return cs3.Space{}, "", err
+	}
+
+	full := s.pathFor(key)
+	if err := s.ensureDir(ctx, space, path.Dir(full)); err != nil {
+		return cs3.Space{}, "", err
+	}
+	return space, full, nil
+}
+
+// exists reports whether a document is already stored at full.
+func (s *Store) exists(ctx context.Context, space cs3.Space, full string) (bool, error) {
+	entries, err := s.client.ListDir(ctx, space, path.Dir(full))
+	if err != nil {
+		if isNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("cs3state: read state folder: %w", err)
+	}
+	for _, entry := range entries {
+		if strings.Trim(entry.Path, "/") == full {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Delete removes key.
@@ -254,6 +312,43 @@ func (s *Store) ensureDir(ctx context.Context, space cs3.Space, dir string) erro
 	s.mu.Unlock()
 	return nil
 }
+
+// Check resolves the state Space and refuses it if end users can reach it.
+//
+// A Space someone is a member of is a Space someone can empty. The records in
+// here are the service's memory — including the only server-side copy of every
+// wrapped Data Key — and a user who deletes a folder they do not recognise
+// would be destroying backups without ever being told so. A personal Space is
+// refused for the same reason plus one more: it belongs to a person, and this
+// is not their document.
+//
+// It is called at startup so the deployment fails loudly rather than
+// discovering the problem the day the folder disappears. The Space's name is
+// reported to make the misconfiguration fixable; its members never are.
+func (s *Store) Check(ctx context.Context) error {
+	space, err := s.resolve(ctx)
+	if err != nil {
+		return err
+	}
+	if space.Type == spaceTypePersonal {
+		return fmt.Errorf("%w: %q is a personal space; service state needs a dedicated space "+
+			"no end user is a member of", ErrUnsafeStateSpace, space.Name)
+	}
+	if len(space.Members) > 0 {
+		return fmt.Errorf("%w: %q has %d member grant(s); service state needs a dedicated space "+
+			"no end user is a member of", ErrUnsafeStateSpace, space.Name, len(space.Members))
+	}
+	return nil
+}
+
+// ErrUnsafeStateSpace reports a state Space an end user can reach. It is
+// distinguishable so startup can treat it as a misconfiguration to refuse,
+// rather than as the transient "OpenCloud is not up yet" it would otherwise
+// look like.
+var ErrUnsafeStateSpace = errors.New("cs3state: unsafe state space")
+
+// spaceTypePersonal is the CS3 space type of a user's own Space.
+const spaceTypePersonal = "personal"
 
 // resolve finds the configured Space once and caches it.
 func (s *Store) resolve(ctx context.Context) (cs3.Space, error) {

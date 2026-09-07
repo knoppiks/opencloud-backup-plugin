@@ -57,7 +57,9 @@ func (s *StateStore) Append(ctx context.Context, e Event) (Event, error) {
 	}
 
 	key := s.docs.Key(e.Scope(), documentName(e.CreatedAt, e.ID))
-	if err := s.docs.PutKey(ctx, key, e); err != nil {
+	// Events are immutable and their key carries a unique id, so recording one
+	// never overwrites another.
+	if err := s.docs.CreateKey(ctx, key, e); err != nil {
 		return Event{}, fmt.Errorf("notify: store event: %w", err)
 	}
 	return e, nil

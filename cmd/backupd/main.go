@@ -417,9 +417,28 @@ func buildStateStore(client *cs3.Client, logger *slog.Logger) (state.Store, erro
 	if err != nil {
 		return nil, err
 	}
+
+	// A state Space an end user can reach is a Space an end user can empty, and
+	// what they would be emptying is the only server-side copy of every wrapped
+	// Data Key. That is a misconfiguration to refuse at boot, not to discover
+	// later. A Space that cannot be checked at all is a different matter:
+	// OpenCloud may simply not be up yet, and resolution is lazy for exactly
+	// that reason, so it is a warning.
+	checkCtx, cancel := context.WithTimeout(context.Background(), stateCheckTimeout)
+	defer cancel()
+	if err := store.Check(checkCtx); err != nil {
+		if errors.Is(err, cs3state.ErrUnsafeStateSpace) {
+			return nil, err
+		}
+		logger.Warn("could not verify the state space at startup; it will be resolved on first use", "err", err)
+	}
+
 	logger.Info("service state persisted in OpenCloud", "space", spaceID)
 	return store, nil
 }
+
+// stateCheckTimeout bounds the startup validation of the state Space.
+const stateCheckTimeout = 30 * time.Second
 
 // buildNotifier wires the delivery sinks. Logs are always a sink; SMTP is added
 // when the operator configured a mail server. The password is read from a

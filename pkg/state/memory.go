@@ -36,8 +36,19 @@ func (m *MemoryStore) Get(_ context.Context, key string) ([]byte, error) {
 	return append([]byte(nil), v...), nil
 }
 
-// Put stores a copy of value.
-func (m *MemoryStore) Put(_ context.Context, key string, value []byte) error {
+// Create stores a copy of value, refusing to replace an existing one.
+func (m *MemoryStore) Create(_ context.Context, key string, value []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.values[key]; exists {
+		return ErrExists{Key: key}
+	}
+	m.values[key] = append([]byte(nil), value...)
+	return nil
+}
+
+// Replace stores a copy of value, discarding any previous one.
+func (m *MemoryStore) Replace(_ context.Context, key string, value []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.values[key] = append([]byte(nil), value...)

@@ -29,6 +29,10 @@ type fakeSpace struct {
 
 	// listErr, if set, fails ListSpaces.
 	listErr error
+	// clobbers makes Upload overwrite silently instead of refusing, which is
+	// the other behaviour reva could have (see the overwrite-semantics
+	// integration test). Create must be safe either way.
+	clobbers bool
 	// uploads counts writes, so tests can see delete-then-write happening.
 	uploads int
 	deletes int
@@ -111,7 +115,7 @@ func (f *fakeSpace) Upload(_ context.Context, _ cs3.Space, relPath string, size 
 	defer f.mu.Unlock()
 
 	relPath = strings.Trim(relPath, "/")
-	if _, exists := f.files[relPath]; exists {
+	if _, exists := f.files[relPath]; exists && !f.clobbers {
 		// Mirrors the real writer: a restore must never clobber.
 		return fmt.Errorf("%w: %s", cs3.ErrAlreadyExists, relPath)
 	}
@@ -169,8 +173,8 @@ func TestStore_WritesUnderThePrefix(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	if err := store.Put(ctx, "jobs/space/1", []byte("{}")); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := store.Create(ctx, "jobs/space/1", []byte("{}")); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 	if _, ok := fake.files["custom-prefix/jobs/space/1"]; !ok {
 		t.Fatalf("files = %v", keysOf(fake.files))
@@ -185,8 +189,8 @@ func TestStore_EscapedKeysCannotEscapeThePrefix(t *testing.T) {
 	store, fake := newStore(t)
 
 	key := state.Key("jobs", "../../etc", "1")
-	if err := store.Put(ctx, key, []byte("{}")); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := store.Create(ctx, key, []byte("{}")); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 	for name := range fake.files {
 		if !strings.HasPrefix(name, DefaultPrefix+"/") {
@@ -206,11 +210,11 @@ func TestStore_ReplaceDeletesThenWrites(t *testing.T) {
 	ctx := context.Background()
 	store, fake := newStore(t)
 
-	if err := store.Put(ctx, "docs/one", []byte("first")); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := store.Replace(ctx, "docs/one", []byte("first")); err != nil {
+		t.Fatalf("Replace: %v", err)
 	}
-	if err := store.Put(ctx, "docs/one", []byte("second")); err != nil {
-		t.Fatalf("Put again: %v", err)
+	if err := store.Replace(ctx, "docs/one", []byte("second")); err != nil {
+		t.Fatalf("Replace again: %v", err)
 	}
 	if fake.deletes != 1 || fake.uploads != 2 {
 		t.Fatalf("deletes = %d, uploads = %d", fake.deletes, fake.uploads)
@@ -219,6 +223,70 @@ func TestStore_ReplaceDeletesThenWrites(t *testing.T) {
 	if err != nil || string(got) != "second" {
 		t.Fatalf("Get = %q (%v)", got, err)
 	}
+}
+
+// The guard that matters: on a server that overwrites silently, a create must
+// still refuse rather than destroy the stored document. This is what makes
+// append-only key envelopes safe without knowing what reva does.
+func TestStore_CreateRefusesEvenWhenUploadsClobber(t *testing.T) {
+	ctx := context.Background()
+	store, fake := newStore(t)
+	fake.clobbers = true
+
+	if err := store.Create(ctx, "keyenvelopes/space/rk/1", []byte("envelope")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.Create(ctx, "keyenvelopes/space/rk/1", []byte("clobber")); !state.IsExists(err) {
+		t.Fatalf("Create again = %v, want already-exists", err)
+	}
+	got, err := store.Get(ctx, "keyenvelopes/space/rk/1")
+	if err != nil || string(got) != "envelope" {
+		t.Fatalf("Get = %q (%v), want the original envelope", got, err)
+	}
+	if fake.deletes != 0 {
+		t.Fatalf("deletes = %d, want none: a create must never remove anything", fake.deletes)
+	}
+}
+
+// The state Space holds the only server-side copy of every wrapped Data Key. A
+// Space an end user can reach is a Space an end user can empty.
+func TestStore_CheckRefusesASpaceUsersCanReach(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a dedicated project space is accepted", func(t *testing.T) {
+		store, _ := newStore(t)
+		if err := store.Check(ctx); err != nil {
+			t.Fatalf("Check: %v", err)
+		}
+	})
+
+	t.Run("a personal space is refused", func(t *testing.T) {
+		fake := newFakeSpace()
+		fake.space.Type = "personal"
+		store, err := New(fake, Options{SpaceID: "state-space"})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if err := store.Check(ctx); err == nil {
+			t.Fatal("a personal space must be refused")
+		}
+	})
+
+	t.Run("a space with a member grant is refused, without naming the member", func(t *testing.T) {
+		fake := newFakeSpace()
+		fake.space.Members = map[string]string{"user-alice": "manager"}
+		store, err := New(fake, Options{SpaceID: "state-space"})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		err = store.Check(ctx)
+		if err == nil {
+			t.Fatal("a space with members must be refused")
+		}
+		if strings.Contains(err.Error(), "user-alice") {
+			t.Fatalf("the error names a member: %v", err)
+		}
+	})
 }
 
 func TestStore_RequiresAConfiguredSpace(t *testing.T) {
@@ -250,7 +318,7 @@ func TestStore_PropagatesBackendFailures(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	if err := store.Put(context.Background(), "docs/one", []byte("{}")); err == nil {
+	if err := store.Create(context.Background(), "docs/one", []byte("{}")); err == nil {
 		t.Fatal("a broken gateway must surface as an error, not silent success")
 	}
 }
@@ -266,8 +334,8 @@ func TestStore_IsConcurrencySafe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			key := fmt.Sprintf("jobs/space/%02d", i)
-			if err := store.Put(ctx, key, []byte("{}")); err != nil {
-				t.Errorf("Put %s: %v", key, err)
+			if err := store.Create(ctx, key, []byte("{}")); err != nil {
+				t.Errorf("Create %s: %v", key, err)
 			}
 		}()
 	}

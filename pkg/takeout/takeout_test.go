@@ -493,7 +493,7 @@ func TestReadManifestRejectsForeignDirectory(t *testing.T) {
 	}
 }
 
-func TestPublishToIsIdempotentAndRejectsNonRKEnvelopes(t *testing.T) {
+func TestPublishToFilesEachEnvelopeByItsKind(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	store := objstore.DirStore{Root: root}
@@ -525,8 +525,8 @@ func TestPublishToIsIdempotentAndRejectsNonRKEnvelopes(t *testing.T) {
 		t.Fatal("an unchanged envelope was rewritten")
 	}
 
-	// An SRW envelope must never be published: it would be unusable by the user
-	// and would overwrite their only recovery path.
+	// The server envelope is published too, but never over the user's only
+	// recovery path: the object name comes from the envelope's own header.
 	srwKey, err := keys.GenerateSRWKey()
 	if err != nil {
 		t.Fatalf("GenerateSRWKey: %v", err)
@@ -535,12 +535,40 @@ func TestPublishToIsIdempotentAndRejectsNonRKEnvelopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapWithSRW: %v", err)
 	}
-	if err := PublishTo(ctx, store, testPrefix, testSpaceID, srw.Blob); err == nil {
-		t.Fatal("publishing an SRW envelope must be refused")
+	if err := PublishTo(ctx, store, testPrefix, testSpaceID, srw.Blob); err != nil {
+		t.Fatalf("PublishTo (server envelope): %v", err)
 	}
+
+	serverKey := snapshot.ServerEnvelopeKey(snapshot.Location{Prefix: testPrefix}, snapshot.SpaceRef{SpaceID: testSpaceID})
+	if serverKey == key {
+		t.Fatal("the server envelope must not share the recovery envelope's object name")
+	}
+	if got := readObject(t, store, key); !bytes.Equal(got, wrapped.Blob) {
+		t.Fatal("the recovery envelope was overwritten by the server envelope")
+	}
+	if got := readObject(t, store, serverKey); !bytes.Equal(got, srw.Blob) {
+		t.Fatal("the server envelope was not stored under its own object name")
+	}
+
+	// Anything that is not a Data Key envelope is still refused outright.
 	if err := PublishTo(ctx, store, testPrefix, testSpaceID, []byte("garbage")); err == nil {
 		t.Fatal("publishing a non-envelope must be refused")
 	}
+}
+
+// readObject reads one published object.
+func readObject(t *testing.T, store objstore.Store, key string) []byte {
+	t.Helper()
+	rc, err := store.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Get %s: %v", key, err)
+	}
+	defer func() { _ = rc.Close() }()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read %s: %v", key, err)
+	}
+	return data
 }
 
 func TestPublishToValidation(t *testing.T) {

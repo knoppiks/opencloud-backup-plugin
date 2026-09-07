@@ -99,9 +99,12 @@ spec:
         # run history, wrapped key envelopes, target records) in a dedicated
         # OpenCloud Space reached over CS3 with the service account. That Space
         # must be one NO END USER IS A MEMBER OF: a member could delete the
-        # service's state, and this is not a user's document. Without it the
-        # service falls back to in-memory state and says so at startup —
-        # schedules and history then die with the pod.
+        # service's state, and this is not a user's document. The service checks
+        # this at startup and REFUSES TO START against a personal Space or one
+        # with any member grant. Without a Space id at all it falls back to
+        # in-memory state and says so at startup — schedules, history and key
+        # envelopes then die with the pod. See the state-Space runbook in
+        # README.md before setting this.
         - name: STATE_SPACE_ID
           value: ""
         # - name: STATE_PREFIX

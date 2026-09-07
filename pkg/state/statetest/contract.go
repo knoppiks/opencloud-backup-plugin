@@ -31,8 +31,8 @@ func RunStoreContract(t *testing.T, newStore func(t *testing.T) state.Store) {
 		ctx := context.Background()
 		st := newStore(t)
 
-		if err := st.Put(ctx, "docs/one", []byte(`{"a":1}`)); err != nil {
-			t.Fatalf("Put: %v", err)
+		if err := st.Create(ctx, "docs/one", []byte(`{"a":1}`)); err != nil {
+			t.Fatalf("Create: %v", err)
 		}
 		got, err := st.Get(ctx, "docs/one")
 		if err != nil {
@@ -43,15 +43,36 @@ func RunStoreContract(t *testing.T, newStore func(t *testing.T) state.Store) {
 		}
 	})
 
-	t.Run("put replaces", func(t *testing.T) {
+	// The property the append-only records depend on: a create can never be the
+	// thing that destroys the previous value.
+	t.Run("create refuses to replace and leaves the stored value alone", func(t *testing.T) {
 		ctx := context.Background()
 		st := newStore(t)
 
-		if err := st.Put(ctx, "docs/one", []byte("first")); err != nil {
-			t.Fatalf("Put: %v", err)
+		if err := st.Create(ctx, "docs/one", []byte("first")); err != nil {
+			t.Fatalf("Create: %v", err)
 		}
-		if err := st.Put(ctx, "docs/one", []byte("second")); err != nil {
-			t.Fatalf("Put again: %v", err)
+		if err := st.Create(ctx, "docs/one", []byte("second")); !state.IsExists(err) {
+			t.Fatalf("Create again = %v, want already-exists", err)
+		}
+		got, err := st.Get(ctx, "docs/one")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if string(got) != "first" {
+			t.Fatalf("Get = %q, want the original", got)
+		}
+	})
+
+	t.Run("replace overwrites, and creates when absent", func(t *testing.T) {
+		ctx := context.Background()
+		st := newStore(t)
+
+		if err := st.Replace(ctx, "docs/one", []byte("first")); err != nil {
+			t.Fatalf("Replace of a missing key: %v", err)
+		}
+		if err := st.Replace(ctx, "docs/one", []byte("second")); err != nil {
+			t.Fatalf("Replace: %v", err)
 		}
 		got, err := st.Get(ctx, "docs/one")
 		if err != nil {
@@ -66,8 +87,8 @@ func RunStoreContract(t *testing.T, newStore func(t *testing.T) state.Store) {
 		ctx := context.Background()
 		st := newStore(t)
 
-		if err := st.Put(ctx, "docs/one", []byte("value")); err != nil {
-			t.Fatalf("Put: %v", err)
+		if err := st.Create(ctx, "docs/one", []byte("value")); err != nil {
+			t.Fatalf("Create: %v", err)
 		}
 		if err := st.Delete(ctx, "docs/one"); err != nil {
 			t.Fatalf("Delete: %v", err)
@@ -88,8 +109,8 @@ func RunStoreContract(t *testing.T, newStore func(t *testing.T) state.Store) {
 			"leases/space",
 		}
 		for _, k := range keys {
-			if err := st.Put(ctx, k, []byte("{}")); err != nil {
-				t.Fatalf("Put %s: %v", k, err)
+			if err := st.Create(ctx, k, []byte("{}")); err != nil {
+				t.Fatalf("Create %s: %v", k, err)
 			}
 		}
 
