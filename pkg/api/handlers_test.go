@@ -30,6 +30,16 @@ func (f fakeSpaceReader) OpenFile(context.Context, cs3.Space, string, int64) (io
 	return nil, errors.New("not used")
 }
 
+// grants builds a Space's member map from principal -> role, for tests that do
+// not care about expiry or group grants.
+func grants(roles map[string]cs3.Role) map[string]cs3.Member {
+	m := make(map[string]cs3.Member, len(roles))
+	for principal, role := range roles {
+		m[principal] = cs3.Member{Role: role}
+	}
+	return m
+}
+
 func decodeBody(t *testing.T, r io.Reader, v any) {
 	t.Helper()
 	if err := json.NewDecoder(r).Decode(v); err != nil {
@@ -69,7 +79,7 @@ func TestListSpaces_MembershipEnforced(t *testing.T) {
 	}}
 	reader := fakeSpaceReader{spaces: []cs3.Space{
 		{ID: "personal-alice", Name: "Alice", Type: "personal", Owner: "alice"},
-		{ID: "project-x", Name: "Project X", Type: "project", Members: map[string]string{"alice": "manager"}},
+		{ID: "project-x", Name: "Project X", Type: "project", Members: grants(map[string]cs3.Role{"alice": cs3.RoleManager})},
 		{ID: "personal-bob", Name: "Bob", Type: "personal", Owner: "bob"},
 	}}
 	srv := NewServer(WithTokenValidator(val), WithSpaceReader(reader))
@@ -135,7 +145,7 @@ func TestListTargets_GrantedOnlyAndLeastDisclosure(t *testing.T) {
 		"bob-tok":   "bob",
 	}}
 	reader := fakeSpaceReader{spaces: []cs3.Space{
-		{ID: "space-shared", Name: "Shared", Type: "project", Members: map[string]string{"alice": "manager"}},
+		{ID: "space-shared", Name: "Shared", Type: "project", Members: grants(map[string]cs3.Role{"alice": cs3.RoleManager})},
 	}}
 	store := targets.NewMemoryStore()
 	ctx := context.Background()

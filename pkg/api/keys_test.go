@@ -45,9 +45,9 @@ func newKeyTestEnv(t *testing.T) *keyTestEnv {
 	}}
 	reader := fakeSpaceReader{spaces: []cs3.Space{
 		{ID: "space-alice", Name: "Alice", Type: "personal", Owner: "alice"},
-		{ID: "space-shared", Name: "Team", Type: "project", Members: map[string]string{
-			"alice": "manager", "bob": "editor",
-		}},
+		{ID: "space-shared", Name: "Team", Type: "project", Members: grants(map[string]cs3.Role{
+			"alice": cs3.RoleManager, "bob": cs3.RoleEditor,
+		})},
 		{ID: "space-bob", Name: "Bob", Type: "personal", Owner: "bob"},
 	}}
 
@@ -332,9 +332,9 @@ func TestKeySetupIsRefusedOnceTheSpaceIsConfigured(t *testing.T) {
 		t.Fatalf("first setup = %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	// A second ceremony, by any member, with a perfectly valid envelope.
+	// A second ceremony, by the same manager, with a perfectly valid envelope.
 	second, _, _ := clientSetup(t)
-	rec := doJSON(env.srv, http.MethodPost, "/api/v1/spaces/space-shared/backup/setup", "bob-tok", second)
+	rec := doJSON(env.srv, http.MethodPost, "/api/v1/spaces/space-shared/backup/setup", "alice-tok", second)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("second setup = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -465,7 +465,7 @@ func TestRotateRecoveryKeyKeepsTheDataKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := doJSON(env.srv, http.MethodPost, "/api/v1/spaces/space-shared/backup/recovery-key/rotate", "bob-tok", rotateBody)
+	rec := doJSON(env.srv, http.MethodPost, "/api/v1/spaces/space-shared/backup/recovery-key/rotate", "alice-tok", rotateBody)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rotate = %d body=%s", rec.Code, rec.Body.String())
 	}

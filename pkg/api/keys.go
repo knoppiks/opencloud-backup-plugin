@@ -18,6 +18,7 @@ import (
 	"errors"
 	"net/http"
 
+	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/keys"
 )
 
@@ -75,21 +76,15 @@ type recoveryBlobResponse struct {
 // handleKeySetup completes the key ceremony for a space: it stores the
 // client-produced RK envelope and adds the server's SRW wrap.
 func (s *Server) handleKeySetup(w http.ResponseWriter, r *http.Request) {
-	id, ok := IdentityFrom(r.Context())
+	// Setup decides what every future snapshot of this Space is encrypted
+	// under, so it takes the same authority OpenCloud requires to manage the
+	// Space's membership.
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleManager)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
-		return
-	}
-	spaceID := r.PathValue("id")
-	if spaceID == "" {
-		writeError(w, http.StatusBadRequest, "bad_request", "missing space id")
 		return
 	}
 	if s.keyStore == nil || s.srw == nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "key service not configured")
-		return
-	}
-	if !s.assertMember(w, r, id.Subject, spaceID) {
 		return
 	}
 
@@ -174,24 +169,15 @@ type rotateRecoveryKeyRequest struct {
 // handleRotateRecoveryKey stores a new recovery envelope for a Space, leaving
 // the Data Key — and therefore every existing backup — untouched.
 func (s *Server) handleRotateRecoveryKey(w http.ResponseWriter, r *http.Request) {
-	id, ok := IdentityFrom(r.Context())
+	// Any member may *retrieve* the envelope (decisions.md #7), but replacing
+	// it invalidates the Recovery Key every other member is holding, so
+	// rotation sits with setup at the manager role.
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleManager)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
-		return
-	}
-	spaceID := r.PathValue("id")
-	if spaceID == "" {
-		writeError(w, http.StatusBadRequest, "bad_request", "missing space id")
 		return
 	}
 	if s.keyStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "key service not configured")
-		return
-	}
-	// Any member may rotate, as any member may retrieve the envelope
-	// (decisions.md #7): in a shared Space the Recovery Key is shared, so
-	// whoever holds it may replace it. Role gating arrives with R3.
-	if !s.assertMember(w, r, id.Subject, spaceID) {
 		return
 	}
 	// Rotation replaces something. A Space with no envelope has nothing to
@@ -235,21 +221,12 @@ func (s *Server) handleRotateRecoveryKey(w http.ResponseWriter, r *http.Request)
 
 // handleKeyStatus reports whether a space is set up. It returns no key material.
 func (s *Server) handleKeyStatus(w http.ResponseWriter, r *http.Request) {
-	id, ok := IdentityFrom(r.Context())
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
-		return
-	}
-	spaceID := r.PathValue("id")
-	if spaceID == "" {
-		writeError(w, http.StatusBadRequest, "bad_request", "missing space id")
 		return
 	}
 	if s.keyStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "key service not configured")
-		return
-	}
-	if !s.assertMember(w, r, id.Subject, spaceID) {
 		return
 	}
 
@@ -265,21 +242,12 @@ func (s *Server) handleKeyStatus(w http.ResponseWriter, r *http.Request) {
 // (decisions.md #7). The response is ciphertext plus public KDF parameters; the
 // server neither holds nor learns the Recovery Key.
 func (s *Server) handleRecoveryEnvelope(w http.ResponseWriter, r *http.Request) {
-	id, ok := IdentityFrom(r.Context())
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
-		return
-	}
-	spaceID := r.PathValue("id")
-	if spaceID == "" {
-		writeError(w, http.StatusBadRequest, "bad_request", "missing space id")
 		return
 	}
 	if s.keyStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "key service not configured")
-		return
-	}
-	if !s.assertMember(w, r, id.Subject, spaceID) {
 		return
 	}
 
@@ -308,32 +276,6 @@ func (s *Server) handleRecoveryEnvelope(w http.ResponseWriter, r *http.Request) 
 		ArgonMemoryKiB: info.Argon.MemoryKiB,
 		ArgonLanes:     info.Argon.Lanes,
 	})
-}
-
-// assertMember enforces server-side CS3 membership for a space-scoped route. It
-// writes the error response and returns false when access is denied, so a
-// non-member cannot distinguish "not a member" from "no such space".
-func (s *Server) assertMember(w http.ResponseWriter, r *http.Request, subject, spaceID string) bool {
-	if s.spaces == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "space backend not configured")
-		return false
-	}
-	all, err := s.spaces.ListSpaces(r.Context())
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "upstream_error", "could not verify space membership")
-		return false
-	}
-	for _, sp := range all {
-		if sp.ID == spaceID {
-			if isMember(sp, subject) {
-				return true
-			}
-			break
-		}
-	}
-	// Same response whether the space is foreign or absent — no enumeration.
-	writeError(w, http.StatusForbidden, "forbidden", "not a member of this space")
-	return false
 }
 
 // assertNotConfigured allows a request through only while the Space has no

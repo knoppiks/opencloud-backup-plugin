@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"opencloud-backup-plugin/pkg/backup"
+	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/spacecfg"
 )
@@ -81,7 +82,7 @@ type jobResponse struct {
 
 // handleGetBackupConfig returns a Space's backup configuration.
 func (s *Server) handleGetBackupConfig(w http.ResponseWriter, r *http.Request) {
-	id, spaceID, ok := s.spaceScoped(w, r)
+	id, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
 	if !ok {
 		return
 	}
@@ -108,7 +109,7 @@ func (s *Server) handleGetBackupConfig(w http.ResponseWriter, r *http.Request) {
 // handlePutBackupConfig binds a Space to a granted target and sets its
 // retention window.
 func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
-	id, spaceID, ok := s.spaceScoped(w, r)
+	id, spaceID, ok := s.requireRole(w, r, cs3.RoleEditor)
 	if !ok {
 		return
 	}
@@ -167,7 +168,7 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 // handleRunBackup triggers a backup run ("backup now"). The run executes in the
 // background; the response carries the job id to poll.
 func (s *Server) handleRunBackup(w http.ResponseWriter, r *http.Request) {
-	_, spaceID, ok := s.spaceScoped(w, r)
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleEditor)
 	if !ok {
 		return
 	}
@@ -193,7 +194,7 @@ func (s *Server) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 // status board asking for five runs costs five reads regardless of how long the
 // history is.
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
-	_, spaceID, ok := s.spaceScoped(w, r)
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
 	if !ok {
 		return
 	}
@@ -255,25 +256,6 @@ func writeRunError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not start the backup run")
 	}
-}
-
-// spaceScoped resolves the caller identity and space id and enforces membership.
-// It writes the error response and returns ok=false when access is denied.
-func (s *Server) spaceScoped(w http.ResponseWriter, r *http.Request) (Identity, string, bool) {
-	id, ok := IdentityFrom(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
-		return Identity{}, "", false
-	}
-	spaceID := r.PathValue("id")
-	if spaceID == "" {
-		writeError(w, http.StatusBadRequest, "bad_request", "missing space id")
-		return Identity{}, "", false
-	}
-	if !s.assertMember(w, r, id.Subject, spaceID) {
-		return Identity{}, "", false
-	}
-	return id, spaceID, true
 }
 
 func toConfigResponse(c spacecfg.Config) configResponse {

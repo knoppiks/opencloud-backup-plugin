@@ -240,14 +240,39 @@ must be set` (HTTP 500). Build references from the space root + relative path.
 Membership/roles are exposed on the **space's `Opaque` map** returned by
 `ListStorageSpaces`. Relevant keys:
 
-- **`grants`** — map of principal (user) grants → roles/permissions on the space.
-- **`groups`** — group grants.
+- **`grants`** — map of principal → grant on the space.
+- **`groups`** — which of those principals are groups.
 - **`grants_expirations`** — expiry per grant.
 
 For a personal space these are `{}` (owner only). For a project/shared space
 they enumerate the members and their roles — this is the query that answers
 *"who may retrieve a shared space's RK"* (any member, per decisions.md #7). No
 extra sharing API is needed for the RK-retrieval check; read the space grants.
+
+**Pinned in R3 (OpenCloud 7.3.0), correcting the sketch above.** The shapes were
+not verified when this was written; they are now, by
+`TestIntegration_SpaceGrantsShape`:
+
+- `grants` is `{"<principal>": <provider.ResourcePermissions>}` — a **permission
+  set**, not a role name. Reva does not serialize the display role, so roles are
+  derived from capabilities (may grant → manager, may write → editor, may read →
+  viewer).
+- `groups` is a **set**, `{"<gid>":{}}`, marking which `grants` keys are groups.
+  Without it a group id is indistinguishable from a user id.
+- `grants_expirations` is `{"<principal>":{"seconds":<unix>}}`.
+- All three are **absent entirely** when empty, not present-and-empty.
+- Reva prunes an expired grant from `grants` and `grants_expirations` on the next
+  read. This is lazy and not a documented guarantee, so expiry is still checked
+  locally.
+- A **project space's `owner` is the space's own id**, not a user, so ownership
+  never identifies a caller on a shared space — grants are the only authority
+  there.
+
+**Group membership is not on the opaque map, nor on the token.** OpenCloud 7.3.0
+serves no `/graph/v1.0/me/memberOf` route (404) and puts no groups claim on the
+access token. The supported source is
+`GET /graph/v1.0/me?$expand=memberOf`, with the caller's own bearer token —
+combinable with the admin probe as `$expand=appRoleAssignments,memberOf`.
 
 ### Fixture notes (for Phases 2/4/5/8)
 

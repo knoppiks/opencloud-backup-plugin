@@ -18,6 +18,7 @@ import (
 	"errors"
 	"net/http"
 
+	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/restore"
 	"opencloud-backup-plugin/pkg/snapshot"
@@ -56,7 +57,7 @@ type restoreResponse struct {
 
 // handleListSnapshots returns the snapshots a member may restore, newest first.
 func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
-	_, spaceID, ok := s.spaceScoped(w, r)
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
 	if !ok {
 		return
 	}
@@ -85,7 +86,7 @@ func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 
 // handleRestore starts a restore of one snapshot into the Space.
 func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
-	_, spaceID, ok := s.spaceScoped(w, r)
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
 	if !ok {
 		return
 	}

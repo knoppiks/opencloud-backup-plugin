@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"time"
 
+	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/notify"
 	"opencloud-backup-plugin/pkg/scheduler"
@@ -91,7 +92,7 @@ type statusResponse struct {
 
 // handlePutSchedule sets a Space's schedule.
 func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
-	_, spaceID, ok := s.spaceScoped(w, r)
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleEditor)
 	if !ok {
 		return
 	}
@@ -139,7 +140,7 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 
 // handleGetSchedule returns a Space's schedule.
 func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
-	_, spaceID, ok := s.spaceScoped(w, r)
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
 	if !ok {
 		return
 	}
@@ -164,7 +165,7 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 // handleBackupStatus serves the status board: what happened last, what is
 // happening now, what happens next.
 func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
-	_, spaceID, ok := s.spaceScoped(w, r)
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
 	if !ok {
 		return
 	}
@@ -234,7 +235,7 @@ func applyHistory(out *statusResponse, history []jobs.Job) {
 // the Space's own events are reachable here; operator events live in a
 // different scope and have no space-scoped route (decisions.md #15).
 func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request) {
-	_, spaceID, ok := s.spaceScoped(w, r)
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
 	if !ok {
 		return
 	}

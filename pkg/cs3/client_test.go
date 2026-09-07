@@ -213,7 +213,7 @@ func TestListSpaces_MapsFieldsAndForwardsToken(t *testing.T) {
 		authToken: "reva-token-abc",
 		spaces: []*provider.StorageSpace{
 			personalSpace("s1", "Alice", "alice"),
-			projectSpace("s2", "Team", `{"alice":"manager","bob":"editor"}`),
+			projectSpace("s2", "Team", `{"alice":`+permsManager+`,"bob":`+permsEditor+`}`),
 		},
 	}
 	c := NewClient(fg, ServiceAccountAuth{Gateway: fg, ClientID: "id", Secret: "sec"})
@@ -236,7 +236,7 @@ func TestListSpaces_MapsFieldsAndForwardsToken(t *testing.T) {
 	if byID["s1"].Owner != "alice" || byID["s1"].Type != "personal" || byID["s1"].Members != nil {
 		t.Fatalf("personal space mapping wrong: %+v", byID["s1"])
 	}
-	if byID["s2"].Members["alice"] != "manager" || byID["s2"].Members["bob"] != "editor" {
+	if byID["s2"].Members["alice"].Role != RoleManager || byID["s2"].Members["bob"].Role != RoleEditor {
 		t.Fatalf("project membership not parsed from grants: %+v", byID["s2"].Members)
 	}
 }
@@ -284,3 +284,5 @@ func TestParseMembers_EmptyGrants(t *testing.T) {
 		t.Fatalf("no opaque should yield nil members, got %+v", m)
 	}
 }
+
+// Role parsing, expiry and group handling are covered in role_test.go.

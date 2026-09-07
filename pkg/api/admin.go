@@ -14,11 +14,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
-	"time"
 )
 
 type isAdminCtxKey struct{}
@@ -55,14 +52,10 @@ func (f AdminResolverFunc) IsAdmin(ctx context.Context, id Identity) (bool, erro
 // 7.3.0's static role bundle (phase-0-findings.md) and is overridable per
 // deployment.
 type GraphAdminResolver struct {
-	// BaseURL is the OpenCloud base URL (e.g. https://cloud.example.org). The
-	// resolver calls BaseURL + /graph/v1.0/me?$expand=appRoleAssignments.
-	BaseURL string
 	// AdminAppRoleID is the graph appRoleId that denotes an admin.
 	AdminAppRoleID string
-	// Client is the HTTP client used for the graph call; defaults to a client
-	// with a short timeout.
-	Client *http.Client
+	// graph fetches the caller's /me document.
+	graph graphMeFetcher
 }
 
 // DefaultAdminAppRoleID is the OpenCloud 7.3.0 "Admin" app-role id
@@ -75,49 +68,19 @@ func NewGraphAdminResolver(baseURL, adminAppRoleID string, client *http.Client) 
 	if adminAppRoleID == "" {
 		adminAppRoleID = DefaultAdminAppRoleID
 	}
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
 	return &GraphAdminResolver{
-		BaseURL:        strings.TrimRight(baseURL, "/"),
 		AdminAppRoleID: adminAppRoleID,
-		Client:         client,
+		graph:          newGraphMeFetcher(baseURL, client),
 	}
-}
-
-// graphMeResponse is the subset of /me we read.
-type graphMeResponse struct {
-	AppRoleAssignments []struct {
-		AppRoleID string `json:"appRoleId"`
-	} `json:"appRoleAssignments"`
 }
 
 // IsAdmin calls the graph API as the caller and maps their app-role assignments
 // to admin status. A non-admin (or a user without the admin role) yields false;
 // transport/graph errors are returned so the caller can decide (fail-closed).
 func (g *GraphAdminResolver) IsAdmin(ctx context.Context, id Identity) (bool, error) {
-	if id.Token == "" {
-		return false, fmt.Errorf("graph admin resolve: no caller token")
-	}
-	u := g.BaseURL + "/graph/v1.0/me?$expand=appRoleAssignments"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	me, err := g.graph.fetch(ctx, "graph admin resolve", id, expandAppRoles)
 	if err != nil {
-		return false, fmt.Errorf("graph admin resolve: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+id.Token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := g.Client.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("graph admin resolve: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("graph admin resolve: status %d", resp.StatusCode)
-	}
-	var me graphMeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
-		return false, fmt.Errorf("graph admin resolve: decode: %w", err)
+		return false, err
 	}
 	for _, a := range me.AppRoleAssignments {
 		if a.AppRoleID == g.AdminAppRoleID {

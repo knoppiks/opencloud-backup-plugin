@@ -274,7 +274,7 @@ func TestStore_CheckRefusesASpaceUsersCanReach(t *testing.T) {
 
 	t.Run("a space with a member grant is refused, without naming the member", func(t *testing.T) {
 		fake := newFakeSpace()
-		fake.space.Members = map[string]string{"user-alice": "manager"}
+		fake.space.Members = map[string]cs3.Member{"user-alice": {Role: cs3.RoleManager}}
 		store, err := New(fake, Options{SpaceID: "state-space"})
 		if err != nil {
 			t.Fatalf("New: %v", err)
