@@ -10,7 +10,6 @@ package cs3
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -336,7 +335,7 @@ func pickDownloadProtocol(protocols []*gateway.FileDownloadProtocol) (endpoint, 
 }
 
 // toSpace maps a CS3 StorageSpace into our model, extracting membership from the
-// Opaque grants map (phase-0-findings.md Spike 3).
+// Opaque grants map (phase-0-findings.md Spike 3; shape pinned in role.go).
 func toSpace(s *provider.StorageSpace) Space {
 	sp := Space{
 		ID:      s.GetId().GetOpaqueId(),
@@ -356,52 +355,6 @@ func toResourceID(id *provider.ResourceId) ResourceID {
 		SpaceID:   id.GetSpaceId(),
 		OpaqueID:  id.GetOpaqueId(),
 	}
-}
-
-// parseMembers reads the space's Opaque "grants" map into principal->role. The
-// grants value is a JSON object keyed by principal id; the value shape varies by
-// reva version, so we keep the raw value as the role token defensively. Personal
-// spaces have empty grants (owner only).
-func parseMembers(s *provider.StorageSpace) map[string]string {
-	op := s.GetOpaque()
-	if op == nil {
-		return nil
-	}
-	entry, ok := op.GetMap()["grants"]
-	if !ok || len(entry.GetValue()) == 0 {
-		return nil
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(entry.GetValue(), &raw); err != nil {
-		return nil
-	}
-	if len(raw) == 0 {
-		return nil
-	}
-	members := make(map[string]string, len(raw))
-	for principal, role := range raw {
-		members[principal] = roleLabel(role)
-	}
-	return members
-}
-
-// roleLabel extracts a short role label from a grant value, falling back to the
-// compact JSON if the shape is unknown. Never used for authorization decisions
-// on its own — presence in the map is what grants membership.
-func roleLabel(v json.RawMessage) string {
-	var s string
-	if err := json.Unmarshal(v, &s); err == nil {
-		return s
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(v, &obj); err == nil {
-		for _, k := range []string{"role", "name", "type"} {
-			if rv, ok := obj[k].(string); ok && rv != "" {
-				return rv
-			}
-		}
-	}
-	return string(v)
 }
 
 // reference builds the space-relative CS3 reference the data path requires: the

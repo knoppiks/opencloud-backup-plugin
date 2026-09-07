@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
@@ -29,6 +30,7 @@ type Server struct {
 
 	validator     TokenValidator
 	adminResolver AdminResolver
+	groupResolver GroupResolver
 	spaces        cs3.SpaceReader
 	authorizer    targets.Authorizer
 
@@ -56,6 +58,10 @@ type Server struct {
 
 	// ready reports readiness for GET /readyz; defaults to always-ready.
 	ready func(context.Context) error
+
+	// clock supplies "now" for grant-expiry checks; injected so tests can pin
+	// a grant on either side of its expiry.
+	clock func() time.Time
 }
 
 // Option configures a Server.
@@ -66,6 +72,11 @@ func WithTokenValidator(v TokenValidator) Option { return func(s *Server) { s.va
 
 // WithAdminResolver sets the admin-status resolver used by ResolveAdmin.
 func WithAdminResolver(r AdminResolver) Option { return func(s *Server) { s.adminResolver = r } }
+
+// WithGroupResolver sets the resolver that answers which groups a caller belongs
+// to, so group grants on a Space are honoured. Without it, a Space that carries
+// a group grant refuses callers who need it (fail closed).
+func WithGroupResolver(r GroupResolver) Option { return func(s *Server) { s.groupResolver = r } }
 
 // WithSpaceReader sets the CS3 space reader backing GET /spaces.
 func WithSpaceReader(r cs3.SpaceReader) Option { return func(s *Server) { s.spaces = r } }
@@ -111,6 +122,15 @@ func WithReadiness(fn func(context.Context) error) Option {
 	return func(s *Server) { s.ready = fn }
 }
 
+// WithClock sets the time source used to evaluate grant expiry.
+func WithClock(now func() time.Time) Option {
+	return func(s *Server) {
+		if now != nil {
+			s.clock = now
+		}
+	}
+}
+
 // NewServer constructs the HTTP server and registers routes.
 func NewServer(opts ...Option) *Server {
 	s := &Server{mux: http.NewServeMux()}
@@ -119,6 +139,9 @@ func NewServer(opts ...Option) *Server {
 	}
 	if s.ready == nil {
 		s.ready = func(context.Context) error { return nil }
+	}
+	if s.clock == nil {
+		s.clock = time.Now
 	}
 	s.routes()
 	return s
@@ -134,39 +157,47 @@ func (s *Server) routes() {
 
 	// Authenticated user API. Authenticate is a no-op-safe gate: without a
 	// validator configured, protected routes always 401 (fail closed).
+	// withAccess attaches the per-request role checker every space-scoped
+	// handler resolves through.
 	authed := func(h http.HandlerFunc) http.Handler {
-		return s.Authenticate(h)
+		return s.Authenticate(s.withAccess(h))
 	}
 	s.mux.Handle("GET /api/v1/spaces", authed(s.handleListSpaces))
 	s.mux.Handle("GET /api/v1/targets", authed(s.handleListTargets))
 
 	// Backup key ceremony (Phase 3). All of these are space-scoped and enforce
-	// CS3 membership server-side; none ever returns plaintext key material.
-	// setup establishes a Space's keys once and refuses to do it twice; rotate
-	// is the supported way to replace a Recovery Key afterwards, and it never
-	// touches the Data Key.
+	// the caller's CS3 role server-side; none ever returns plaintext key
+	// material. setup establishes a Space's keys once and refuses to do it
+	// twice; rotate is the supported way to replace a Recovery Key afterwards,
+	// and it never touches the Data Key. Both reset what a Space's members can
+	// decrypt with, so both require the manager role; reading the envelope is
+	// open to any member (decisions.md #7).
 	s.mux.Handle("POST /api/v1/spaces/{id}/backup/setup", authed(s.handleKeySetup))
 	s.mux.Handle("POST /api/v1/spaces/{id}/backup/recovery-key/rotate", authed(s.handleRotateRecoveryKey))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/keystatus", authed(s.handleKeyStatus))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/recovery-envelope", authed(s.handleRecoveryEnvelope))
 
-	// Backup configuration and runs (Phase 4). Space-scoped and member-gated;
-	// the target binding is validated against server-side grants.
+	// Backup configuration and runs (Phase 4). Reads need viewer; changing the
+	// configuration or starting a run needs editor — the same authority
+	// OpenCloud requires to change the Space's contents. The target binding is
+	// additionally validated against server-side grants.
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/config", authed(s.handleGetBackupConfig))
 	s.mux.Handle("PUT /api/v1/spaces/{id}/backup/config", authed(s.handlePutBackupConfig))
 	s.mux.Handle("POST /api/v1/spaces/{id}/backup/run", authed(s.handleRunBackup))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs", authed(s.handleListRuns))
 
-	// Scheduling and status (Phase 6). Same membership gate; a schedule is
-	// only accepted for a Space already bound to a granted target, so this is
-	// not a second way to configure backup.
+	// Scheduling and status (Phase 6). Same role gate as the config routes; a
+	// schedule is only accepted for a Space already bound to a granted target,
+	// so this is not a second way to configure backup.
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/status", authed(s.handleBackupStatus))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/schedule", authed(s.handleGetSchedule))
 	s.mux.Handle("PUT /api/v1/spaces/{id}/backup/schedule", authed(s.handlePutSchedule))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/notifications", authed(s.handleListNotifications))
 
-	// Restore (Phase 5, Path B). Member-gated like everything space-scoped;
-	// an admin who is not a member is refused exactly like any non-member.
+	// Restore (Phase 5, Path B). Open to any member, because decisions.md #7
+	// makes disaster recovery a member capability rather than a management
+	// one. An admin who is not a member is refused exactly like any
+	// non-member.
 	s.mux.Handle("GET /api/v1/spaces/{id}/snapshots", authed(s.handleListSnapshots))
 	s.mux.Handle("POST /api/v1/spaces/{id}/restore", authed(s.handleRestore))
 
@@ -203,20 +234,20 @@ type spaceDTO struct {
 }
 
 // handleListSpaces returns the spaces the authenticated user may back up. A user
-// may only see Spaces they are a member of, enforced against CS3 membership, not
-// client input (phase-2 deliverable 4).
+// may only see Spaces they hold at least a viewer role on, enforced against CS3
+// grants, not client input (phase-2 deliverable 4).
 func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
-	id, ok := IdentityFrom(r.Context())
+	a, ok := accessFrom(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
 		return
 	}
-	if s.spaces == nil {
+
+	all, err := a.listSpaces(r.Context())
+	if errors.Is(err, ErrNotConfigured) {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "space backend not configured")
 		return
 	}
-
-	all, err := s.spaces.ListSpaces(r.Context())
 	if err != nil {
 		// Never leak CS3 detail (phase-2 deliverable 3, exit criterion 2).
 		writeError(w, http.StatusBadGateway, "upstream_error", "could not list spaces")
@@ -225,28 +256,17 @@ func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]spaceDTO, 0, len(all))
 	for _, sp := range all {
-		if !isMember(sp, id.Subject) {
+		visible, err := a.permits(r.Context(), sp, cs3.RoleViewer)
+		if err != nil {
+			writeAccessError(w, err)
+			return
+		}
+		if !visible {
 			continue
 		}
 		out = append(out, spaceDTO{ID: sp.ID, Name: sp.Name, Type: sp.Type})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"spaces": out})
-}
-
-// isMember reports whether subject may see space: they own it or appear in the
-// membership grants (decisions.md #6/#7; phase-2 deliverable 4). Enforced
-// server-side against CS3 data, never client input.
-func isMember(space cs3.Space, subject string) bool {
-	if subject == "" {
-		return false
-	}
-	if space.Owner == subject {
-		return true
-	}
-	if _, ok := space.Members[subject]; ok {
-		return true
-	}
-	return false
 }
 
 // targetDTO is the least-disclosure projection for GET /targets: only what the
@@ -271,12 +291,18 @@ func (s *Server) handleListTargets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a, ok := accessFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
+		return
+	}
+
 	// The set of spaces the user belongs to feeds space-scoped grants. We derive
-	// it from CS3 membership (never client input); when no space reader is wired
+	// it from CS3 grants (never client input); when no space reader is wired
 	// only all-users / per-user grants apply.
-	spaceIDs, err := s.memberSpaceIDs(r.Context(), id.Subject)
+	spaceIDs, err := a.memberSpaceIDs(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "upstream_error", "could not resolve spaces")
+		writeAccessError(w, err)
 		return
 	}
 
@@ -291,25 +317,6 @@ func (s *Server) handleListTargets(w http.ResponseWriter, r *http.Request) {
 		out = append(out, targetDTO{ID: v.ID, Name: v.Name})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"targets": out})
-}
-
-// memberSpaceIDs returns the ids of spaces subject belongs to, or an empty slice
-// if no space reader is configured. Used only to evaluate space-scoped grants.
-func (s *Server) memberSpaceIDs(ctx context.Context, subject string) ([]string, error) {
-	if s.spaces == nil {
-		return nil, nil
-	}
-	all, err := s.spaces.ListSpaces(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var ids []string
-	for _, sp := range all {
-		if isMember(sp, subject) {
-			ids = append(ids, sp.ID)
-		}
-	}
-	return ids, nil
 }
 
 // handleAdminNotImplemented is the placeholder body behind the admin gate. It is

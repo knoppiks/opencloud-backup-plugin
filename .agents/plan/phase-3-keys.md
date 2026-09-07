@@ -51,12 +51,15 @@ fully unit-testable.
      with no override. Re-running the ceremony would install a new DK and orphan
      every existing snapshot. A half-finished setup (one envelope) can still be
      completed by re-running it.
-   - Client envelopes must meet a minimum Argon2id work factor
-     (`keys.MinArgonParams`); weaker ones are 400.
+    - Client envelopes must meet a minimum Argon2id work factor
+      (`keys.MinArgonParams`); weaker ones are 400.
+    - **Both write routes require the manager role** on the Space (R3): they
+      decide or replace what every member can decrypt with. Reading key status or
+      the envelope stays open to any member.
 3. **Shared-space RK retrieval** (decisions.md #7): endpoint returning the
    RK-wrapped-DK blob to **space members only** (membership via CS3 from
-   Phase 2). Members can re-wrap for themselves; server still never sees RK
-   plaintext.
+   Phase 2; role, expiry and group grants honoured per R3). Members can re-wrap
+   for themselves; server still never sees RK plaintext.
 4. **Recovery-Key ceremony contract** (for Phase 8): RK displayed once,
    "I saved it" confirmation gate, no server-side RK escrow.
 

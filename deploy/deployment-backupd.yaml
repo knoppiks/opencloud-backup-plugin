@@ -50,6 +50,11 @@ spec:
         # set OC_BASE_URL; OC_ADMIN_APP_ROLE_ID defaults to the pinned 7.3.0 Admin
         # role id (phase-0-findings.md) and only needs overriding on other builds.
         # Fallback: set ADMIN_SUBJECT_ALLOWLIST (comma-separated subs) instead.
+        #
+        # OC_BASE_URL also backs group-grant resolution (graph memberOf,
+        # decisions.md #20) and is NOT optional for that: without it, a Space
+        # shared with a group answers 503 for the members who reach it through
+        # that group. Set it even when using ADMIN_SUBJECT_ALLOWLIST.
         - name: OC_BASE_URL
           value: "https://cloud.example.org"
         # - name: OC_ADMIN_APP_ROLE_ID

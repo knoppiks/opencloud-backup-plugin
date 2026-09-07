@@ -279,6 +279,60 @@ roles above.
 `phase-2-auth-spaces.md` (role table), `decisions.md` #7 clarification (any
 member may *retrieve* the envelope; only managers may *reset* it).
 
+### Outcome (implemented, issue #16)
+
+Option A, with one row of the role table struck by the owner and three findings
+from pinning the grant shape.
+
+- **Owner decision — restore stays at viewer.** The plan argued restore should be
+  manager/owner because it writes into the Space. decisions.md #7 says plainly
+  that any member may trigger a restore, and that sentence was kept rather than
+  amended: disaster recovery is a member capability. Only setup and RK rotation
+  moved up. The residual risk — a viewer can cause files to appear in a
+  `Restore/<timestamp>/` folder of a Space they cannot write to — is recorded in
+  the decisions.md R3 amendment as accepted, not overlooked.
+- **Owner decision — group grants are resolved via the graph API**, as
+  recommended, using `GET /graph/v1.0/me?$expand=memberOf`. Two deviations from
+  the plan's "graph call per request": OpenCloud 7.3.0 has **no `/me/memberOf`
+  route** (404), so the expanded `/me` document is the supported source; and the
+  call is made **lazily**, only when the caller's direct grant falls short and
+  the Space actually carries a group grant. A Space granted to users only never
+  triggers it. Missing or failing resolution answers 503/502 rather than
+  guessing (new decision #20).
+- **Finding — the grant value is a permission set, not a role name.** Task 1's
+  fixture test found `grants` to be
+  `{"<principal>": <provider.ResourcePermissions>}` — a bag of booleans
+  (`initiate_file_upload`, `add_grant`, …). The old `roleLabel` helper, which
+  looked for a `"role"`/`"name"`/`"type"` string, would have returned the whole
+  compact JSON blob for every principal. Roles are therefore derived by
+  *capability* (may grant → manager, may write → editor, may read → viewer),
+  which survives reva adding a permission; matching an exact permission set would
+  not.
+- **Finding — the sidecar maps are separate and sparse.** `groups` is
+  `{"<gid>":{}}` (a set, listing which grant keys are groups) and
+  `grants_expirations` is `{"<principal>":{"seconds":<unix>}}` — both absent
+  entirely when empty. A group id and a user id are otherwise indistinguishable,
+  so without `groups` a group grant would be matched against caller subjects.
+- **Finding — reva prunes expired grants itself.** A grant seen in `grants`
+  before its expiry is gone from both `grants` and `grants_expirations` on the
+  next read afterwards. The local expiry check was kept anyway: the pruning is
+  lazy and is not a documented guarantee.
+- **Deviation — `Space.Owner` is useless on project Spaces.** OpenCloud sets a
+  project Space's owner to the Space's own id, so `RoleOwner` only ever matches
+  on a personal Space. Ownership is still checked first (it is the personal-Space
+  case), but authority on a shared Space comes exclusively from grants.
+- **Addition — the role table is itself a test.**
+  `TestRoleTable_EveryRouteEnforcesItsMinimumRole` walks every route × every
+  caller role, asserting both directions (below the minimum → 403, at or above →
+  not 403). Adding a route without a row is the mistake it exists to catch.
+- **Addition — the fixture seeds the grants it pins.** `seed.sh` now creates a
+  project Space with a viewer, an editor, a manager, a group grant and an
+  expiring grant, exporting `OC_SHARED_*` into `fixture.env`. This also covers
+  R9 task 5.
+- **Task 5 delivered as a per-request `access` checker** (`pkg/api/access.go`)
+  holding the memoised Space list and caller groups, installed by middleware
+  after `Authenticate`. `GET /targets` now lists Spaces once, not twice.
+
 ---
 
 ## R4 — Kopia correctness: ignore rules and checkpoints (F4)

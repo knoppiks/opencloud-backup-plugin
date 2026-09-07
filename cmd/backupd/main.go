@@ -187,6 +187,17 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 		logger.Warn("no admin resolver configured; admin routes will 403 for everyone")
 	}
 
+	// --- group resolver ---------------------------------------------------
+	// Group grants on a Space are only honoured when the caller's groups can be
+	// resolved. Without this, a Space granted to a group refuses the members who
+	// need that grant rather than guessing (fail closed).
+	if base := os.Getenv("OC_BASE_URL"); base != "" {
+		opts = append(opts, api.WithGroupResolver(api.NewGraphGroupResolver(base, httpClient())))
+		logger.Info("group resolution: graph memberOf")
+	} else {
+		logger.Warn("OC_BASE_URL unset; group grants on a Space cannot be honoured")
+	}
+
 	// --- CS3 space reader / writer ---------------------------------------
 	var (
 		spaceReader cs3.SpaceReader

@@ -41,10 +41,10 @@ type Space struct {
 	// Root is the space root's resource id, used to build space-relative
 	// references for the walk and download paths.
 	Root ResourceID
-	// Members maps principal ID -> role for shared spaces, derived from the
-	// space's Opaque grants map (phase-0-findings.md Spike 3). Empty for a
-	// personal space.
-	Members map[string]string
+	// Members maps principal ID -> grant for shared spaces, derived from the
+	// space's Opaque grants/groups/grants_expirations maps (see role.go).
+	// A principal may be a user or a group. Empty for a personal space.
+	Members map[string]Member
 }
 
 // Entry is a single file or directory encountered while walking a Space.

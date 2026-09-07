@@ -61,7 +61,9 @@ than drifting.
    members, and the backup's job is disaster recovery + ransomware mitigation, not
    a new confidentiality boundary. Any member may perform the Take-Out decrypt or
    trigger restore. **Shamir N-of-M secret sharing was considered and rejected**
-   as overkill for the family scenario.
+   as overkill for the family scenario. See "Amendments from … R3" for what
+   "member" means precisely (role, expiry, group) and which actions moved above
+   plain membership.
 
 8. **Target: Garage** (self-hosted buddy S3). As of v2.3.0 it has **no S3 Object
    Lock and no versioning** (upstream Garage #166 versioning, #1127 Object Lock;
@@ -476,6 +478,49 @@ decision.
   interop test is where it gets enforced for the shipped client. The mitigation
   for a client that gets it wrong is #16's append-only storage: the superseded
   envelope is still there.
+
+### Amendments from the September 2026 review — R3 (roles, expiry, groups)
+
+- **Decision #7 clarified: "member" is now a role, not a boolean.** A CS3 grant
+  carries a *permission set*, not a role name, and may be held by a group and/or
+  carry an expiry. All three were previously ignored: presence of any key in the
+  `grants` map was full authority. The parsed grant now yields
+  `{Role, ExpiresAt, Group}` and each route states a minimum role. The table is
+  in `phase-2-auth-spaces.md`; the parsing is pinned against a live OpenCloud by
+  `TestIntegration_SpaceGrantsShape`.
+
+- **#7 stands as written for retrieval *and* restore.** Any non-expired member —
+  viewer included — may retrieve the recovery envelope and trigger a restore.
+  Only the *management* actions moved up: key setup and Recovery-Key rotation
+  now require the manager role, because they decide or replace what the whole
+  Space's members can decrypt with.
+  *Known consequence, accepted deliberately:* a restore writes into the Space
+  through the service account, so a viewer can cause files to appear in a Space
+  they cannot otherwise write to. The write is confined to a fresh
+  `Restore/<timestamp>/` folder and never overwrites live data (#3), and #7's
+  premise — that disaster recovery is a member capability rather than a
+  management one — was judged to outweigh it for the family scenario. If this is
+  revisited, the change is one row of the role table.
+
+- **New decision #20 (locked): a grant that cannot be evaluated is refused, not
+  guessed.** Group grants are resolved from
+  `GET /graph/v1.0/me?$expand=memberOf` with the caller's own bearer token —
+  OpenCloud 7.3.0 puts no groups claim on the access token and has no
+  `/me/memberOf` route. When that lookup is unavailable or fails, a Space
+  carrying a group grant answers 503/502 for the callers who would need it.
+  Rationale: treating an unresolvable group as "no groups" silently denies a
+  legitimate member; treating it as "member" silently grants a stranger. An
+  error is the only answer that is not a wrong decision.
+  *Constraint:* groups are resolved **lazily** — only when the caller's own
+  grant falls short *and* the Space actually has a group grant — and memoised
+  per request. A Space granted to users only, and a caller whose direct grant
+  already suffices, cost no upstream call.
+
+- **Reva prunes expired grants itself, but the check stays.** On OpenCloud 7.3.0
+  an expired grant disappears from the `grants` map on the next read. The
+  expiry check is nonetheless enforced locally: the pruning is lazy, undocumented
+  as a guarantee, and relying on it would make correctness depend on a reva
+  implementation detail this project does not control.
 
 ---
 

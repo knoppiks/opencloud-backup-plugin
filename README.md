@@ -92,6 +92,27 @@ Without `STATE_SPACE_ID` the service runs with in-memory state and says so
 loudly at startup. Schedules, history and key envelopes then die with the
 process; that mode is for smoke tests only.
 
+## Who may do what
+
+Access follows the Space's own OpenCloud roles — the service never invents its
+own permission model, and never trusts what the browser claims:
+
+| | viewer | editor | manager / owner |
+|---|---|---|---|
+| See status, schedule, history, snapshots | yes | yes | yes |
+| Fetch the recovery envelope, restore a backup | yes | yes | yes |
+| Back up now, change schedule / retention / target | — | yes | yes |
+| Set up the Space's keys, replace the Recovery Key | — | — | yes |
+
+An expired share is not a share: once a grant's expiry passes, that person is
+refused like any stranger. Shares given to a **group** work too, but the service
+has to ask OpenCloud who is in which group — set `OC_BASE_URL` for that. Without
+it, a Space shared with a group tells those members it cannot verify them,
+rather than quietly letting them in or shutting them out.
+
+An OpenCloud administrator gets none of this by virtue of being an
+administrator; they see a Space's backups only if they are a member of it.
+
 ## Recovery runbook
 
 Two ways back. Pick the first one that applies.
