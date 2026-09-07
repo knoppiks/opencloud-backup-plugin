@@ -65,7 +65,7 @@ func (s *StateStore) Create(ctx context.Context, j Job) (Job, error) {
 	}
 
 	key := s.docs.Key(j.SpaceID, documentName(j.CreatedAt, j.ID))
-	if err := s.docs.PutKey(ctx, key, j); err != nil {
+	if err := s.docs.CreateKey(ctx, key, j); err != nil {
 		return Job{}, fmt.Errorf("jobs: store job: %w", err)
 	}
 
@@ -142,7 +142,10 @@ func (s *StateStore) Finish(ctx context.Context, id string, out Outcome) error {
 		}
 		return fmt.Errorf("jobs: read job: %w", err)
 	}
-	if err := s.docs.PutKey(ctx, key, applyOutcome(j, out, s.clock.Now())); err != nil {
+	// A job record is re-derivable state: it is written again on every state
+	// change and its loss costs a history entry, not a backup. Replacing it in
+	// place is therefore allowed where a key envelope's would not be.
+	if err := s.docs.ReplaceKey(ctx, key, applyOutcome(j, out, s.clock.Now())); err != nil {
 		return fmt.Errorf("jobs: store job: %w", err)
 	}
 	return nil

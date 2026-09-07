@@ -32,6 +32,9 @@ const (
 	keysSegment = "keys"
 	// envelopeObject is the file name of a Space's RK-wrapped Data Key envelope.
 	envelopeObject = "recovery.ocbke"
+	// serverEnvelopeObject is the file name of a Space's SRW-wrapped Data Key
+	// envelope, the service's own copy.
+	serverEnvelopeObject = "server.ocbke"
 )
 
 // RepoPrefix returns the object-key prefix of one Space's repository, always
@@ -54,6 +57,27 @@ func RepoPrefix(loc Location, ref SpaceRef) string {
 // reclaimed by maintenance.
 func EnvelopeKey(loc Location, ref SpaceRef) string {
 	p := path.Join(strings.Trim(loc.Prefix, "/"), keysSegment, ref.SpaceID, envelopeObject)
+	return strings.TrimPrefix(p, "/")
+}
+
+// ServerEnvelopeKey returns the object key of a Space's SRW-wrapped Data Key
+// envelope: "<prefix>keys/<space-id>/server.ocbke".
+//
+// This is the service's own copy, published so that the state Space is no
+// longer the only place it exists. Losing the state Space then costs a
+// re-configuration instead of the ability to run unattended backups at all
+// (decisions.md #16).
+//
+// It is ciphertext openable only with the cluster's SRW key. Publishing it does
+// widen what an attacker holding *both* the target's contents and the SRW key
+// can decrypt — that is a deliberate, recorded trust-model trade-off
+// (decisions.md, trust & key model), taken because the SRW key already lives in
+// the same cluster as the service account that reads plaintext Spaces.
+//
+// Like the recovery envelope it lives outside RepoPrefix: everything under a
+// repository prefix is kopia-owned.
+func ServerEnvelopeKey(loc Location, ref SpaceRef) string {
+	p := path.Join(strings.Trim(loc.Prefix, "/"), keysSegment, ref.SpaceID, serverEnvelopeObject)
 	return strings.TrimPrefix(p, "/")
 }
 

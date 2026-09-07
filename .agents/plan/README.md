@@ -25,6 +25,13 @@ Per-phase planning documents.
 | 7 | [phase-7-immutability.md](phase-7-immutability.md) | 4, 6 | Tier 2/3 hardening, capability probe |
 | 8 | [phase-8-web-ui.md](phase-8-web-ui.md) | 0 (extension spike, admin-role spike), 2, 3, 5, 6 | OpenCloud Web extension (incl. admin target mgmt) |
 
+**Post-Phase-6 review (September 2026):**
+[review-2026-09.md](review-2026-09.md) records what was found;
+[remediation-plans.md](remediation-plans.md) holds the candidate fixes (R1–R9)
+and the decisions still to be taken. These are to be merged into the phase
+docs before Phase 7 starts; until then the remediation file is a draft, not a
+binding plan.
+
 **Target management (decisions.md #12–#15):** backup targets are managed in-app
 by an OpenCloud admin, who grants each target to all or specific users. The
 target store, access grants, and at-rest credential encryption (TW key) live in

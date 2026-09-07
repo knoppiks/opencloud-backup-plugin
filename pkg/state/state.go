@@ -39,8 +39,15 @@ import (
 type Store interface {
 	// Get returns the value stored under key, or ErrNotFound.
 	Get(ctx context.Context, key string) ([]byte, error)
-	// Put stores value under key, replacing any previous value.
-	Put(ctx context.Context, key string, value []byte) error
+	// Create stores value under key. A key that already holds a value is
+	// ErrExists: creating never destroys anything, which is what lets
+	// append-only records (see Versions) survive a crash mid-write.
+	Create(ctx context.Context, key string, value []byte) error
+	// Replace stores value under key, discarding any previous value. On a
+	// backend without transactions this is destructive and not atomic — the old
+	// value can be gone before the new one is durable — so it is reserved for
+	// records the service can re-derive after a restart (leases, job records).
+	Replace(ctx context.Context, key string, value []byte) error
 	// Delete removes key. Deleting a missing key returns ErrNotFound.
 	Delete(ctx context.Context, key string) error
 	// List returns the keys under prefix, in lexical order. The prefix is
@@ -57,6 +64,17 @@ func (e ErrNotFound) Error() string { return "state: no value for key " + e.Key 
 func IsNotFound(err error) bool {
 	var nf ErrNotFound
 	return errors.As(err, &nf)
+}
+
+// ErrExists is returned when a create would overwrite an existing value.
+type ErrExists struct{ Key string }
+
+func (e ErrExists) Error() string { return "state: a value already exists for key " + e.Key }
+
+// IsExists reports whether err is an already-exists error from any Store.
+func IsExists(err error) bool {
+	var ex ErrExists
+	return errors.As(err, &ex)
 }
 
 // Key builds a key from raw segments, escaping each one. Segments come from
@@ -177,22 +195,41 @@ func (d *Documents[T]) GetKey(ctx context.Context, key string) (T, error) {
 	return v, nil
 }
 
-// Put encodes and stores a document.
-func (d *Documents[T]) Put(ctx context.Context, v T, id ...string) error {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Errorf("state: encode %s: %w", d.prefix, err)
-	}
-	return d.store.Put(ctx, d.Key(id...), raw)
+// Create encodes and stores a document that must not already exist.
+func (d *Documents[T]) Create(ctx context.Context, v T, id ...string) error {
+	return d.CreateKey(ctx, d.Key(id...), v)
 }
 
-// PutKey stores a document at an exact key.
-func (d *Documents[T]) PutKey(ctx context.Context, key string, v T) error {
+// CreateKey stores a document at an exact key, refusing to replace one.
+func (d *Documents[T]) CreateKey(ctx context.Context, key string, v T) error {
+	raw, err := d.encode(v)
+	if err != nil {
+		return err
+	}
+	return d.store.Create(ctx, key, raw)
+}
+
+// Replace encodes and stores a document, discarding any previous value. Only
+// re-derivable records may use it (see Store.Replace).
+func (d *Documents[T]) Replace(ctx context.Context, v T, id ...string) error {
+	return d.ReplaceKey(ctx, d.Key(id...), v)
+}
+
+// ReplaceKey stores a document at an exact key, discarding any previous value.
+func (d *Documents[T]) ReplaceKey(ctx context.Context, key string, v T) error {
+	raw, err := d.encode(v)
+	if err != nil {
+		return err
+	}
+	return d.store.Replace(ctx, key, raw)
+}
+
+func (d *Documents[T]) encode(v T) ([]byte, error) {
 	raw, err := json.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("state: encode %s: %w", d.prefix, err)
+		return nil, fmt.Errorf("state: encode %s: %w", d.prefix, err)
 	}
-	return d.store.Put(ctx, key, raw)
+	return raw, nil
 }
 
 // Delete removes a document.

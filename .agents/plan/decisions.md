@@ -290,12 +290,13 @@ decision.
   run history survives a new store instance.
   *Constraints this imposes, which are binding:*
   - The state Space must be one **no end user is a member of**. A member could
-    delete the service's memory, and it is not a user's document.
+    delete the service's memory, and it is not a user's document. Since the R1
+    remediation this is **enforced at startup**: the service refuses to start
+    against a personal Space or one carrying any member grant.
   - A CS3 Space is a filesystem: **no transactions, no compare-and-set**. Nothing
     is built on pretending otherwise (see the lock decision below).
-  - An update is delete-then-write, so it is not atomic. Every record is either
-    re-derivable or rewritten on the next write; this is the price of not adding
-    a database, and it is accepted.
+  - **Records whose loss is unrecoverable are append-only; only re-derivable
+    records may be replaced in place.** See the R1 amendment below.
   - Only ciphertext (SRW/TW envelopes) and metadata are stored — never plaintext
     key material. That is defence in depth, not a licence to relax the first
     constraint.
@@ -352,6 +353,55 @@ decision.
   `.../backup/jobs`). It is the Phase-4 route, it now takes `?limit=`, and
   renaming a live contract to match a planning doc would be churn for nothing.
 
+### Amendments from the September 2026 review — R1 (durable state)
+
+- **#16 amended: key, target and Space-config records are append-only and are
+  never replaced.** A write adds an immutable document named after a fixed-width
+  nanosecond timestamp; a read takes the newest. Layouts:
+  `keyenvelopes/<space-id>/{rk,srw}/<nanos>`, `targetrecords/<id>/<nanos>`,
+  `targetgrantlists/<id>/<nanos>`, `spaceconfigs/<space-id>/<nanos>`.
+  Superseded versions are kept: they are tiny, they are ciphertext where they
+  hold key material, and they are the only audit trail a rotation leaves.
+  Rationale: replacing a document in place on a backend with no transactions is
+  destructive, and for a wrapped Data Key the loss is permanent — no envelope,
+  no restore, ever.
+  Records the service can re-derive after a restart — **leases and job
+  records** — keep replace-in-place semantics. The distinction is enforced by
+  the `state.Store` interface, which offers `Create` (refuses to overwrite) and
+  `Replace` (explicitly destructive) rather than a single `Put`.
+  The pre-versioned layouts (`keys/`, `targets/`, `targetgrants/`, `spacecfg/`)
+  are still read when a record has no version yet, and are never rewritten.
+
+- **Pinned against OpenCloud 7.3.0: `InitiateFileUpload` over an existing path
+  overwrites silently** — it does *not* return `ALREADY_EXISTS`
+  (`TestIntegration_CS3StateOverwriteSemantics`). Consequences, both recorded
+  because they are load-bearing:
+  - Nothing in the transport prevents a write from destroying a stored envelope,
+    so `cs3state.Create` checks the folder itself before writing. "The upload
+    would have refused" is not a guarantee anything may rely on.
+  - **Each overwrite creates a file revision that is never reclaimed** (measured
+    on the fixture: five writes to one path left four revision nodes). Leases are
+    renewed every few minutes, so a long-lived deployment accumulates revisions
+    for the lease and job documents. They are small, but the growth is unbounded
+    and there is no purge in this codebase yet. **Open item**, not addressed by
+    R1: either purge revisions on a slow cadence, or document the OpenCloud-side
+    cleanup an operator must run.
+
+- **The SRW envelope is published to the target** as
+  `<prefix>keys/<space-id>/server.ocbke`, next to the RK-wrapped
+  `recovery.ocbke` (R1 option D). Rationale: the state Space was the only place
+  the service's own copy existed, so losing it cost every unattended backup for
+  that Space rather than a re-configuration.
+  **This is a trust-model change and is recorded as such:** an attacker holding
+  both the target's contents *and* the cluster's SRW key can now decrypt without
+  also holding the state Space. The marginal exposure is small — the SRW key
+  already lives in the same cluster as the service account that can read every
+  Space in plaintext — but it is real. The recovery envelope's guarantee is
+  unchanged: it remains openable only with the user's Recovery Key.
+  Recovering *from* `server.ocbke` is currently a manual operator step (fetch
+  the object, unwrap with the SRW key, re-seed the state Space); no code path
+  reads it back yet. Phase 5b would make it a flow.
+
 ---
 
 ## Trust & key model
@@ -362,7 +412,9 @@ decision.
   the user externally (password manager). Plaintext RK **never crosses the wire**.
   Wraps the DK via an Argon2id-derived KEK.
 - **SRW (Server Runtime Wrap):** server-held wrapped DK enabling unattended runs;
-  KEK from K8s secret / KMS.
+  KEK from K8s secret / KMS. The wrapped DK is stored in the state Space **and
+  published to the target** as `server.ocbke` (R1 amendment above), so the state
+  Space is not a single point of failure for unattended runs.
 - **TW (Target Wrap):** a cluster/KMS-held key that wraps **S3 target
   credentials** at rest (decision #14). Same custody class as SRW — lives in a
   K8s secret / KMS, never in the admin UI, never logged. Distinct key from SRW so

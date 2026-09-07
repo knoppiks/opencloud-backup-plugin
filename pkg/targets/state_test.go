@@ -143,6 +143,96 @@ func TestStateStore_DeleteTargetDropsItsGrants(t *testing.T) {
 	}
 }
 
+// Credentials and grants are appended, never replaced: an update that dies
+// halfway must leave the previous sealed blob readable, because nobody can
+// re-enter a secret they no longer have.
+func TestStateStore_TargetsAndGrantsAreAppendOnly(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	store := NewStateStore(backing)
+
+	if _, err := store.CreateTarget(ctx, Target{ID: "t1", Name: "buddy", WrappedCreds: []byte("sealed"), Version: 1}); err != nil {
+		t.Fatalf("CreateTarget: %v", err)
+	}
+	if _, err := store.UpdateTarget(ctx, Target{ID: "t1", Name: "renamed"}); err != nil {
+		t.Fatalf("UpdateTarget: %v", err)
+	}
+	if err := store.PutGrant(ctx, Grant{TargetID: "t1", Scope: ScopeAllUsers}); err != nil {
+		t.Fatalf("PutGrant: %v", err)
+	}
+	if err := store.DeleteGrant(ctx, Grant{TargetID: "t1", Scope: ScopeAllUsers}); err != nil {
+		t.Fatalf("DeleteGrant: %v", err)
+	}
+
+	versions, err := backing.List(ctx, targetPrefix+"/t1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("target versions = %v, want the create and the update", versions)
+	}
+	grantVersions, err := backing.List(ctx, grantPrefix+"/t1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(grantVersions) != 2 {
+		t.Fatalf("grant versions = %v, want the grant and the revocation", grantVersions)
+	}
+
+	got, err := store.GetTarget(ctx, "t1")
+	if err != nil {
+		t.Fatalf("GetTarget: %v", err)
+	}
+	if got.Name != "renamed" || !bytes.Equal(got.WrappedCreds, []byte("sealed")) {
+		t.Fatalf("target = %+v, want the newest version with its credentials", got)
+	}
+}
+
+// A deployment that predates versioning keeps its targets and grants.
+func TestStateStore_ReadsPreVersionedRecords(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+
+	legacyTargets := state.NewDocuments[Target](backing, legacyTargetPrefix)
+	if err := legacyTargets.Create(ctx, Target{ID: "t1", Name: "buddy", WrappedCreds: []byte("sealed"), Version: 1}, "t1"); err != nil {
+		t.Fatalf("seed legacy target: %v", err)
+	}
+	legacyGrants := state.NewDocuments[[]Grant](backing, legacyGrantPrefix)
+	if err := legacyGrants.Create(ctx, []Grant{{TargetID: "t1", Scope: ScopeAllUsers}}, "t1"); err != nil {
+		t.Fatalf("seed legacy grants: %v", err)
+	}
+
+	store := NewStateStore(backing)
+	got, err := store.GetTarget(ctx, "t1")
+	if err != nil || !bytes.Equal(got.WrappedCreds, []byte("sealed")) {
+		t.Fatalf("GetTarget = %+v (%v), want the pre-versioned record", got, err)
+	}
+	if list, err := store.ListTargets(ctx); err != nil || len(list) != 1 {
+		t.Fatalf("ListTargets = %+v (%v)", list, err)
+	}
+	if allowed, err := store.MayUse(ctx, "anyone", "s1", "t1"); err != nil || !allowed {
+		t.Fatalf("MayUse = %v (%v), want the pre-versioned grant to still apply", allowed, err)
+	}
+
+	// An edit supersedes it without destroying it, and a delete removes both.
+	if _, err := store.UpdateTarget(ctx, Target{ID: "t1", Name: "renamed"}); err != nil {
+		t.Fatalf("UpdateTarget: %v", err)
+	}
+	if stored, err := legacyTargets.Get(ctx, "t1"); err != nil || stored.Name != "buddy" {
+		t.Fatalf("pre-versioned record = %+v (%v), want it untouched", stored, err)
+	}
+	if err := store.DeleteTarget(ctx, "t1"); err != nil {
+		t.Fatalf("DeleteTarget: %v", err)
+	}
+	var nf ErrNotFound
+	if _, err := store.GetTarget(ctx, "t1"); !errors.As(err, &nf) {
+		t.Fatalf("GetTarget after delete: %v", err)
+	}
+	if grants, err := store.ListGrants(ctx, "t1"); err != nil || len(grants) != 0 {
+		t.Fatalf("ListGrants after delete = %+v (%v)", grants, err)
+	}
+}
+
 func TestStateStore_SurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	backing := state.NewMemoryStore()

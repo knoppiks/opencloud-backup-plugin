@@ -75,8 +75,8 @@ func TestMemoryStoreRoundTrip(t *testing.T) {
 		t.Fatalf("Delete missing: got %v, want not-found", err)
 	}
 
-	if err := st.Put(ctx, "a/b", []byte("value")); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := st.Create(ctx, "a/b", []byte("value")); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 	got, err := st.Get(ctx, "a/b")
 	if err != nil {
@@ -110,8 +110,8 @@ func TestMemoryStoreListMatchesWholeSegments(t *testing.T) {
 	ctx := context.Background()
 	st := state.NewMemoryStore()
 	for _, k := range []string{"jobs/space/1", "jobs/space/2", "jobs/spaceother/1", "other/1"} {
-		if err := st.Put(ctx, k, []byte("{}")); err != nil {
-			t.Fatalf("Put %s: %v", k, err)
+		if err := st.Create(ctx, k, []byte("{}")); err != nil {
+			t.Fatalf("Create %s: %v", k, err)
 		}
 	}
 
@@ -136,14 +136,14 @@ func TestDocumentsRoundTripAndList(t *testing.T) {
 	ctx := context.Background()
 	docs := state.NewDocuments[doc](state.NewMemoryStore(), "docs")
 
-	if err := docs.Put(ctx, doc{Name: "one", Count: 1}, "space$a!a", "one"); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := docs.Create(ctx, doc{Name: "one", Count: 1}, "space$a!a", "one"); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
-	if err := docs.Put(ctx, doc{Name: "two", Count: 2}, "space$a!a", "two"); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := docs.Create(ctx, doc{Name: "two", Count: 2}, "space$a!a", "two"); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
-	if err := docs.Put(ctx, doc{Name: "elsewhere"}, "other", "one"); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := docs.Create(ctx, doc{Name: "elsewhere"}, "other", "one"); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 
 	got, err := docs.Get(ctx, "space$a!a", "one")
@@ -177,11 +177,11 @@ func TestDocumentsSkipsMalformedRecords(t *testing.T) {
 	st := state.NewMemoryStore()
 	docs := state.NewDocuments[doc](st, "docs")
 
-	if err := docs.Put(ctx, doc{Name: "good"}, "space", "good"); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := docs.Create(ctx, doc{Name: "good"}, "space", "good"); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
-	if err := st.Put(ctx, "docs/space/bad", []byte("{not json")); err != nil {
-		t.Fatalf("Put: %v", err)
+	if err := st.Create(ctx, "docs/space/bad", []byte("{not json")); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 
 	// One corrupt record must not make a Space's whole history unreadable.

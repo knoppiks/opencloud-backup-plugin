@@ -197,24 +197,31 @@ func TestIntegration_BackupProducesEncryptedObfuscatedObjects(t *testing.T) {
 		t.Fatal("no objects written to the target")
 	}
 
-	// Every object belongs to this Space: either a repository blob, or the
-	// Space's published recovery envelope. The envelope sits outside the repo
-	// prefix on purpose — everything under it is kopia-owned (Phase 5).
+	// Every object belongs to this Space: a repository blob, the Space's
+	// published recovery envelope, or the service's own server envelope. Both
+	// envelopes sit outside the repo prefix on purpose — everything under it is
+	// kopia-owned (Phase 5).
 	wantPrefix := snapshot.RepoPrefix(p.repo.Location, p.repo.Space)
 	envelopeKey := snapshot.EnvelopeKey(p.repo.Location, p.repo.Space)
-	sawEnvelope := false
+	serverEnvelopeKey := snapshot.ServerEnvelopeKey(p.repo.Location, p.repo.Space)
+	sawEnvelope, sawServerEnvelope := false, false
 	for _, key := range objectKeys {
 		switch {
 		case strings.HasPrefix(key, wantPrefix):
 		case key == envelopeKey:
 			sawEnvelope = true
+		case key == serverEnvelopeKey:
+			sawServerEnvelope = true
 		default:
-			t.Fatalf("object %q belongs to neither the repo prefix %q nor the envelope %q",
-				key, wantPrefix, envelopeKey)
+			t.Fatalf("object %q belongs to neither the repo prefix %q nor an envelope (%q, %q)",
+				key, wantPrefix, envelopeKey, serverEnvelopeKey)
 		}
 	}
 	if !sawEnvelope {
 		t.Fatalf("recovery envelope %q was not published to the target", envelopeKey)
+	}
+	if !sawServerEnvelope {
+		t.Fatalf("server envelope %q was not published to the target", serverEnvelopeKey)
 	}
 
 	assertNoPlaintext(ctx, t, p.garage, objectKeys)
