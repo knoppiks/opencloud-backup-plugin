@@ -140,9 +140,13 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/spaces", authed(s.handleListSpaces))
 	s.mux.Handle("GET /api/v1/targets", authed(s.handleListTargets))
 
-	// Backup key ceremony (Phase 3). All three are space-scoped and enforce CS3
-	// membership server-side; none ever returns plaintext key material.
+	// Backup key ceremony (Phase 3). All of these are space-scoped and enforce
+	// CS3 membership server-side; none ever returns plaintext key material.
+	// setup establishes a Space's keys once and refuses to do it twice; rotate
+	// is the supported way to replace a Recovery Key afterwards, and it never
+	// touches the Data Key.
 	s.mux.Handle("POST /api/v1/spaces/{id}/backup/setup", authed(s.handleKeySetup))
+	s.mux.Handle("POST /api/v1/spaces/{id}/backup/recovery-key/rotate", authed(s.handleRotateRecoveryKey))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/keystatus", authed(s.handleKeyStatus))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/recovery-envelope", authed(s.handleRecoveryEnvelope))
 

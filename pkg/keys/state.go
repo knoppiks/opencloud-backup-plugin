@@ -35,6 +35,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"opencloud-backup-plugin/pkg/state"
@@ -116,6 +117,28 @@ func (s *StateStore) Status(spaceID string) (Status, error) {
 		return Status{}, err
 	}
 	return statusOf(rec), nil
+}
+
+// Spaces returns the ids of every space holding an envelope, in order. It reads
+// no documents: the ids are in the keys.
+func (s *StateStore) Spaces() ([]string, error) {
+	ctx, cancel := s.context()
+	defer cancel()
+
+	// The versioned and pre-versioned layouts are separate collections here
+	// (they hold different document types), so both are asked and the union is
+	// reported: a Space set up before versioning must not be skipped by a
+	// rotation.
+	versioned, err := s.envelopes.IDs(ctx)
+	if err != nil {
+		// Never surface the underlying detail: it describes stored envelopes.
+		return nil, errors.New("keys: could not list the key records")
+	}
+	legacy, err := s.legacy.IDs(ctx)
+	if err != nil {
+		return nil, errors.New("keys: could not list the key records")
+	}
+	return mergeIDs(versioned, legacy), nil
 }
 
 // newest returns a Space's current envelope of one kind.
@@ -231,6 +254,23 @@ func (s *StateStore) append(spaceID, kind string, w WrappedDK) error {
 
 func (s *StateStore) context() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), storeTimeout)
+}
+
+// mergeIDs unions two sorted id lists, keeping them sorted and distinct.
+func mergeIDs(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, id := range list {
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // earliest returns the first non-zero of two times, or the zero time.

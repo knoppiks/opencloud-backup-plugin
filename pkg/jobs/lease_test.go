@@ -208,6 +208,55 @@ func TestLeaseLocker_RecoverLeavesThisProcessAlone(t *testing.T) {
 	}
 }
 
+// The gate an operator key rotation stands behind: rotating while a run holds a
+// Space would re-wrap an envelope that run is about to open.
+func TestActiveLeasesCountsOnlyLiveOnes(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+	locker, _ := newLocker(t, backing, clock, time.Minute)
+
+	if active, err := ActiveLeases(ctx, backing, clock.Now()); err != nil || active != 0 {
+		t.Fatalf("ActiveLeases with no runs = %d (%v)", active, err)
+	}
+
+	release, err := locker.Acquire(ctx, "s1")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if active, err := ActiveLeases(ctx, backing, clock.Now()); err != nil || active != 1 {
+		t.Fatalf("ActiveLeases during a run = %d (%v)", active, err)
+	}
+
+	// An expired lease means the holder is gone, not that a run is live.
+	clock.Advance(2 * time.Minute)
+	if active, err := ActiveLeases(ctx, backing, clock.Now()); err != nil || active != 0 {
+		t.Fatalf("ActiveLeases after expiry = %d (%v)", active, err)
+	}
+
+	release()
+	if active, err := ActiveLeases(ctx, backing, clock.Now()); err != nil || active != 0 {
+		t.Fatalf("ActiveLeases after release = %d (%v)", active, err)
+	}
+}
+
+// An unreadable lease document is not evidence that the service is idle.
+func TestActiveLeasesCountsUnreadableLeases(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	if err := backing.Create(ctx, "leases/s1", []byte("{not json")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	active, err := ActiveLeases(ctx, backing, epoch)
+	if err != nil {
+		t.Fatalf("ActiveLeases: %v", err)
+	}
+	if active != 1 {
+		t.Fatalf("ActiveLeases = %d, want the unreadable lease counted", active)
+	}
+}
+
 func TestLeaseLocker_RequiresSpaceID(t *testing.T) {
 	locker, _ := newLocker(t, state.NewMemoryStore(), testutil.NewFakeClock(epoch), time.Minute)
 	if _, err := locker.Acquire(context.Background(), ""); err == nil {

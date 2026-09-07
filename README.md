@@ -149,6 +149,38 @@ Under the hood: `GET /api/v1/spaces/{id}/snapshots` lists the backups,
 `POST /api/v1/spaces/{id}/restore` with `{"snapshot_id":"…"}` starts the restore
 as a background job.
 
+### Replacing a key
+
+Nothing here re-encrypts a backup. A key is replaced by re-wrapping what it
+protects, so no data is re-uploaded and no existing backup stops working.
+
+**A user's Recovery Key** (lost paper, a key that was photographed or shared):
+replace it from the web UI. The browser asks for the current Recovery Key,
+unwraps the envelope locally, and stores a new one. The old key stops working;
+the plaintext of neither key ever reaches the server. A user who has *lost* their
+Recovery Key cannot do this — there is no escrow, by design.
+
+Setting up a Space again is **not** a way to fix a lost key. The service refuses
+it, on purpose: a second setup would install a new Data Key and every existing
+backup for that Space would become unreadable.
+
+**The server's own keys** (`SRW_KEY`, `TW_KEY` — a leaked secret, a departing
+admin, a cluster restored from a snapshot). Stop the service first; the same
+image runs the command:
+
+```sh
+# Data-key custody. Both variables must be set; the old one is retired.
+SRW_KEY_OLD=<current> SRW_KEY=<new> backupd rotate-srw -service-stopped
+
+# Target-credential custody.
+TW_KEY_OLD=<current> TW_KEY=<new>  backupd rotate-tw  -service-stopped
+```
+
+The command refuses to run while any backup still holds a lease. It is safe to
+re-run: an interrupted rotation is finished by running it again. When it
+succeeds, remove the old key from the deployment — it opens nothing any more.
+Users are unaffected and need do nothing.
+
 ### Keep this in mind
 
 - **The Recovery Key is the whole story.** The server cannot reconstruct it. Lost

@@ -220,6 +220,37 @@ func (v *Versions[T]) appendLegacy(ctx context.Context, out []T, versioned map[s
 	return out, nil
 }
 
+// IDs returns the first-level record ids the collection holds, unescaped and in
+// order, including ids that exist only in the legacy layout. A record filed
+// under further segments (a key envelope is "<space>/<kind>/<version>") reports
+// its first segment, which is the id its owner indexes by.
+//
+// It reads no documents — the keys carry everything — and exists for the
+// operations that must visit every record rather than one: rotating a wrapping
+// key across all Spaces, most of all.
+func (v *Versions[T]) IDs(ctx context.Context) ([]string, error) {
+	seen := make(map[string]struct{})
+	for _, docs := range []*Documents[T]{v.docs, v.legacy} {
+		if docs == nil {
+			continue
+		}
+		ids, err := docs.IDs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			seen[id] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // DeleteAll removes every version of a record, and its legacy document. It is
 // the only destructive operation in this file and exists for records a user or
 // admin may genuinely retire (a backup target, a Space's configuration). It

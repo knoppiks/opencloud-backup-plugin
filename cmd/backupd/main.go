@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -65,6 +66,21 @@ type service struct {
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
+	// With no arguments the binary is the service. With one it is an operator
+	// tool: the maintenance commands ship in the same image because they need
+	// the same configuration, the same state Space and the same custody keys.
+	if len(os.Args) > 1 {
+		if err := runCommand(context.Background(), os.Args[1], os.Args[2:], logger); err != nil {
+			logger.Error("command failed", "command", os.Args[1], "err", err)
+			os.Exit(1)
+		}
+		return
+	}
+	serve(logger)
+}
+
+// serve runs the API and, when configured, the scheduler until a signal arrives.
+func serve(logger *slog.Logger) {
 	svc, cleanup, err := buildService(context.Background(), logger)
 	if err != nil {
 		logger.Error("startup failed", "err", err)
@@ -177,22 +193,13 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 		spaceWriter cs3.SpaceWriter
 		cs3Client   *cs3.Client
 	)
-	if addr := os.Getenv("CS3_GATEWAY_ADDR"); addr != "" {
-		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			return service{}, cleanup, err
-		}
-		cleanup = func() { _ = conn.Close() }
-		gw := gateway.NewGatewayAPIClient(conn)
-		auth := cs3.ServiceAccountAuth{
-			Gateway:  gw,
-			ClientID: os.Getenv("OC_SERVICE_ACCOUNT_ID"),
-			Secret:   os.Getenv("OC_SERVICE_ACCOUNT_SECRET"),
-		}
-		client := cs3.NewClient(gw, auth, cs3.WithHTTPClient(dataGatewayClient()))
-		spaceReader = client
-		spaceWriter = client
-		cs3Client = client
+	client, closeCS3, err := dialCS3()
+	if err != nil {
+		return service{}, cleanup, err
+	}
+	if client != nil {
+		cleanup = closeCS3
+		spaceReader, spaceWriter, cs3Client = client, client, client
 		opts = append(opts, api.WithSpaceReader(client))
 	} else {
 		logger.Warn("CS3_GATEWAY_ADDR unset; /api/v1/spaces will be unavailable")
@@ -218,13 +225,16 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	// Secret-backed env var, is used to wrap/unwrap DKs, and is NEVER logged.
 	// Without it the backup key endpoints stay unavailable rather than running
 	// in a degraded, insecure mode. The store holds wrapped envelopes only.
+	wrapKeys, err := loadWrapKeys()
+	if err != nil {
+		return service{}, cleanup, err
+	}
+	defer wrapKeys.zeroize()
+
 	var srwWrapper *keys.SRWWrapper
 	keyStore := keys.NewStateStore(backing, nil)
-	if srwKey, err := loadWrapKey("SRW_KEY"); err != nil {
-		return service{}, cleanup, err
-	} else if srwKey != nil {
-		srwWrapper, err = keys.NewSRWWrapper(srwKey)
-		keys.Zeroize(srwKey)
+	if wrapKeys.srw != nil {
+		srwWrapper, err = keys.NewSRWWrapper(wrapKeys.srw)
 		if err != nil {
 			return service{}, cleanup, err
 		}
@@ -238,11 +248,8 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	// The TW key is a distinct cluster/KMS secret so data-key custody and
 	// target-credential custody rotate independently.
 	var credSealer targets.CredSealer
-	if twKey, err := loadWrapKey("TW_KEY"); err != nil {
-		return service{}, cleanup, err
-	} else if twKey != nil {
-		credSealer, err = targets.NewCredSealer(twKey)
-		keys.Zeroize(twKey)
+	if wrapKeys.tw != nil {
+		credSealer, err = targets.NewCredSealer(wrapKeys.tw)
 		if err != nil {
 			return service{}, cleanup, err
 		}
@@ -396,6 +403,30 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	opts = append(opts, api.WithReadiness(readiness(spaceReader)))
 
 	return service{api: api.NewServer(opts...), scheduler: sched}, cleanup, nil
+}
+
+// dialCS3 connects to the CS3 gateway as the service account. It returns a nil
+// client when CS3_GATEWAY_ADDR is unset — the service degrades, an operator
+// command refuses — and always returns a usable close function.
+func dialCS3() (*cs3.Client, func(), error) {
+	noop := func() {}
+
+	addr := os.Getenv("CS3_GATEWAY_ADDR")
+	if addr == "" {
+		return nil, noop, nil
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, noop, err
+	}
+	gw := gateway.NewGatewayAPIClient(conn)
+	auth := cs3.ServiceAccountAuth{
+		Gateway:  gw,
+		ClientID: os.Getenv("OC_SERVICE_ACCOUNT_ID"),
+		Secret:   os.Getenv("OC_SERVICE_ACCOUNT_SECRET"),
+	}
+	client := cs3.NewClient(gw, auth, cs3.WithHTTPClient(dataGatewayClient()))
+	return client, func() { _ = conn.Close() }, nil
 }
 
 // buildStateStore chooses where the service keeps its own state. Without a
@@ -603,6 +634,53 @@ func readiness(reader cs3.SpaceReader) func(context.Context) error {
 		_, err := reader.ListSpaces(probeCtx)
 		return err
 	}
+}
+
+// wrapKeys holds the service's two custody keys while startup wires them. Both
+// are nil when unset; the caller decides what that disables.
+type wrapKeys struct {
+	srw []byte
+	tw  []byte
+}
+
+// String keeps the keys out of any accidental "%v" of this struct. Formatting
+// key material is a mistake this type refuses to make possible.
+func (k wrapKeys) String() string { return "wrapKeys{redacted}" }
+
+// zeroize wipes both keys. The wrappers copy what they need, so nothing outside
+// this struct depends on the buffers after wiring.
+func (k wrapKeys) zeroize() {
+	keys.Zeroize(k.srw)
+	keys.Zeroize(k.tw)
+}
+
+// loadWrapKeys reads SRW_KEY and TW_KEY and refuses the one combination that
+// looks like a working configuration but is not: the same key in both.
+//
+// SRW guards Data Keys, TW guards target credentials, and decisions.md keeps
+// them distinct so the two can rotate independently — retiring a leaked target
+// credential must not mean re-wrapping every Space's Data Key. Setting them to
+// one value silently collapses that into a single blast radius, and the failure
+// is invisible: everything works. It is a misconfiguration to catch at boot.
+func loadWrapKeys() (wrapKeys, error) {
+	srw, err := loadWrapKey("SRW_KEY")
+	if err != nil {
+		return wrapKeys{}, err
+	}
+	tw, err := loadWrapKey("TW_KEY")
+	if err != nil {
+		keys.Zeroize(srw)
+		return wrapKeys{}, err
+	}
+	// Constant-time because both operands are secrets, and cheap either way.
+	if srw != nil && tw != nil && subtle.ConstantTimeCompare(srw, tw) == 1 {
+		keys.Zeroize(srw)
+		keys.Zeroize(tw)
+		return wrapKeys{}, errors.New(
+			"SRW_KEY and TW_KEY must be different keys: data-key custody and " +
+				"target-credential custody are separate on purpose (decisions.md #14)")
+	}
+	return wrapKeys{srw: srw, tw: tw}, nil
 }
 
 // loadWrapKey reads a base64-encoded 256-bit wrapping key (SRW or TW) from the

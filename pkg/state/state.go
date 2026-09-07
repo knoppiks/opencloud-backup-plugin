@@ -251,6 +251,41 @@ func (d *Documents[T]) Keys(ctx context.Context, id ...string) ([]string, error)
 	return d.store.List(ctx, prefix)
 }
 
+// IDs returns the distinct first-level ids the collection holds, unescaped and
+// in order. A document filed under further segments reports the first one, which
+// is the id its owner indexes by. It reads no documents — the ids are in the
+// keys — and exists for the operations that must visit every record rather than
+// one.
+func (d *Documents[T]) IDs(ctx context.Context) ([]string, error) {
+	keys, err := d.store.List(ctx, d.prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		rest, ok := strings.CutPrefix(key, d.prefix+"/")
+		if !ok {
+			continue
+		}
+		if i := strings.Index(rest, "/"); i >= 0 {
+			rest = rest[:i]
+		}
+		id, err := UnescapeSegment(rest)
+		if err != nil || id == "" {
+			continue
+		}
+		seen[id] = struct{}{}
+	}
+
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // All decodes every document below an id path, in key order. A document that
 // fails to decode is skipped rather than failing the whole listing: one corrupt
 // record must not make a Space's entire history unreadable.

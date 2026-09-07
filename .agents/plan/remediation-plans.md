@@ -186,6 +186,40 @@ envelope.
 invariant, rotate flow), `decisions.md` trust model (DK on the wire is stated
 plainly: "the DK is sent to the server once, over TLS, at setup").
 
+### Outcome (implemented, issue #14)
+
+All seven steps, with one parameter change and two additions.
+
+- **Argon floor set to `time=2, memory=19 MiB, lanes=1`** (OWASP's low-memory
+  Argon2id baseline) rather than the plan's 32 MiB. The floor exists to reject
+  trivially crackable envelopes, not to impose the server's preferred costs on a
+  slow device, and the plan's figure would also have made every API key test do a
+  32 MiB derivation. Salt length is checked too (`>= 16`). Lives in
+  `pkg/keys/policy.go` as `MinArgonParams` + `CheckRecoveryEnvelope`; the DoS
+  ceilings in `envelope.go` are untouched, as the plan required.
+- **Addition — rotation logic is a package, not CLI code.** `pkg/rotate` holds
+  `SRW` and `TW`; `cmd/backupd` only parses flags and wires the store. Both are
+  **resumable**: a record that no longer opens with the old key but does open
+  with the new one counts as already rotated, so an interrupted rotation is
+  finished by re-running it. A record that opens with neither stops the run
+  (`ErrKeyMismatch`) rather than being rewritten on a failed assumption. This is
+  not in the plan text and is the difference between a rotation an operator can
+  use and one they can only start.
+- **Addition — `keys.Store` gained `Spaces()`, and `state` gained `Documents.IDs`
+  / `Versions.IDs`.** An SRW rotation must visit every Space, and nothing could
+  enumerate them; a Space missed by a rotation keeps an envelope that opens with
+  a key about to be deleted. The `Versions.IDs` union covers pre-versioned
+  records too, so a Space set up before R1 is not skipped.
+- **Step 3's gate is both halves, as decided:** `-service-stopped` (the
+  operator's assertion) *and* `jobs.ActiveLeases` (the machine's). Neither is a
+  lock — there is still no CAS — and the doc comments say so.
+- **Step 6 needed no work:** R1's independent append-only RK/SRW documents plus
+  `Status.Configured = HasRK && HasSRW` already gave the "partial setup is
+  visible and safely re-runnable" property the plan wanted.
+- **Note for R3:** the rotate endpoint is member-gated like the rest of the key
+  routes. When roles land it belongs in the "manager or owner" row alongside
+  setup and restore, not with envelope retrieval.
+
 ---
 
 ## R3 — Membership: role, expiry, groups (F3)

@@ -72,6 +72,27 @@ Values outside these ranges are rejected as a malformed envelope. The ceilings
 sit far above any legitimate setting, so `DefaultArgonParams` can be raised
 without a format change.
 
+### Accepted minimum for envelopes arriving over the API (policy, not format)
+
+The bounds above are ceilings and say nothing about whether an envelope is worth
+the protection it claims. A **floor** is therefore applied to every RK envelope
+the API accepts (setup and Recovery Key rotation), in `pkg/keys/policy.go`:
+
+```
+time >= 2, memory >= 19456 KiB (19 MiB), lanes >= 1, saltLen >= 16
+```
+
+OWASP's low-memory Argon2id baseline. Deliberately below the defaults: a slow
+device may legitimately tune down, and the floor exists to reject envelopes that
+are trivially crackable, not to impose the server's preferred costs. Every
+dimension is checked independently — trading memory away for passes is the cheap
+direction, and it is the one an attacker exploits.
+
+This is **policy, not format**. It is checked on the way in, never on the way
+out: an envelope already stored keeps unwrapping whatever its costs, because the
+alternative would be a stored Recovery Key that stops working. A client accepted
+before a floor rises can therefore be refused after it.
+
 ### Current default Argon2id parameters
 
 ```
@@ -141,8 +162,32 @@ The wrapping secret is the **20 raw entropy bytes**, not the display string.
   (decisions.md #7).
 - **Rotation re-wraps the same DK**, so snapshot data is never rewritten.
   Rotating the SRW key or the RK invalidates only the old envelope.
+- **A Space's keys are established once.** `POST .../backup/setup` refuses a
+  Space that already has both envelopes (409). A second ceremony would install a
+  new DK and leave every existing snapshot encrypted under one nobody holds.
+  Replacing a Recovery Key is a different operation with a different endpoint.
 - **Key material is never logged**, never returned by an API, and never shown in
   the admin UI. Enforced by tests in `pkg/keys/noleak_test.go`.
+
+### The client invariant the server cannot check (binding on clients)
+
+Before POSTing an envelope to `setup` **or** to `recovery-key/rotate`, a client
+must unwrap that envelope with the very Recovery Key it is about to show the
+user, and compare the recovered Data Key against the one it intended to wrap.
+
+The server holds no Recovery Key, so it cannot verify that the envelope it is
+handed opens with the key the user was told to write down, nor that it wraps the
+Data Key the Space actually uses. Every other property here is enforced in code;
+this one is enforceable only in the client, which is why it is written down.
+
+Getting it wrong is not loud. The API returns 201 or 200, the status shows
+`configured`, backups keep running — and the Recovery Key the user filed away
+opens nothing. The only reason this is recoverable at all is that envelopes are
+append-only (decisions.md #16): the superseded envelope is still stored, so an
+operator can restore the previous one. Do not rely on that.
+
+Phase 8's crypto-interop test is where this invariant is checked for the shipped
+client.
 
 ---
 

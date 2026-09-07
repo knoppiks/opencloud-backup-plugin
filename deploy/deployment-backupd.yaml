@@ -76,12 +76,23 @@ spec:
               key: srw-wrapping-key
         # Phase 4 — the Target Wrap key decrypts the stored S3 target credentials
         # in worker memory at run time (decisions.md #14). Distinct from SRW so
-        # the two rotate independently. Without it backup runs stay unavailable.
+        # the two rotate independently — the service REFUSES TO START if the two
+        # are set to the same value. Without it backup runs stay unavailable.
         - name: TW_KEY
           valueFrom:
             secretKeyRef:
               name: opencloud-backup-wrap-keys
               key: tw-wrapping-key
+        # Retiring either key: stop the service, then run the rotation command
+        # from this same image with the retiring key in SRW_KEY_OLD / TW_KEY_OLD
+        # and the new one in SRW_KEY / TW_KEY:
+        #
+        #   backupd rotate-srw -service-stopped
+        #   backupd rotate-tw  -service-stopped
+        #
+        # Data keys, snapshots and users' Recovery Keys are untouched, nothing is
+        # re-uploaded, and re-running finishes an interrupted rotation. Remove the
+        # old key from this Secret afterwards. See the runbook in README.md.
         # Phase 4 — pipeline tuning. All optional.
         #   BACKUP_PARALLELISM                 files hashed/uploaded concurrently
         #                                      (0 = one per CPU).
