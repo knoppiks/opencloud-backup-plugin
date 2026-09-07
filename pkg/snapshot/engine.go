@@ -68,6 +68,11 @@ type EngineOptions struct {
 	// reclaims recently-unreferenced content. Defaults to maintenance.SafetyFull,
 	// which is safe to run concurrently with snapshotting.
 	MaintenanceSafety *maintenance.SafetyParameters
+	// CheckpointInterval is how often kopia flushes a partial tree mid-upload so
+	// a long run does not lose all its work on a crash. 0 uses kopia's default
+	// (45 minutes), which is also kopia's maximum. Tests drive it down to
+	// seconds; production has no reason to change it.
+	CheckpointInterval time.Duration
 }
 
 // KopiaEngine implements Engine on top of kopia.
@@ -83,6 +88,14 @@ func NewEngine(opener StorageOpener, opts EngineOptions) (*KopiaEngine, error) {
 	if opener == nil {
 		return nil, fmt.Errorf("snapshot: storage opener required")
 	}
+	if opts.CheckpointInterval < 0 {
+		return nil, fmt.Errorf("snapshot: checkpoint interval must not be negative")
+	}
+	// kopia rejects a larger interval at upload time; failing here turns a
+	// misconfiguration into a startup error instead of a failed backup.
+	if opts.CheckpointInterval > upload.DefaultCheckpointInterval {
+		return nil, fmt.Errorf("snapshot: checkpoint interval must not exceed %v", upload.DefaultCheckpointInterval)
+	}
 	return &KopiaEngine{opener: opener, opts: opts}, nil
 }
 
@@ -96,7 +109,8 @@ func (e *KopiaEngine) Snapshot(ctx context.Context, r Repo, src Source) (Info, e
 	var out Info
 	err := e.withRepo(ctx, r, true, func(ctx context.Context, rep repo.Repository) error {
 		si := sourceInfo(r.Space)
-		return repo.WriteSession(ctx, rep, repo.WriteSessionOptions{Purpose: "backup"},
+
+		err := repo.WriteSession(ctx, rep, repo.WriteSessionOptions{Purpose: "backup"},
 			func(ctx context.Context, w repo.RepositoryWriter) error {
 				if err := disableCountBasedRetention(ctx, w, si); err != nil {
 					return err
@@ -108,6 +122,9 @@ func (e *KopiaEngine) Snapshot(ctx context.Context, r Repo, src Source) (Info, e
 				}
 				// Feeding previous manifests enables kopia's hash cache: an
 				// unchanged file is reused without being re-read from the source.
+				// Incomplete manifests are deliberately not filtered out here:
+				// they are a legitimate cache for a run resuming after a crash,
+				// and this is the one place they are read rather than served.
 				previous, err := ksnapshot.ListSnapshots(ctx, w, si)
 				if err != nil {
 					return fmt.Errorf("snapshot: list previous snapshots: %w", err)
@@ -115,6 +132,17 @@ func (e *KopiaEngine) Snapshot(ctx context.Context, r Repo, src Source) (Info, e
 
 				u := upload.NewUploader(w)
 				u.ParallelUploads = e.opts.Parallelism
+				if e.opts.CheckpointInterval > 0 {
+					u.CheckpointInterval = e.opts.CheckpointInterval
+				}
+				// kopia's ignore conventions (.kopiaignore files, CACHEDIR.TAG
+				// markers) let the tree being backed up decide what is backed
+				// up. That is right for a laptop, where the person writing the
+				// rules is the person running the backup, and wrong for a user's
+				// Space, where anyone who can put a file in it could otherwise
+				// silence the backup of everything around it. A Space's contents
+				// are never a policy input.
+				u.DisableIgnoreRules = true
 
 				man, err := u.Upload(ctx, rootEntry(src, rootModTime), policyTree, si, previous...)
 				if err != nil {
@@ -129,14 +157,79 @@ func (e *KopiaEngine) Snapshot(ctx context.Context, r Repo, src Source) (Info, e
 				if _, err := ksnapshot.SaveSnapshot(ctx, w, man); err != nil {
 					return fmt.Errorf("snapshot: save manifest: %w", err)
 				}
+				if err := deleteIncomplete(ctx, w, si); err != nil {
+					return err
+				}
 				out = toInfo(man)
 				return nil
 			})
+		if err != nil {
+			// The run failed and its error is the one worth reporting, but the
+			// checkpoints kopia flushed along the way outlive the rolled-back
+			// session and must not be left looking like snapshots. Best effort:
+			// every consumer filters them out and Prune always expires them.
+			_ = discardIncomplete(context.WithoutCancel(ctx), rep, si)
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return Info{}, err
 	}
 	return out, nil
+}
+
+// discardIncomplete removes a source's incomplete manifests in a session of its
+// own. It exists for the failure path: kopia's checkpoints flush themselves, so
+// they survive the rollback of the backup's own write session.
+func discardIncomplete(ctx context.Context, rep repo.Repository, si ksnapshot.SourceInfo) error {
+	return repo.WriteSession(ctx, rep, repo.WriteSessionOptions{Purpose: "discard-incomplete"},
+		func(ctx context.Context, w repo.RepositoryWriter) error {
+			return deleteIncomplete(ctx, w, si)
+		})
+}
+
+// deleteIncomplete deletes every incomplete manifest of a source.
+//
+// kopia saves a partial tree every CheckpointInterval so a long upload does not
+// start from scratch after a crash. Once written, such a manifest is
+// indistinguishable from a finished snapshot to anything that lists the repo, so
+// the run that wrote it removes it when it ends — success or failure.
+//
+// This deletes every incomplete manifest, not just the current run's: a Space is
+// backed up under a run lock, so no other run can be writing one, and a manifest
+// left behind by a killed process is the same garbage. The content it referenced
+// is reclaimed by the next maintenance pass.
+func deleteIncomplete(ctx context.Context, w repo.RepositoryWriter, si ksnapshot.SourceInfo) error {
+	mans, err := ksnapshot.ListSnapshots(ctx, w, si)
+	if err != nil {
+		return fmt.Errorf("snapshot: list snapshots: %w", err)
+	}
+	for _, m := range mans {
+		if m.IncompleteReason == "" {
+			continue
+		}
+		if err := w.DeleteManifest(ctx, m.ID); err != nil {
+			return fmt.Errorf("snapshot: delete incomplete manifest: %w", err)
+		}
+	}
+	return nil
+}
+
+// completeOnly keeps the manifests that describe a whole Space.
+//
+// A manifest with an IncompleteReason is a mid-upload checkpoint or a cancelled
+// run: a subset of the Space, saved so work is not lost. Serving one as a
+// snapshot would offer a partial restore as if it were a full one, so every
+// consumer of a manifest list outside the backup itself goes through here.
+func completeOnly(mans []*ksnapshot.Manifest) []*ksnapshot.Manifest {
+	out := make([]*ksnapshot.Manifest, 0, len(mans))
+	for _, m := range mans {
+		if m.IncompleteReason == "" {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // ErrIncompleteSnapshot is returned when the source could not be read in full.
@@ -163,6 +256,7 @@ func (e *KopiaEngine) List(ctx context.Context, r Repo) ([]Info, error) {
 		if err != nil {
 			return fmt.Errorf("snapshot: list snapshots: %w", err)
 		}
+		mans = completeOnly(mans)
 		out = make([]Info, 0, len(mans))
 		for _, m := range mans {
 			out = append(out, toInfo(m))
@@ -304,8 +398,10 @@ func walkDir(ctx context.Context, dir fs.Directory, prefix string, fn func(conte
 // now-window, then run full maintenance to garbage-collect unreferenced content
 // (decisions.md #10; phase-0-findings.md Spike 2).
 //
-// The newest snapshot is never deleted, even when it is older than the window: a
-// Space that stopped being backed up must not silently lose its last copy.
+// The newest complete snapshot is never deleted, even when it is older than the
+// window: a Space that stopped being backed up must not silently lose its last
+// copy. Incomplete manifests are always deleted — a run that ends cleans up its
+// own, so any left here belong to a process that was killed.
 func (e *KopiaEngine) Prune(ctx context.Context, r Repo, window time.Duration) error {
 	if window <= 0 {
 		return fmt.Errorf("snapshot: retention window must be positive")
@@ -334,19 +430,30 @@ func (e *KopiaEngine) Prune(ctx context.Context, r Repo, window time.Duration) e
 	})
 }
 
-// expiredManifests returns the manifests started before cutoff, always keeping
-// the newest snapshot regardless of age.
+// expiredManifests returns the manifests to delete: everything incomplete, plus
+// every complete snapshot started before cutoff except the newest one.
+//
+// The protection is on the newest *complete* snapshot, which is the newest one a
+// user could actually restore. Protecting the newest manifest of any kind would
+// let a mid-upload checkpoint stand in for it and the last full backup be
+// deleted underneath it.
 func expiredManifests(mans []*ksnapshot.Manifest, cutoff time.Time) []manifest.ID {
-	if len(mans) <= 1 {
-		return nil
-	}
-	sorted := append([]*ksnapshot.Manifest(nil), mans...)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].StartTime.ToTime().After(sorted[j].StartTime.ToTime())
-	})
-
 	var expired []manifest.ID
-	for _, m := range sorted[1:] {
+
+	complete := completeOnly(mans)
+	for _, m := range mans {
+		if m.IncompleteReason != "" {
+			expired = append(expired, m.ID)
+		}
+	}
+
+	if len(complete) <= 1 {
+		return expired
+	}
+	sort.Slice(complete, func(i, j int) bool {
+		return complete[i].StartTime.ToTime().After(complete[j].StartTime.ToTime())
+	})
+	for _, m := range complete[1:] {
 		if m.StartTime.ToTime().Before(cutoff) {
 			expired = append(expired, m.ID)
 		}
@@ -523,7 +630,8 @@ func neverExpireByCount() policy.RetentionPolicy {
 	}
 }
 
-// findManifest resolves a SnapshotID within the Space's source.
+// findManifest resolves a SnapshotID within the Space's source. Incomplete
+// manifests are not resolvable: nothing may be restored from a partial tree.
 func findManifest(ctx context.Context, rep repo.Repository, si ksnapshot.SourceInfo, id SnapshotID) (*ksnapshot.Manifest, error) {
 	if id == "" {
 		return nil, fmt.Errorf("snapshot: snapshot id required")
@@ -532,7 +640,7 @@ func findManifest(ctx context.Context, rep repo.Repository, si ksnapshot.SourceI
 	if err != nil {
 		return nil, fmt.Errorf("snapshot: list snapshots: %w", err)
 	}
-	for _, m := range mans {
+	for _, m := range completeOnly(mans) {
 		if SnapshotID(m.ID) == id {
 			return m, nil
 		}

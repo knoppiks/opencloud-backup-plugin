@@ -156,6 +156,26 @@ The Phase-2 CS3 client left the data path stubbed. Phase 4 completed it:
 - [x] Failed-run recovery test green.
 - [x] Success criterion 2 achieved (decisions.md).
 
+## Amendments from the September 2026 review — R4 (kopia correctness)
+
+- **Two kopia defaults could turn a failed or empty backup into a reported
+  success**, and both were invisible to this phase's tests because no test Space
+  contained an ignore marker and no test run lasted 45 minutes.
+- **Ignore conventions are off** (`Uploader.DisableIgnoreRules`). A
+  `.kopiaignore` or a `CACHEDIR.TAG` that reaches a Space — synced from a laptop,
+  restored with a project folder, planted — must not decide what is backed up.
+  The markers themselves are backed up as ordinary files.
+- **Incomplete manifests are internal.** kopia's mid-upload checkpoints are
+  saved as snapshot manifests; nothing distinguished them afterwards, so they
+  were listed, restorable, selectable by the offline `decrypt` tool, and — worst
+  — counted as "the newest snapshot" that prune protects. They are now filtered
+  out of every path that serves a snapshot, and deleted when a run ends,
+  successful or failed. See `decisions.md`, "Amendments … R4".
+- **`EngineOptions.CheckpointInterval`** exists so the checkpoint behaviour is
+  reachable in a test in seconds rather than in kopia's 45 minutes. Production
+  has no reason to set it; values above kopia's maximum are refused at
+  construction rather than mid-run.
+
 ## Risks — status
 
 - Option B couples us to kopia's `fs` interfaces (not a stability-guaranteed

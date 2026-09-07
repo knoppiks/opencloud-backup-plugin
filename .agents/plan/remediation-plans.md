@@ -383,6 +383,45 @@ as snapshots and can defeat newest-snapshot protection.
 Space's contents are never a policy input" and "checkpoint manifests are
 transient and removed at run end".
 
+### Outcome (implemented, issue #18)
+
+All six steps, with two deviations that widen the cleanup, one addition, and one
+note about what makes the tests worth having.
+
+- **Deviation — cleanup deletes every incomplete manifest of the source, not
+  only the current run's.** The plan scopes the delete to manifests whose
+  `StartTime` falls within this run. That leaves anything a *killed* process
+  wrote behind forever, which is the one case the cleanup cannot otherwise
+  reach — a run that ends cleans up after itself, so a leftover by definition
+  belongs to a run that did not end. A Space is backed up under a run lock, so no
+  other run can be writing one concurrently, and the time comparison (repo clock
+  vs. run start) buys nothing in exchange for its edge cases. Same reasoning in
+  `Prune`: step 6 says incomplete manifests are "always eligible", implemented as
+  *always expired* rather than "expired if older than the cutoff", since an
+  incomplete manifest newer than the window would otherwise be immortal.
+- **Deviation — the hash-cache input is deliberately *not* filtered.** Step 2
+  says "every consumer"; `previous` (fed to `Uploader.Upload`) is excluded on
+  purpose and says so in a comment. It is the one place an incomplete manifest is
+  legitimately useful — a run resuming after a crash reuses its own checkpoint's
+  hashes instead of re-reading the Space from CS3 — and it is read, never served.
+  In practice there is rarely anything there to use, because the previous run
+  deleted its own; it matters exactly when the previous process was killed.
+- **Addition — `NewEngine` rejects a `CheckpointInterval` above kopia's 45-minute
+  maximum.** kopia validates it inside `Upload`, i.e. after a backup has started
+  and a repository has been opened. Failing at construction turns that into a
+  startup error.
+- **Note — the two behavioural tests each needed a companion to have teeth.**
+  "Every file was snapshotted despite a `.kopiaignore`" passes just as happily if
+  the ignore conventions never applied to a virtual source at all, and "no
+  incomplete manifest remains" passes if no checkpoint was ever produced. Both
+  are therefore paired with a white-box run of kopia's uploader that asserts the
+  *unguarded* behaviour — ignore rules really do drop files, a 1-second
+  checkpoint interval really does leave manifests behind. The second one drives a
+  genuine multi-second upload (`slowSource`) and is skipped under `-short`.
+- **Note — `assertComplete` was never the gap.** It rejects the run's final
+  manifest correctly; what it could not see is everything kopia had already saved
+  and flushed on its own initiative before that point. Nothing about it changed.
+
 ---
 
 ## R5 — Credentials on disk, TLS, and deployment hardening (F5, F6, F9, F10)
