@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kopia/kopia/fs"
 	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/repo/maintenance"
 	"github.com/kopia/kopia/repo/manifest"
@@ -540,6 +542,387 @@ func TestSnapshot_IncompleteErrorDoesNotLeakPaths(t *testing.T) {
 	if strings.Contains(err.Error(), "deep.bin") {
 		t.Fatalf("error leaked a source path: %v", err)
 	}
+}
+
+// cacheDirMarkerHeader is the first line kopia requires in a CACHEDIR.TAG file
+// before it treats the containing directory as a throwaway cache. It is copied
+// from kopia's internal/cachedir package, which cannot be imported.
+const cacheDirMarkerHeader = "Signature: 8a477f597d28d172789f06886806bc55"
+
+// ignoreSource is a Space carrying both of kopia's ignore conventions: a
+// .kopiaignore excluding everything, and a directory marked as a cache.
+func ignoreSource(t *testing.T) *memSource {
+	t.Helper()
+	m := newMemSource("space-root")
+	m.put("readme.txt", []byte("hello"), testMTime)
+	m.put(".kopiaignore", []byte("*\n"), testMTime)
+	m.put("cache/CACHEDIR.TAG", []byte(cacheDirMarkerHeader+"\n"), testMTime)
+	m.put("cache/thumbnail.bin", []byte("cached"), testMTime)
+	m.put("docs/notes.txt", []byte("notes body"), testMTime)
+	return m
+}
+
+// A Space's own contents must never decide what is backed up: whoever can drop a
+// file into a Space could otherwise silence the backup of everything around it.
+func TestSnapshot_IgnoreConventionsInsideASpaceAreNotHonoured(t *testing.T) {
+	ctx := context.Background()
+	e, _ := newTestEngine(t)
+	r := testRepo(t, "space-1")
+
+	info, err := e.Snapshot(ctx, r, ignoreSource(t))
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if info.FileCount != 5 {
+		t.Fatalf("file count = %d, want 5 (every file, markers included)", info.FileCount)
+	}
+
+	out := t.TempDir()
+	if err := e.RestoreAll(ctx, r, info.ID, out); err != nil {
+		t.Fatalf("RestoreAll: %v", err)
+	}
+	assertFileContent(t, filepath.Join(out, "readme.txt"), "hello")
+	assertFileContent(t, filepath.Join(out, "docs", "notes.txt"), "notes body")
+	assertFileContent(t, filepath.Join(out, "cache", "thumbnail.bin"), "cached")
+	assertFileContent(t, filepath.Join(out, ".kopiaignore"), "*\n")
+}
+
+// The companion to the test above: without the guard, kopia really would honour
+// those files. Without this, the test above could pass because the conventions
+// never applied to a virtual source in the first place.
+func TestSnapshot_IgnoreConventionsWouldOtherwiseApply(t *testing.T) {
+	ctx := context.Background()
+	e, _ := newTestEngine(t)
+	r := testRepo(t, "space-1")
+	src := ignoreSource(t)
+	si := sourceInfo(r.Space)
+
+	var man *ksnapshot.Manifest
+	err := e.withRepo(ctx, r, true, func(ctx context.Context, rep repo.Repository) error {
+		return repo.WriteSession(ctx, rep, repo.WriteSessionOptions{Purpose: "test-ignore"},
+			func(ctx context.Context, w repo.RepositoryWriter) error {
+				tree, err := policy.TreeForSource(ctx, w, si)
+				if err != nil {
+					return err
+				}
+				u := upload.NewUploader(w)
+				u.DisableIgnoreRules = false
+				man, err = u.Upload(ctx, rootEntry(src, rootModTime), tree, si)
+				return err
+			})
+	})
+	if err != nil {
+		t.Fatalf("engine session: %v", err)
+	}
+	if man.Stats.TotalFileCount >= 5 {
+		t.Fatalf("kopia snapshotted %d files with ignore rules on; the guard in Snapshot is what makes it 5",
+			man.Stats.TotalFileCount)
+	}
+}
+
+func TestNewEngine_RejectsUnusableCheckpointInterval(t *testing.T) {
+	opener := FilesystemOpener{Root: t.TempDir()}
+	if _, err := NewEngine(opener, EngineOptions{CheckpointInterval: -time.Second}); err == nil {
+		t.Fatal("negative checkpoint interval must be rejected")
+	}
+	if _, err := NewEngine(opener, EngineOptions{CheckpointInterval: time.Hour}); err == nil {
+		t.Fatal("an interval above kopia's maximum must be rejected at construction")
+	}
+	if _, err := NewEngine(opener, EngineOptions{CheckpointInterval: upload.DefaultCheckpointInterval}); err != nil {
+		t.Fatalf("kopia's own maximum must be accepted: %v", err)
+	}
+}
+
+// An incomplete manifest is a mid-upload fragment. It must not be listed as a
+// snapshot, and must not be restorable even when its id is known.
+func TestIncompleteManifestsAreNeverServed(t *testing.T) {
+	ctx := context.Background()
+	e, _ := newTestEngine(t)
+	r := testRepo(t, "space-1")
+
+	complete, err := e.Snapshot(ctx, r, treeSource(t))
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	partial := seedIncomplete(t, e, r, time.Now().Add(time.Hour))
+
+	got, err := e.List(ctx, r)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != complete.ID {
+		t.Fatalf("List returned %+v, want only the complete snapshot %s", got, complete.ID)
+	}
+	if err := e.RestoreAll(ctx, r, partial, t.TempDir()); !errors.Is(err, ErrSnapshotNotFound) {
+		t.Fatalf("RestoreAll of an incomplete manifest = %v, want ErrSnapshotNotFound", err)
+	}
+	if err := e.Walk(ctx, r, partial, func(context.Context, RestoredEntry) error { return nil }); !errors.Is(err, ErrSnapshotNotFound) {
+		t.Fatalf("Walk of an incomplete manifest = %v, want ErrSnapshotNotFound", err)
+	}
+	if err := e.RestoreFile(ctx, r, partial, "readme.txt", t.TempDir()); !errors.Is(err, ErrSnapshotNotFound) {
+		t.Fatalf("RestoreFile of an incomplete manifest = %v, want ErrSnapshotNotFound", err)
+	}
+}
+
+func TestSnapshot_SuccessfulRunRemovesIncompleteManifests(t *testing.T) {
+	ctx := context.Background()
+	e, _ := newTestEngine(t)
+	r := testRepo(t, "space-1")
+	src := treeSource(t)
+
+	if _, err := e.Snapshot(ctx, r, src); err != nil {
+		t.Fatalf("first Snapshot: %v", err)
+	}
+	seedIncomplete(t, e, r, time.Now())
+
+	src.put("readme.txt", []byte("changed"), testMTime.Add(time.Hour))
+	if _, err := e.Snapshot(ctx, r, src); err != nil {
+		t.Fatalf("second Snapshot: %v", err)
+	}
+
+	assertNoIncompleteManifests(t, e, r)
+	if got := rawManifests(t, e, r); len(got) != 2 {
+		t.Fatalf("repository holds %d manifests, want the 2 complete snapshots", len(got))
+	}
+}
+
+func TestSnapshot_FailedRunRemovesIncompleteManifests(t *testing.T) {
+	ctx := context.Background()
+	e, _ := newTestEngine(t)
+	r := testRepo(t, "space-1")
+	src := treeSource(t)
+
+	before, err := e.Snapshot(ctx, r, src)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	seedIncomplete(t, e, r, time.Now())
+
+	// Change the file first: an unchanged one is served from kopia's hash cache
+	// and never read, so the injected failure would never fire.
+	src.put("readme.txt", []byte("changed"), testMTime.Add(time.Hour))
+	src.failOpen("readme.txt", errors.New("cs3 gone"))
+	if _, err := e.Snapshot(ctx, r, src); !errors.Is(err, ErrIncompleteSnapshot) {
+		t.Fatalf("Snapshot error = %v, want ErrIncompleteSnapshot", err)
+	}
+
+	assertNoIncompleteManifests(t, e, r)
+	got, err := e.List(ctx, r)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != before.ID {
+		t.Fatalf("a failed run changed the snapshot list: %+v", got)
+	}
+}
+
+// End-to-end proof with kopia doing the checkpointing itself: an upload driven
+// past the checkpoint interval leaves checkpoints behind, and a run through the
+// engine leaves none.
+func TestSnapshot_KopiaCheckpointsAreCleanedUp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("drives a multi-second upload")
+	}
+
+	ctx := context.Background()
+	root := t.TempDir()
+	safety := maintenance.SafetyNone
+	e, err := NewEngine(FilesystemOpener{Root: root}, EngineOptions{
+		WorkDir:            t.TempDir(),
+		Parallelism:        1,
+		CheckpointInterval: time.Second,
+		MaintenanceSafety:  &safety,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	r := testRepo(t, "space-1")
+
+	mem := newMemSource("space-root")
+	for i := range 8 {
+		mem.put(fmt.Sprintf("file-%d.bin", i), []byte(strings.Repeat("x", i+1)), testMTime)
+	}
+	slow := slowSource{memSource: mem, delay: 400 * time.Millisecond}
+
+	// Kopia's own uploader, with the engine's cleanup deliberately absent, to
+	// show the interval really does produce checkpoints for this source.
+	si := sourceInfo(r.Space)
+	err = e.withRepo(ctx, r, true, func(ctx context.Context, rep repo.Repository) error {
+		return repo.WriteSession(ctx, rep, repo.WriteSessionOptions{Purpose: "test-checkpointing"},
+			func(ctx context.Context, w repo.RepositoryWriter) error {
+				tree, err := policy.TreeForSource(ctx, w, si)
+				if err != nil {
+					return err
+				}
+				u := upload.NewUploader(w)
+				u.ParallelUploads = 1
+				u.CheckpointInterval = time.Second
+				man, err := u.Upload(ctx, rootEntry(slow, rootModTime), tree, si)
+				if err != nil {
+					return err
+				}
+				_, err = ksnapshot.SaveSnapshot(ctx, w, man)
+				return err
+			})
+	})
+	if err != nil {
+		t.Fatalf("probe upload: %v", err)
+	}
+	if incompleteCount(rawManifests(t, e, r)) == 0 {
+		t.Fatal("no checkpoint was produced; the test cannot prove anything about cleaning them up")
+	}
+
+	// The same slow source through the engine: checkpoints happen and are gone
+	// by the time the run returns.
+	mem.put("file-0.bin", []byte("changed"), testMTime.Add(time.Hour))
+	if _, err := e.Snapshot(ctx, r, slow); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	assertNoIncompleteManifests(t, e, r)
+	got, err := e.List(ctx, r)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("List returned %d snapshots, want the 2 complete ones", len(got))
+	}
+}
+
+func TestExpiredManifests_ProtectsTheNewestCompleteSnapshot(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	at := func(id string, offset time.Duration, reason string) *ksnapshot.Manifest {
+		return &ksnapshot.Manifest{
+			ID:               manifest.ID(id),
+			StartTime:        fs.UTCTimestampFromTime(base.Add(offset)),
+			IncompleteReason: reason,
+		}
+	}
+	expired := func(mans []*ksnapshot.Manifest, cutoff time.Duration) map[manifest.ID]bool {
+		out := map[manifest.ID]bool{}
+		for _, id := range expiredManifests(mans, base.Add(cutoff)) {
+			out[id] = true
+		}
+		return out
+	}
+
+	t.Run("a newer checkpoint does not stand in for the newest snapshot", func(t *testing.T) {
+		got := expired([]*ksnapshot.Manifest{
+			at("complete", 0, ""),
+			at("checkpoint", time.Hour, "checkpoint"),
+		}, 24*time.Hour)
+		if got["complete"] {
+			t.Fatal("the only complete snapshot was expired")
+		}
+		if !got["checkpoint"] {
+			t.Fatal("the checkpoint survived")
+		}
+	})
+
+	t.Run("incomplete manifests expire even inside the window", func(t *testing.T) {
+		got := expired([]*ksnapshot.Manifest{
+			at("complete", 0, ""),
+			at("checkpoint", 48*time.Hour, "checkpoint"),
+			at("canceled", 48*time.Hour, "canceled"),
+		}, time.Hour)
+		if !got["checkpoint"] || !got["canceled"] {
+			t.Fatalf("incomplete manifests must always expire; expired = %v", got)
+		}
+	})
+
+	t.Run("older complete snapshots still expire by cutoff", func(t *testing.T) {
+		got := expired([]*ksnapshot.Manifest{
+			at("old", 0, ""),
+			at("newest", 72*time.Hour, ""),
+			at("checkpoint", 96*time.Hour, "checkpoint"),
+		}, 48*time.Hour)
+		if !got["old"] || got["newest"] || !got["checkpoint"] {
+			t.Fatalf("expired = %v, want old+checkpoint only", got)
+		}
+	})
+
+	t.Run("a single complete snapshot is never expired", func(t *testing.T) {
+		if got := expired([]*ksnapshot.Manifest{at("only", 0, "")}, 24*time.Hour); len(got) != 0 {
+			t.Fatalf("expired = %v", got)
+		}
+	})
+}
+
+func TestPrune_DeletesIncompleteManifests(t *testing.T) {
+	ctx := context.Background()
+	e, _ := newTestEngine(t)
+	r := testRepo(t, "space-1")
+
+	if _, err := e.Snapshot(ctx, r, treeSource(t)); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	// Newer than the surviving snapshot and inside any window: only the
+	// incompleteness makes it expire.
+	seedIncomplete(t, e, r, time.Now().Add(time.Hour))
+
+	if err := e.Prune(ctx, r, 30*24*time.Hour); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	assertNoIncompleteManifests(t, e, r)
+	if got := rawManifests(t, e, r); len(got) != 1 {
+		t.Fatalf("repository holds %d manifests, want 1", len(got))
+	}
+}
+
+// rawManifests lists a Space's manifests without the completeness filter every
+// exported path applies, so a test can see what the repository actually holds.
+func rawManifests(t *testing.T, e *KopiaEngine, r Repo) []*ksnapshot.Manifest {
+	t.Helper()
+	var out []*ksnapshot.Manifest
+	err := e.withRepo(context.Background(), r, false, func(ctx context.Context, rep repo.Repository) error {
+		var err error
+		out, err = ksnapshot.ListSnapshots(ctx, rep, sourceInfo(r.Space))
+		return err
+	})
+	if err != nil {
+		t.Fatalf("raw manifest list: %v", err)
+	}
+	return out
+}
+
+func incompleteCount(mans []*ksnapshot.Manifest) int {
+	return len(mans) - len(completeOnly(mans))
+}
+
+func assertNoIncompleteManifests(t *testing.T, e *KopiaEngine, r Repo) {
+	t.Helper()
+	if n := incompleteCount(rawManifests(t, e, r)); n != 0 {
+		t.Fatalf("%d incomplete manifests remain in the repository", n)
+	}
+}
+
+// seedIncomplete writes a manifest shaped exactly like one of kopia's mid-upload
+// checkpoints: a real, restorable tree flagged incomplete. It clones the Space's
+// newest manifest, so what the test exercises is the flag and nothing else.
+func seedIncomplete(t *testing.T, e *KopiaEngine, r Repo, start time.Time) SnapshotID {
+	t.Helper()
+	mans := rawManifests(t, e, r)
+	if len(mans) == 0 {
+		t.Fatal("seedIncomplete needs an existing snapshot to clone")
+	}
+
+	var id SnapshotID
+	err := e.withRepo(context.Background(), r, false, func(ctx context.Context, rep repo.Repository) error {
+		return repo.WriteSession(ctx, rep, repo.WriteSessionOptions{Purpose: "test-seed-checkpoint"},
+			func(ctx context.Context, w repo.RepositoryWriter) error {
+				man := *mans[0]
+				man.StartTime = fs.UTCTimestampFromTime(start)
+				man.EndTime = fs.UTCTimestampFromTime(start)
+				man.IncompleteReason = upload.IncompleteReasonCheckpoint
+				mid, err := ksnapshot.SaveSnapshot(ctx, w, &man)
+				id = SnapshotID(mid)
+				return err
+			})
+	})
+	if err != nil {
+		t.Fatalf("seed incomplete manifest: %v", err)
+	}
+	return id
 }
 
 func TestFilesystemOpener_Validation(t *testing.T) {

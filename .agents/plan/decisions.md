@@ -522,6 +522,39 @@ decision.
   as a guarantee, and relying on it would make correctness depend on a reva
   implementation detail this project does not control.
 
+### Amendments from the September 2026 review — R4 (kopia correctness)
+
+- **kopia's ignore conventions are disabled; a Space's contents are never a
+  policy input.** kopia honours `.kopiaignore` files and `CACHEDIR.TAG` markers
+  found *inside* the tree it is backing up. That is right for a laptop, where the
+  person writing the rules is the person running the backup, and wrong for a
+  user's Space, where anyone who can write a file could otherwise silence the
+  backup of everything around it — a `.kopiaignore` containing `*` yields an
+  empty snapshot reported as a success. `Uploader.DisableIgnoreRules` is
+  therefore set on every run and the marker files are backed up as ordinary
+  files. There is no opt-out: an exclusion mechanism a user's *files* can trigger
+  is indistinguishable from an attack.
+
+- **Checkpoint manifests are transient and removed when the run ends.** kopia
+  saves a partial tree every `CheckpointInterval` (45 min by default) so a long
+  upload survives a crash; the saved manifest is a normal snapshot manifest
+  carrying `IncompleteReason`. This project never serves one: `List`, snapshot
+  lookup for restore/walk, the offline `decrypt` tool's default selection and
+  prune's "newest snapshot" protection all filter on completeness. Every run —
+  successful or failed — deletes the source's incomplete manifests before
+  returning, the failure path in a write session of its own because kopia's
+  checkpoints flush themselves and outlive a rolled-back session. Prune deletes
+  any that remain, regardless of the retention window, since only a killed
+  process can leave one behind. The orphaned content they referenced is reclaimed
+  by the next maintenance pass.
+  *This is what makes the Phase-4 amendment "a partially-read Space is a failed
+  run" true of what the repository holds, and not only of what the run returns.*
+
+- **Prune's protection is on the newest *complete* snapshot.** Protecting the
+  newest manifest of any kind would let a mid-upload checkpoint stand in for it,
+  and the last genuinely restorable backup be deleted underneath it — retention
+  destroying exactly what it promises to keep.
+
 ---
 
 ## Trust & key model

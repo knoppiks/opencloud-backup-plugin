@@ -141,6 +141,22 @@ func (m *memSource) Open(_ context.Context, p string, offset int64) (io.ReadClos
 	return io.NopCloser(bytes.NewReader(f.data[offset:])), nil
 }
 
+// slowSource makes every file read take a fixed time, so an upload can be
+// driven past kopia's checkpoint interval without a real multi-gigabyte Space.
+type slowSource struct {
+	*memSource
+	delay time.Duration
+}
+
+func (s slowSource) Open(ctx context.Context, p string, offset int64) (io.ReadCloser, error) {
+	select {
+	case <-time.After(s.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return s.memSource.Open(ctx, p, offset)
+}
+
 // fixedDirTime keeps synthesised directory mtimes stable across runs.
 var fixedDirTime = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
