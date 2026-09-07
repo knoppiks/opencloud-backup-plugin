@@ -102,6 +102,19 @@ func TestStoreContract(t *testing.T) {
 			if !status.UpdatedAt.Equal(keyEpoch.Add(time.Minute)) {
 				t.Fatalf("UpdatedAt = %v", status.UpdatedAt)
 			}
+
+			// Spaces is what a key rotation iterates: a Space missing from it
+			// keeps an envelope nothing can open once the old key is retired.
+			if err := store.PutSRW("space$b!b", srw); err != nil {
+				t.Fatalf("PutSRW: %v", err)
+			}
+			spaces, err := store.Spaces()
+			if err != nil {
+				t.Fatalf("Spaces: %v", err)
+			}
+			if len(spaces) != 2 || spaces[0] != "space$a!a" || spaces[1] != "space$b!b" {
+				t.Fatalf("Spaces = %v", spaces)
+			}
 		})
 	}
 }
@@ -233,6 +246,19 @@ func TestStateStore_ReadsPreVersionedRecords(t *testing.T) {
 	status, err = store.Status("s1")
 	if err != nil || !status.Configured {
 		t.Fatalf("status after rotation = %+v (%v)", status, err)
+	}
+
+	// A Space that only ever had a pre-versioned record must still be visited
+	// by a key rotation, so it appears in Spaces exactly once.
+	if err := legacy.Create(t.Context(), SpaceKeys{SpaceID: "s2"}, "s2"); err != nil {
+		t.Fatalf("seed legacy record: %v", err)
+	}
+	spaces, err := store.Spaces()
+	if err != nil {
+		t.Fatalf("Spaces: %v", err)
+	}
+	if len(spaces) != 2 || spaces[0] != "s1" || spaces[1] != "s2" {
+		t.Fatalf("Spaces = %v, want each space once", spaces)
 	}
 }
 

@@ -254,6 +254,41 @@ func (l *LeaseLocker) Recover(ctx context.Context, store Store) (int, error) {
 	return recovered, nil
 }
 
+// ActiveLeases counts the run leases that have not expired at now.
+//
+// It exists for the operations that must not run while a backup does — rotating
+// a wrapping key, above all, which would otherwise re-wrap an envelope a live
+// run is about to open. It is a package-level function rather than a method
+// because the caller (an operator CLI) holds no locker and must claim nothing:
+// asking is the whole point.
+//
+// This is a check, not a lock. There is no compare-and-set here (see the note at
+// the top of this file), so a run can start the instant after it answers. It
+// catches the operator who forgot to stop the service; it does not make
+// concurrent rotation safe.
+func ActiveLeases(ctx context.Context, st state.Store, now time.Time) (int, error) {
+	docs := state.NewDocuments[lease](st, leasePrefix)
+	keys, err := docs.Keys(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("jobs: list run leases: %w", err)
+	}
+
+	active := 0
+	for _, key := range keys {
+		rec, err := docs.GetKey(ctx, key)
+		if err != nil {
+			// An unreadable lease is not evidence of an idle service. Count it:
+			// the safe direction here is to refuse.
+			active++
+			continue
+		}
+		if now.Before(rec.ExpiresAt) {
+			active++
+		}
+	}
+	return active, nil
+}
+
 // failAbandoned marks a Space's unfinished jobs as failed.
 func (l *LeaseLocker) failAbandoned(ctx context.Context, store Store, spaceID string) (int, error) {
 	if store == nil {

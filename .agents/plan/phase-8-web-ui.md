@@ -42,10 +42,22 @@ Phases 2/3/5/6 (APIs).
       - Generate RK in the browser (WebCrypto; Argon2id via wasm for the KEK).
       - Generate/wrap DK per the Phase 3 contract; **plaintext RK never leaves
         the browser.**
+      - **Self-verify before sending (binding, see `key-envelope-format.md`
+        §5):** unwrap the envelope just produced with the RK about to be shown,
+        and compare the recovered DK. The server cannot check this — it holds no
+        RK — so a client that skips it can hand the user a Recovery Key that
+        opens nothing, with a green status to match.
+      - Argon2id parameters must meet the API's accepted minimum (`time >= 2`,
+        `memory >= 19 MiB`, `lanes >= 1`); weaker envelopes are refused with a
+        400 that says so. Tune above the floor for slow devices, never below.
       - Display RK once + copy button + "save it in your password manager"
         wording (family-friendly language).
       - Confirmation gate: re-enter/re-paste a portion of the RK (proves it
         was saved) → only then `POST /backup/setup`.
+      - **Setup is once-only:** a Space that already has keys answers 409. Treat
+        that as "this Space is already protected", not as an error to retry —
+        the wizard must not offer a way to re-run the ceremony, because doing so
+        would orphan every existing backup.
    3. Pick schedule preset (daily/weekly) → `PUT /schedule`.
    4. Done screen: what happens next, when the first run occurs.
 
@@ -63,6 +75,24 @@ Phases 2/3/5/6 (APIs).
    - Members see the space's backup status; RK-blob retrieval flow per
      Phase 3 (member-only endpoint).
 
+6. **Replace the Recovery Key** — the only supported way to change a key after
+   setup, and entirely client-side:
+   1. Fetch the current envelope (`GET .../backup/recovery-envelope`).
+   2. Ask for the *current* Recovery Key and unwrap it in the browser. A wrong
+      key fails here, before anything is sent.
+   3. Generate a new RK, re-wrap the **same** DK, and self-verify as in the
+      setup ceremony.
+   4. Same display-once + confirmation gate, then
+      `POST .../backup/recovery-key/rotate` with the new envelope only. **The DK
+      is not sent on this path.**
+   5. Tell the user plainly: existing backups stay readable, nothing is
+      re-uploaded, and the old Recovery Key stops working — destroy the old
+      copy.
+
+   A user who has *lost* their Recovery Key cannot use this flow, and there is
+   no server-side escrow to fall back on. The UI must say so rather than
+   offering setup again.
+
 ## Technical
 
 - Follow Spike 4 findings: packaging (web app bundle / apps.yaml), OpenCloud
@@ -78,7 +108,8 @@ Phases 2/3/5/6 (APIs).
 ## Testing
 
 - Unit (Vitest): wizard state machine, RK ceremony (mock WebCrypto),
-  confirmation gate cannot be skipped.
+  confirmation gate cannot be skipped, self-verify step fails the ceremony when
+  the produced envelope does not unwrap to the intended DK.
 - Component: status board states (fresh/stale/failed/running) via mocked API.
 - Admin target view: renders only for an admin ability; credential fields are
   write-only (never populated from API); non-admin never sees the view. Wizard
@@ -88,7 +119,8 @@ Phases 2/3/5/6 (APIs).
   `Restore/<ts>/`. One negative: wrong RK re-entry blocks setup.
 - Crypto interop test: RK produced by the browser ceremony successfully
   decrypts a Take-Out via `cmd/decrypt` (browser-wasm and Go Argon2id/AEAD
-  parameters must match exactly — this test is mandatory).
+  parameters must match exactly — this test is mandatory). The same test after a
+  Recovery Key rotation: the new RK decrypts the take-out, the old one does not.
 
 ## Exit criteria
 

@@ -129,6 +129,21 @@ than drifting.
     rationale, the validation, and the constraints it imposes (single instance;
     no transactions; state Space must not be a user's Space).
 
+17. **Establishing a Space's keys is a once-only act.** Setup is refused for a
+    Space that already has them; there is no override. A second ceremony would
+    orphan every backup that Space has ever written. See "Amendments from the
+    September 2026 review — R2".
+
+18. **Every key is replaceable, and replacing one never rewrites data.** The
+    Recovery Key rotates in the browser, the server's SRW and TW keys rotate
+    through an operator command; the Data Key itself does not rotate. Same
+    amendment section for the constraints (resumable, not atomic; not alongside
+    backups).
+
+19. **Client-produced Recovery Key envelopes must meet a minimum work factor.**
+    The server cannot see the Recovery Key, so how hard it is to derive from is
+    the only property of the client's ceremony it can check.
+
 ---
 
 ## Still open (must be resolved in Phase 0, may amend decisions)
@@ -402,6 +417,66 @@ decision.
   the object, unwrap with the SRW key, re-seed the state Space); no code path
   reads it back yet. Phase 5b would make it a flow.
 
+### Amendments from the September 2026 review — R2 (ceremony, rotation)
+
+- **New decision #17 (locked): establishing a Space's keys is a once-only act.**
+  `POST .../backup/setup` answers 409 for a Space that already holds both
+  envelopes, and there is no override flag.
+  Rationale: a second ceremony installs a new Data Key. Every snapshot already
+  written stays encrypted under the previous one, which nobody holds any more —
+  the backups remain listed, intact and permanently unreadable, with no attacker
+  involved and no warning. That is the exact outcome this project exists to
+  prevent, so it is not something a member gets to do by clicking twice.
+  A *half-finished* setup (one envelope, from a crash between the two writes) can
+  still be completed by re-running it: there are no snapshots behind it to
+  orphan. The predicate is "both present", not "any".
+
+- **New decision #18 (locked): every key in the system is replaceable, and
+  replacing one never rewrites data.**
+  - The **Recovery Key** rotates through `POST .../backup/recovery-key/rotate`:
+    the browser unwraps with the old RK, re-wraps the *same* DK under a new one,
+    and posts the envelope alone. The DK is not sent on this path.
+  - The **SRW and TW keys** rotate through `backupd rotate-srw` / `rotate-tw`
+    (`pkg/rotate`), which visit every Space or target and re-wrap in place.
+  - The **Data Key** does not rotate. Re-keying it would mean re-uploading every
+    backup, and no threat this system models is answered by it.
+  Rationale: a key that cannot be replaced forces the wrong choice after a
+  suspected exposure — keep using it, or destroy the history. Both were the only
+  options before this.
+  *Constraints, which are binding:*
+  - **Rotation is resumable, not atomic.** No transactions (#16), so an
+    interrupted rotation leaves records split across two keys. Re-running
+    finishes it; a record that opens with *neither* key stops the run rather
+    than being rewritten under an assumption that already failed once.
+  - **Rotation must not run alongside backups.** The operator asserts it
+    (`-service-stopped`) and the command verifies no run lease is live. Neither
+    is a lock — there is no CAS — so this catches the mistake that happens, not
+    every possible race.
+  - **The old key must be removed from the deployment afterwards.** Nothing
+    opens with it any more; leaving it configured only widens what a leak costs.
+
+- **New decision #19 (locked): client-produced Recovery Key envelopes must meet
+  a minimum work factor** (`keys.MinArgonParams`: Argon2id, 2 passes, 19 MiB,
+  1 lane — OWASP's low-memory baseline), checked at the API boundary on setup
+  and rotation.
+  Rationale: the server cannot see the Recovery Key, so the work factor is the
+  only thing about the client's ceremony it can check at all. The envelope will
+  sit in a state Space, be published to an S3 target, and end up in whatever
+  Take-Out an operator hands over; if it is cheap to brute-force, nothing else in
+  the design matters. Distinct from the existing Argon2id *ceilings*, which are
+  DoS protection for the server and stay exactly as they were.
+  The floor is checked **on the way in only**. An envelope already stored keeps
+  unwrapping whatever its costs — the alternative is a Recovery Key that stops
+  working because the server changed its mind.
+
+- **What the server still cannot verify, and says so:** that a client's envelope
+  wraps the DK it claims, or opens with the key the user was shown. Checking
+  either would need the Recovery Key. The obligation is written into
+  `key-envelope-format.md` §5 as a binding client invariant, and Phase 8's
+  interop test is where it gets enforced for the shipped client. The mitigation
+  for a client that gets it wrong is #16's append-only storage: the superseded
+  envelope is still there.
+
 ---
 
 ## Trust & key model
@@ -410,16 +485,27 @@ decision.
   password; plaintext only in memory during a run; never stored plaintext.
 - **RK (Recovery Key):** generated **client-side** at setup, shown once, stored by
   the user externally (password manager). Plaintext RK **never crosses the wire**.
-  Wraps the DK via an Argon2id-derived KEK.
+  Wraps the DK via an Argon2id-derived KEK. Replaceable without touching the DK
+  (`POST .../backup/recovery-key/rotate`); the re-wrap happens in the browser and
+  the DK is not sent on that path.
+- **The DK *is* sent to the server, once, at setup, over TLS.** That is the
+  price of decision #1: unattended runs need the server to reconstruct the DK, so
+  it must receive it to produce the SRW wrap. It is held in memory for the
+  duration of that request, zeroized after wrapping, and never stored in
+  plaintext. Saying this plainly matters — "the Recovery Key never crosses the
+  network" is true and is sometimes misread as "no key material ever does".
 - **SRW (Server Runtime Wrap):** server-held wrapped DK enabling unattended runs;
   KEK from K8s secret / KMS. The wrapped DK is stored in the state Space **and
   published to the target** as `server.ocbke` (R1 amendment above), so the state
-  Space is not a single point of failure for unattended runs.
+  Space is not a single point of failure for unattended runs. Retirable with
+  `backupd rotate-srw` (R2 amendment below).
 - **TW (Target Wrap):** a cluster/KMS-held key that wraps **S3 target
   credentials** at rest (decision #14). Same custody class as SRW — lives in a
   K8s secret / KMS, never in the admin UI, never logged. Distinct key from SRW so
   the two concerns (data-key custody vs. target-credential custody) rotate
-  independently. The wrap uses the same maintained AEAD-envelope primitive as the
+  independently — and the service **refuses to start** if the two are configured
+  to the same value, because that collapses the separation while looking like it
+  works. Retirable with `backupd rotate-tw`. The wrap uses the same maintained AEAD-envelope primitive as the
   DK wraps; **no hand-rolled crypto.**
 - **Envelope format is a long-term compatibility promise** — versioned from day
   one (the standalone decrypt CLI must parse it forever). The TW-wrapped

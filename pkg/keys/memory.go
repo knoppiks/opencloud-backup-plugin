@@ -5,7 +5,10 @@ package keys
 // behind the same interface; every consumer depends on keys.Store, not on this
 // type.
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 // MemoryStore is a concurrency-safe in-memory Store.
 type MemoryStore struct {
@@ -98,6 +101,19 @@ func (m *MemoryStore) Status(spaceID string) (Status, error) {
 		return Status{SpaceID: spaceID}, nil
 	}
 	return statusOf(*rec), nil
+}
+
+// Spaces returns the ids of every space holding an envelope, in order.
+func (m *MemoryStore) Spaces() ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]string, 0, len(m.byID))
+	for id := range m.byID {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // Delete removes a space's key record. Used by tests and teardown; it does not

@@ -43,6 +43,16 @@ fully unit-testable.
      with Phase 8; invariant: **plaintext RK never crosses the wire.**
    - `GET /api/v1/spaces/{id}/backup/keystatus` — configured? created when?
      which wrap versions? (No key material in response.)
+   - `POST /api/v1/spaces/{id}/backup/recovery-key/rotate` — added by the R2
+     remediation. Takes a new RK envelope and **no Data Key**; appends it and
+     leaves the DK, the SRW envelope and every existing snapshot untouched.
+     Requires the Space to be configured (404 otherwise).
+   - Setup is **once-only**: a Space that already has both envelopes gets 409
+     with no override. Re-running the ceremony would install a new DK and orphan
+     every existing snapshot. A half-finished setup (one envelope) can still be
+     completed by re-running it.
+   - Client envelopes must meet a minimum Argon2id work factor
+     (`keys.MinArgonParams`); weaker ones are 400.
 3. **Shared-space RK retrieval** (decisions.md #7): endpoint returning the
    RK-wrapped-DK blob to **space members only** (membership via CS3 from
    Phase 2). Members can re-wrap for themselves; server still never sees RK
@@ -66,8 +76,18 @@ fully unit-testable.
       (re-enter part of it) before step 4 is allowed to have "succeeded" in the
       UI. Then discard `dk` and `rk` from browser memory.
 
+   Between steps 3 and 4 the browser must **unwrap its own envelope with the RK
+   it is about to display and compare the DK** (R2; see the format doc §5). The
+   server cannot check this and the failure is silent, so it is a client
+   obligation, not a nicety.
+
    The server adds the SRW wrap and persists both envelopes. It returns only
    key-status metadata.
+
+   **Replacing a Recovery Key** follows the same shape minus the DK: fetch the
+   current envelope, unwrap with the old RK in the browser, generate a new RK,
+   re-wrap the *same* DK, self-verify, and POST the envelope alone to
+   `.../backup/recovery-key/rotate`.
 
    **Why the DK is sent but the RK is not:** unattended scheduled runs require
    the server to reconstruct the DK (decisions.md #1 explicitly accepts this —
@@ -116,6 +136,25 @@ Decisions taken while implementing (previously left open in this doc):
   envelope carries its own costs, an unbounded value would let a crafted blob
   burn CPU/RAM before authentication could fail. Bounds: time ≤ 16, memory ≤ 1
   GiB, lanes ≤ 16. (Found by a test that hung — see the format doc §2.)
+
+### Amendments from the September 2026 review — R2 (ceremony guards, rotation)
+
+- **The ceremony is once-only, enforced server-side (409).** The phase plan
+  described the ceremony and never said what a second one means; the answer is
+  that it is a data-loss operation, so there is no flag to allow it.
+- **RK rotation became an endpoint, SRW/TW rotation became CLI subcommands.**
+  `Rotate(...)` was delivered by this phase as a library function with no way to
+  reach it, which is the same as not having rotation at all. `backupd rotate-srw`
+  and `backupd rotate-tw` (see `pkg/rotate`) now visit every Space or target,
+  re-wrap, and refuse to run unless the operator asserts the service is stopped
+  *and* no run lease is live. Rotation is resumable, not transactional: re-running
+  finishes an interrupted attempt, and a record that opens with neither key stops
+  it rather than being rewritten on a failed assumption.
+- **A work-factor floor applies to client envelopes** (`keys.MinArgonParams`,
+  OWASP's low-memory baseline). Distinct from the DoS ceiling above: the ceiling
+  protects the server, the floor protects the user.
+- **`SRW_KEY == TW_KEY` is refused at startup.** Two custody domains configured
+  as one is a misconfiguration that otherwise works perfectly.
 
 ## Risks / notes
 

@@ -221,6 +221,60 @@ func TestVersionsDeleteAllRemovesEveryVersionAndTheLegacyRecord(t *testing.T) {
 	}
 }
 
+func TestVersionsIDsListsEveryRecordOnce(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	backing := state.NewMemoryStore()
+	legacy := state.NewDocuments[doc](backing, "old")
+	if err := legacy.Create(ctx, doc{Name: "legacy"}, "space$only!legacy"); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	if err := legacy.Create(ctx, doc{Name: "both"}, "space$both!both"); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+
+	versions := state.NewVersions[doc](backing, "records").WithLegacy("old")
+	// A record filed under a further segment (as key envelopes are, one per
+	// kind) still reports the id it is indexed by.
+	if err := versions.Append(ctx, versionEpoch, doc{Name: "rk"}, "space$both!both", "rk"); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := versions.Append(ctx, versionEpoch, doc{Name: "srw"}, "space$both!both", "srw"); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := versions.Append(ctx, versionEpoch, doc{Name: "rk"}, "space$new!new", "rk"); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	ids, err := versions.IDs(ctx)
+	if err != nil {
+		t.Fatalf("IDs: %v", err)
+	}
+	want := []string{"space$both!both", "space$new!new", "space$only!legacy"}
+	if len(ids) != len(want) {
+		t.Fatalf("IDs = %v, want %v", ids, want)
+	}
+	for i, id := range want {
+		if ids[i] != id {
+			t.Fatalf("IDs = %v, want %v", ids, want)
+		}
+	}
+}
+
+func TestVersionsIDsOnAnEmptyCollection(t *testing.T) {
+	t.Parallel()
+
+	versions := state.NewVersions[doc](state.NewMemoryStore(), "records")
+	ids, err := versions.IDs(t.Context())
+	if err != nil {
+		t.Fatalf("IDs: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("IDs = %v, want none", ids)
+	}
+}
+
 func TestNewestKeyPicksTheLastVersion(t *testing.T) {
 	t.Parallel()
 

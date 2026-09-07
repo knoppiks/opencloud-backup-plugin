@@ -99,6 +99,10 @@ type Store interface {
 	// Status reports whether a space is configured and with which envelope
 	// versions. It returns no key material.
 	Status(spaceID string) (Status, error)
+	// Spaces returns the ids of every space holding an envelope, in order. It
+	// exists for the operations that must visit all of them — rotating the SRW
+	// key, above all — and returns ids only, never envelopes.
+	Spaces() ([]string, error)
 }
 
 // Status is the key-material-free summary of a space's backup key setup. It is
