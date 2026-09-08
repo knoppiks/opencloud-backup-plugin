@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -139,12 +140,21 @@ func TestPutBackupConfig_Validation(t *testing.T) {
 		"malformed body":  []byte(`{`),
 		"missing target":  []byte(`{"retention_days":10}`),
 		"negative window": []byte(`{"target_id":"t-granted","retention_days":-1}`),
+		// Retention depth is the defence against ransomware; a member session
+		// may shorten history but not remove it.
+		"below the floor": []byte(`{"target_id":"t-granted","retention_days":1}`),
 	}
 	for name, body := range cases {
 		rec := doJSON(env.srv, http.MethodPut, path, "alice-tok", body)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("%s: status = %d, want 400", name, rec.Code)
 		}
+	}
+
+	floor := int(spacecfg.MinRetentionWindow.Hours() / 24)
+	body := fmt.Appendf(nil, `{"target_id":"t-granted","retention_days":%d}`, floor)
+	if rec := doJSON(env.srv, http.MethodPut, path, "alice-tok", body); rec.Code != http.StatusOK {
+		t.Fatalf("the floor itself must be accepted: status = %d, body %s", rec.Code, rec.Body)
 	}
 }
 

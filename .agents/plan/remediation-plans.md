@@ -483,6 +483,52 @@ Unit: audience/exp cases; retention floor; `SRW==TW` rejected; startup fatal
 without state Space. Integration: leftover work dir swept. kubeconform already
 validates manifests.
 
+### Outcome (implemented, issue #20)
+
+All fifteen steps, with the work-dir investigation answered differently than
+either branch of step 1 anticipated, and two owner decisions taken against the
+plan's recommendation.
+
+- **Step 1 — the answer is "no, but".** kopia v0.23.1 has no exported way to open
+  a repository without `repo.Connect` writing `repository.config`
+  (`openWithConfig` says "avoiding the need for a config file" and is
+  unexported). It does export `blob.AddSupportedStorage`, so the repository is
+  connected through a **storage handle**: our own storage type whose serialised
+  connection info is a random per-run token resolved against an in-process
+  registry (`pkg/snapshot/handle.go`). Credentials never reach a filesystem at
+  all — not tmpfs, not after a SIGKILL — which is strictly stronger than step 2's
+  fallback and independent of how the operator mounts anything. Step 2 was done
+  anyway, for kopia's *cache*: it holds repository content, so the work directory
+  must be memory-backed and startup refuses otherwise.
+- **Owner decision — `OIDC_AUDIENCE` is required, not defaulted.** The plan
+  recommended defaulting to OpenCloud's `web` client id with a warning. A default
+  audience is a security control that silently exists and is easy to leave wrong,
+  and the manifest already ships placeholders that must be filled; one more costs
+  a deployer nothing and removes a way to be quietly insecure.
+- **Owner decision — the service can terminate TLS itself.** Step 13's optional
+  half was taken: `TLS_CERT_FILE`/`TLS_KEY_FILE`, both or neither. Documentation
+  alone leaves a deployment with nothing in front of it serving a Data Key over
+  plain HTTP with no way to fix it in place.
+- **Addition — `ErrKeySetUnavailable` separates "cannot check" from "invalid".**
+  Step 11 asks for 503 while discovery has not succeeded; that only works if the
+  validator distinguishes an unreachable identity provider from a bad token.
+  Without it a client would discard a perfectly good session over an IdP hiccup.
+  The same error covers a failed JWKS refresh, not just startup discovery.
+- **Deviation — the retention floor is enforced twice.** The plan places it at
+  the API boundary. `Config.EffectiveRetentionWindow` raises anything below the
+  floor as well, silently, because that is the path prune reads: a record written
+  before the floor existed must not make prune delete history the API would
+  refuse to give up.
+- **Deviation — `DiscoverKeySet` was deleted rather than kept alongside the lazy
+  one.** Two ways to build the same key set, one of which makes startup depend on
+  the IdP, is the bug this step exists to remove.
+- **Step 14 needed no work** — `SRW_KEY == TW_KEY` was already refused by R2.
+- **Note — the leaky-driver test fake cannot be bypassed silently.** The fake
+  storage used to prove credentials never reach the config file registers no
+  kopia storage type, so if the handle substitution were ever removed the
+  repository would fail to reopen rather than quietly leaking. A test that can
+  only fail loudly was worth the extra ten lines.
+
 ---
 
 ## R6 — Scheduler and runner robustness (F8)

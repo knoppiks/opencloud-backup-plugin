@@ -38,6 +38,7 @@ import (
 	"opencloud-backup-plugin/pkg/backup"
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/cs3state"
+	"opencloud-backup-plugin/pkg/instance"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/notify"
@@ -88,11 +89,24 @@ func serve(logger *slog.Logger) {
 	}
 	defer cleanup()
 
+	certFile, keyFile, err := tlsFiles()
+	if err != nil {
+		logger.Error("startup failed", "err", err)
+		os.Exit(1)
+	}
+
 	addr := envOr("BACKUPD_ADDR", ":8080")
 	httpSrv := &http.Server{
-		Addr:              addr,
-		Handler:           svc.api.Handler(),
+		Addr:    addr,
+		Handler: svc.api.Handler(),
+		// A stalled or slow client must not be able to hold a connection open
+		// indefinitely. WriteTimeout is generous because a snapshot listing for
+		// a large Space is served synchronously; backup runs are background jobs
+		// and do not hold a request open.
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -110,8 +124,17 @@ func serve(logger *slog.Logger) {
 	}
 
 	go func() {
-		logger.Info("backupd listening", "addr", addr)
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		var err error
+		if certFile != "" {
+			logger.Info("backupd listening (TLS)", "addr", addr)
+			err = httpSrv.ListenAndServeTLS(certFile, keyFile)
+		} else {
+			// Plain HTTP: a Data Key crosses this listener once per Space, at
+			// key setup, so something in front of it must terminate TLS.
+			logger.Info("backupd listening (plain HTTP; a TLS-terminating ingress is required)", "addr", addr)
+			err = httpSrv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server failed", "err", err)
 			stop()
 		}
@@ -154,16 +177,32 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	var opts []api.Option
 	cleanup := func() {}
 
+	// --- work directory ---------------------------------------------------
+	// Checked before anything else: it is pure configuration, and a service
+	// that will write the family's data somewhere it should not is worth
+	// refusing before it accepts a single request.
+	workDir, err := resolveWorkDir(logger)
+	if err != nil {
+		return service{}, cleanup, err
+	}
+
 	// --- OIDC validator ---------------------------------------------------
 	issuer := os.Getenv("OIDC_ISSUER")
 	if issuer != "" {
-		ks, err := api.DiscoverKeySet(ctx, issuer, httpClient(), time.Hour)
-		if err != nil {
-			return service{}, cleanup, err
+		audience := strings.TrimSpace(os.Getenv("OIDC_AUDIENCE"))
+		if audience == "" {
+			return service{}, cleanup, errors.New(
+				"OIDC_AUDIENCE is required when OIDC_ISSUER is set: without it any token " +
+					"the same issuer minted for any application is accepted here")
 		}
+		// Discovery happens in the background: an identity provider that is not
+		// up yet must delay authentication, not the whole service (a
+		// crash-looping pod is harder to diagnose than a 503 that explains
+		// itself).
+		ks := api.NewLazyKeySet(issuer, httpClient(), time.Hour, logger)
 		v, err := api.NewOIDCValidator(api.OIDCConfig{
 			Issuer:   issuer,
-			Audience: os.Getenv("OIDC_AUDIENCE"),
+			Audience: audience,
 			KeySet:   ks,
 		})
 		if err != nil {
@@ -226,6 +265,22 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	if err != nil {
 		return service{}, cleanup, err
 	}
+
+	// --- single-instance guard -------------------------------------------
+	// Two instances against one state Space can mark each other's runs failed
+	// and dispatch the same Space twice (decisions.md #16). This is a check, not
+	// a lock — the backend has no compare-and-set — but it catches the case that
+	// actually happens: a rolling update starting a second pod.
+	guard, err := instance.New(backing, instance.Options{Logger: logger})
+	if err != nil {
+		return service{}, cleanup, err
+	}
+	standDown, err := guard.Claim(ctx)
+	if err != nil {
+		return service{}, cleanup, err
+	}
+	cleanup = chain(standDown, cleanup)
+	logger.Info("instance registered", "instance", guard.ID())
 
 	// --- target store / authorizer ---------------------------------------
 	targetStore := targets.NewStateStore(backing)
@@ -335,7 +390,7 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 
 		engine, err := snapshot.NewEngine(snapshot.S3Opener{Limits: limits}, snapshot.EngineOptions{
 			Parallelism: parallelism,
-			WorkDir:     os.Getenv("BACKUP_WORK_DIR"),
+			WorkDir:     workDir,
 		})
 		if err != nil {
 			return service{}, cleanup, err
@@ -440,16 +495,30 @@ func dialCS3() (*cs3.Client, func(), error) {
 	return client, func() { _ = conn.Close() }, nil
 }
 
-// buildStateStore chooses where the service keeps its own state. Without a
-// state Space it degrades to memory and says so loudly: that mode is only
-// sensible for a smoke test, because schedules, history and key envelopes then
-// vanish on restart.
+// buildStateStore chooses where the service keeps its own state.
+//
+// Durable state is required, not defaulted away. Losing it costs every Space its
+// schedule, its history and the server-side copy of its wrapped Data Key, and
+// the loss happens on an ordinary pod restart — long after the person who
+// completed the key ceremony has stopped watching. A deployment that genuinely
+// wants throwaway state says so with STATE_BACKEND=memory.
 func buildStateStore(client *cs3.Client, logger *slog.Logger) (state.Store, error) {
 	spaceID := os.Getenv("STATE_SPACE_ID")
-	if spaceID == "" || client == nil {
-		logger.Warn("STATE_SPACE_ID unset or CS3 unavailable; service state is in memory only. " +
+
+	if memoryStateRequested() {
+		logger.Warn(stateBackendVar + "=" + stateBackendMemory + ": service state is in memory only. " +
 			"Schedules, run history and key envelopes will not survive a restart")
 		return state.NewMemoryStore(), nil
+	}
+	if spaceID == "" {
+		return nil, fmt.Errorf(
+			"STATE_SPACE_ID is required: without it schedules, run history and every wrapped "+
+				"Data Key die with the process. Provision a state Space (see the runbook in "+
+				"README.md), or set %s=%s to accept losing them", stateBackendVar, stateBackendMemory)
+	}
+	if client == nil {
+		return nil, errors.New(
+			"CS3_GATEWAY_ADDR is required to reach the state space named by STATE_SPACE_ID")
 	}
 
 	store, err := cs3state.New(client, cs3state.Options{

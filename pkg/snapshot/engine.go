@@ -46,6 +46,11 @@ const (
 
 	// sourcePathPrefix is the kopia SourceInfo.Path prefix for a Space.
 	sourcePathPrefix = "/spaces/"
+
+	// workDirPattern names the throwaway directory holding one run's kopia
+	// config and cache. It is both the os.MkdirTemp pattern and what
+	// SweepWorkDir looks for.
+	workDirPattern = "kopia-run-*"
 )
 
 // rootModTime is the modification time reported for the snapshot's root
@@ -530,14 +535,27 @@ func (e *KopiaEngine) withRepo(ctx context.Context, r Repo, createIfMissing bool
 		}
 	}
 
-	workDir, err := os.MkdirTemp(e.opts.WorkDir, "kopia-run-*")
+	workDir, err := os.MkdirTemp(e.opts.WorkDir, workDirPattern)
 	if err != nil {
 		return fmt.Errorf("snapshot: create work dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
+	// kopia writes the storage's ConnectionInfo — for S3, the secret access key
+	// — into repository.config. Connecting through a handle keeps the
+	// credentials in memory and puts a meaningless token on disk instead
+	// (see handle.go, decisions.md #14).
+	handle, releaseHandle, err := storageHandles.register(
+		func(ctx context.Context, createIfMissing bool) (blob.Storage, error) {
+			return e.opener.Open(ctx, r, createIfMissing)
+		})
+	if err != nil {
+		return err
+	}
+	defer releaseHandle()
+
 	configFile := filepath.Join(workDir, "repository.config")
-	if err := repo.Connect(ctx, configFile, st, password, &repo.ConnectOptions{
+	if err := repo.Connect(ctx, configFile, handleStorage{Storage: st, handle: handle}, password, &repo.ConnectOptions{
 		ClientOptions: repo.ClientOptions{
 			Hostname:    defaultHost,
 			Username:    defaultUser,

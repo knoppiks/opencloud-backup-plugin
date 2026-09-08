@@ -23,6 +23,15 @@ import (
 // WORM — is what defeats slow-burn ransomware (decisions.md threat model).
 const DefaultRetentionWindow = 90 * 24 * time.Hour
 
+// MinRetentionWindow is the shallowest history a Space may keep.
+//
+// Retention depth is the whole defence: encrypted files become one bad snapshot
+// and yesterday's good one is still there. A window short enough to expire the
+// last good snapshot before anybody notices turns that into nothing, and setting
+// it needs no more than a member's browser session — which, in the scenario this
+// project exists for, is exactly what the attacker has.
+const MinRetentionWindow = 7 * 24 * time.Hour
+
 // DefaultSchedule is what an enabled Space backs up on when nobody picked a
 // time: nightly at 02:30, in the service's timezone. The product promise is
 // "one click, then forget" (decisions.md, product framing), so enabling backup
@@ -50,12 +59,18 @@ type Config struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// EffectiveRetentionWindow resolves the configured window, applying the default.
+// EffectiveRetentionWindow resolves the configured window, applying the default
+// and the floor.
+//
+// The floor is applied here as well as at the API boundary, where it is a
+// refusal with an explanation. Here it is silent, because this is the path that
+// reads records written before the floor existed — and prune must not honour a
+// window it would refuse to accept.
 func (c Config) EffectiveRetentionWindow() time.Duration {
 	if c.RetentionWindow <= 0 {
 		return DefaultRetentionWindow
 	}
-	return c.RetentionWindow
+	return max(c.RetentionWindow, MinRetentionWindow)
 }
 
 // EffectiveSchedule resolves the configured schedule, applying the default.
