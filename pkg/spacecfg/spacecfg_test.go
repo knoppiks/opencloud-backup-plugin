@@ -25,6 +25,27 @@ func TestEffectiveRetentionWindow(t *testing.T) {
 	if got := (Config{RetentionWindow: custom}).EffectiveRetentionWindow(); got != custom {
 		t.Fatalf("custom window = %v, want %v", got, custom)
 	}
+	// A record written before the floor existed must not be honoured below it:
+	// prune reads this, and it may not delete history the API would refuse to
+	// give up.
+	shallow := 24 * time.Hour
+	if got := (Config{RetentionWindow: shallow}).EffectiveRetentionWindow(); got != MinRetentionWindow {
+		t.Fatalf("window below the floor = %v, want %v", got, MinRetentionWindow)
+	}
+	if got := (Config{RetentionWindow: MinRetentionWindow}).EffectiveRetentionWindow(); got != MinRetentionWindow {
+		t.Fatalf("the floor itself = %v", got)
+	}
+}
+
+// The floor is a real defence, not a formality: it has to be deep enough that a
+// weekly backup still leaves something to restore from.
+func TestMinRetentionWindowIsMeaningful(t *testing.T) {
+	if MinRetentionWindow < 7*24*time.Hour {
+		t.Fatalf("retention floor %v is too shallow to survive a missed run", MinRetentionWindow)
+	}
+	if MinRetentionWindow > DefaultRetentionWindow {
+		t.Fatal("the floor must not exceed the default")
+	}
 }
 
 // Retention must be a duration, never a count (decisions.md #10). The default

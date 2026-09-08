@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -91,9 +92,16 @@ type oidcValidator struct {
 
 // NewOIDCValidator constructs a validator. It does not perform network I/O;
 // discovery/JWKS fetching is the KeySet's responsibility.
+//
+// Audience is required. An OpenCloud deployment issues tokens for several
+// clients from one issuer, so accepting "any token this issuer signed" accepts
+// tokens minted for something else entirely — including ID tokens.
 func NewOIDCValidator(cfg OIDCConfig) (TokenValidator, error) {
 	if cfg.Issuer == "" {
 		return nil, errors.New("oidc: issuer is required")
+	}
+	if cfg.Audience == "" {
+		return nil, errors.New("oidc: audience is required")
 	}
 	if cfg.KeySet == nil {
 		return nil, errors.New("oidc: key set is required")
@@ -133,6 +141,12 @@ func (v *oidcValidator) Validate(ctx context.Context, rawToken string) (Identity
 
 	keys, err := v.cfg.KeySet.Key(ctx, tok.Headers[0].KeyID)
 	if err != nil {
+		// "We cannot check right now" is not "your token is bad"; the caller
+		// turns this into 503 rather than 401 so a client does not throw away a
+		// perfectly good session over an IdP hiccup.
+		if errors.Is(err, ErrKeySetUnavailable) {
+			return Identity{}, err
+		}
 		return Identity{}, fmt.Errorf("%w: key lookup: %v", errInvalidToken, err)
 	}
 	if len(keys) == 0 {
@@ -151,12 +165,16 @@ func (v *oidcValidator) Validate(ctx context.Context, rawToken string) (Identity
 		return Identity{}, fmt.Errorf("%w: signature", errInvalidToken)
 	}
 
-	expected := jwt.Expected{
-		Issuer: v.cfg.Issuer,
-		Time:   v.cfg.Now(),
+	// go-jose skips expiry validation entirely when the claim is absent, so a
+	// token with no `exp` would otherwise be valid forever.
+	if claims.Expiry == nil {
+		return Identity{}, fmt.Errorf("%w: token has no expiry", errInvalidToken)
 	}
-	if v.cfg.Audience != "" {
-		expected.AnyAudience = jwt.Audience{v.cfg.Audience}
+
+	expected := jwt.Expected{
+		Issuer:      v.cfg.Issuer,
+		Time:        v.cfg.Now(),
+		AnyAudience: jwt.Audience{v.cfg.Audience},
 	}
 	if err := claims.Validate(expected); err != nil {
 		// Covers expiry, wrong issuer, wrong audience, not-yet-valid.
@@ -185,7 +203,8 @@ func (v *oidcValidator) Validate(ctx context.Context, rawToken string) (Identity
 var errInvalidToken = errors.New("invalid token")
 
 // Authenticate is middleware that requires a valid bearer token. It extracts the
-// Identity into the request context or responds 401.
+// Identity into the request context or responds 401 — or 503, when the token
+// cannot be checked at all right now.
 func (s *Server) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.validator == nil {
@@ -199,6 +218,11 @@ func (s *Server) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 		id, err := s.validator.Validate(r.Context(), raw)
+		if errors.Is(err, ErrKeySetUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "unavailable",
+				"the identity provider cannot be reached; try again shortly")
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
 			return
@@ -228,38 +252,28 @@ func firstNonEmpty(vals ...string) string {
 
 // --- JWKS-backed KeySet ----------------------------------------------------
 
+// ErrKeySetUnavailable reports that signing keys could not be obtained. It is
+// distinct from an invalid token: the caller answers 503, not 401.
+var ErrKeySetUnavailable = errors.New("oidc: signing keys are unavailable")
+
+// minRefreshInterval is the shortest gap between two JWKS fetches. Without it,
+// every token bearing an unknown key id — which anyone can mint, since nothing
+// is verified before the lookup — causes a request to the identity provider.
+const minRefreshInterval = time.Minute
+
 // jwksKeySet fetches and caches a JWKS from a URL discovered via OIDC metadata.
-// It is safe for concurrent use and refreshes on cache miss (key rotation).
+// It is safe for concurrent use and refreshes on cache miss (key rotation),
+// rate-limited so a cache miss cannot be used as an amplifier.
 type jwksKeySet struct {
 	jwksURI string
 	client  *http.Client
 	ttl     time.Duration
 	now     func() time.Time
 
-	mu        sync.RWMutex
-	keys      map[string][]jose.JSONWebKey
-	fetchedAt time.Time
-}
-
-// DiscoverKeySet builds a JWKS-backed KeySet by resolving the issuer's
-// OpenID configuration to find its jwks_uri, then lazily fetching keys.
-func DiscoverKeySet(ctx context.Context, issuer string, client *http.Client, cacheTTL time.Duration) (KeySet, error) {
-	if client == nil {
-		client = http.DefaultClient
-	}
-	jwksURI, err := discoverJWKSURI(ctx, issuer, client)
-	if err != nil {
-		return nil, err
-	}
-	if cacheTTL == 0 {
-		cacheTTL = time.Hour
-	}
-	return &jwksKeySet{
-		jwksURI: jwksURI,
-		client:  client,
-		ttl:     cacheTTL,
-		now:     time.Now,
-	}, nil
+	mu          sync.RWMutex
+	keys        map[string][]jose.JSONWebKey
+	fetchedAt   time.Time
+	lastAttempt time.Time
 }
 
 // NewJWKSKeySet builds a JWKS-backed KeySet from an explicit JWKS URI, skipping
@@ -272,6 +286,75 @@ func NewJWKSKeySet(jwksURI string, client *http.Client, cacheTTL time.Duration) 
 		cacheTTL = time.Hour
 	}
 	return &jwksKeySet{jwksURI: jwksURI, client: client, ttl: cacheTTL, now: time.Now}
+}
+
+// lazyKeySet defers OIDC discovery until the first token has to be checked, and
+// retries it — rate-limited — until it succeeds.
+//
+// Discovering at startup makes the service's liveness depend on the identity
+// provider's: an IdP that is a few seconds behind in a co-ordinated restart
+// turns into a crash-looping backup service, which is far harder to diagnose
+// than an endpoint that answers "the identity provider cannot be reached".
+type lazyKeySet struct {
+	issuer string
+	client *http.Client
+	ttl    time.Duration
+	logger *slog.Logger
+	now    func() time.Time
+
+	mu          sync.Mutex
+	inner       *jwksKeySet
+	lastAttempt time.Time
+}
+
+var _ KeySet = (*lazyKeySet)(nil)
+
+// NewLazyKeySet returns a KeySet that performs OIDC discovery on first use. It
+// never fails at construction, so an unavailable identity provider delays
+// authentication instead of preventing startup.
+func NewLazyKeySet(issuer string, client *http.Client, cacheTTL time.Duration, logger *slog.Logger) KeySet {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	if cacheTTL == 0 {
+		cacheTTL = time.Hour
+	}
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	return &lazyKeySet{issuer: issuer, client: client, ttl: cacheTTL, logger: logger, now: time.Now}
+}
+
+// Key resolves the JWKS endpoint if that has not happened yet, then delegates.
+func (l *lazyKeySet) Key(ctx context.Context, keyID string) ([]jose.JSONWebKey, error) {
+	inner, err := l.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return inner.Key(ctx, keyID)
+}
+
+func (l *lazyKeySet) resolve(ctx context.Context) (*jwksKeySet, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.inner != nil {
+		return l.inner, nil
+	}
+	now := l.now()
+	if !l.lastAttempt.IsZero() && now.Sub(l.lastAttempt) < minRefreshInterval {
+		return nil, fmt.Errorf("%w: discovery has not succeeded yet", ErrKeySetUnavailable)
+	}
+	l.lastAttempt = now
+
+	jwksURI, err := discoverJWKSURI(ctx, l.issuer, l.client)
+	if err != nil {
+		l.logger.Warn("could not discover the identity provider's keys; will retry", "issuer", l.issuer, "err", err)
+		return nil, fmt.Errorf("%w: %v", ErrKeySetUnavailable, err)
+	}
+	l.logger.Info("identity provider keys discovered", "issuer", l.issuer)
+	l.inner = &jwksKeySet{jwksURI: jwksURI, client: l.client, ttl: l.ttl, now: time.Now}
+	return l.inner, nil
 }
 
 func discoverJWKSURI(ctx context.Context, issuer string, client *http.Client) (string, error) {
@@ -301,26 +384,51 @@ func discoverJWKSURI(ctx context.Context, issuer string, client *http.Client) (s
 	return meta.JWKSURI, nil
 }
 
-// Key returns the keys matching keyID, fetching/refreshing the JWKS as needed.
+// Key returns the keys matching keyID, fetching or refreshing the JWKS when the
+// cache cannot answer and a fetch is due.
+//
+// An unknown key id inside the refresh window is answered from cache — with
+// nothing, which the validator turns into a 401. That is the negative cache: a
+// key the provider has genuinely just published is picked up within
+// minRefreshInterval, and a stream of made-up key ids costs the provider
+// nothing.
 func (k *jwksKeySet) Key(ctx context.Context, keyID string) ([]jose.JSONWebKey, error) {
-	if keys, ok := k.cached(keyID); ok {
+	keys, fresh := k.cached(keyID)
+	if fresh && len(keys) > 0 {
+		return keys, nil
+	}
+	if !k.beginRefresh() {
 		return keys, nil
 	}
 	if err := k.refresh(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrKeySetUnavailable, err)
 	}
-	keys, _ := k.cached(keyID)
+	keys, _ = k.cached(keyID)
 	return keys, nil
 }
 
+// cached returns the keys held for keyID and whether the cache is still within
+// its TTL. Expired entries are still returned: serving a slightly stale key
+// beats failing when the provider is briefly unreachable.
 func (k *jwksKeySet) cached(keyID string) ([]jose.JSONWebKey, bool) {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
-	if k.keys == nil || k.now().Sub(k.fetchedAt) > k.ttl {
+	if k.keys == nil {
 		return nil, false
 	}
-	keys, ok := k.keys[keyID]
-	return keys, ok
+	return k.keys[keyID], k.now().Sub(k.fetchedAt) <= k.ttl
+}
+
+// beginRefresh reports whether a fetch may happen now, recording the attempt.
+func (k *jwksKeySet) beginRefresh() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	now := k.now()
+	if !k.lastAttempt.IsZero() && now.Sub(k.lastAttempt) < minRefreshInterval {
+		return false
+	}
+	k.lastAttempt = now
+	return true
 }
 
 func (k *jwksKeySet) refresh(ctx context.Context) error {

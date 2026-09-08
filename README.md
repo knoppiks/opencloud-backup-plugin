@@ -68,6 +68,35 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
   deployment needs no second storage system. That Space must not be one an end
   user belongs to — see the runbook below.
 
+## Deployment preconditions
+
+Four things the service assumes. It checks each of them at startup and refuses to
+run rather than working in a way that looks fine and is not.
+
+- **TLS in front.** The listener speaks plain HTTP. A Space's Data Key is sent to
+  the server once, at key setup — that is the price of unattended backups, and it
+  is the only key material that ever crosses the wire (the Recovery Key never
+  does). Put the service behind an ingress that terminates TLS on the same origin
+  as OpenCloud, or set `TLS_CERT_FILE` and `TLS_KEY_FILE` and let it terminate
+  TLS itself.
+- **Exactly one instance.** Two instances against one state Space can mark each
+  other's runs failed and back up the same Space twice, so the manifest deploys
+  with `strategy: Recreate` — a rolling update would run two by design. Each
+  instance also announces itself in the state Space and refuses to start while
+  another one is live.
+- **A memory-backed work directory.** `BACKUP_WORK_DIR` holds kopia's per-run
+  cache; the manifest mounts it as an `emptyDir` with `medium: Memory` so nothing
+  about a run can outlive the pod. Set `BACKUP_WORK_DIR_ALLOW_DISK=true` to
+  accept a disk-backed one. Target credentials are not written there under any
+  circumstances — they exist only in process memory.
+- **Durable state.** `STATE_SPACE_ID` is required (see below). A deployment that
+  really wants throwaway state sets `STATE_BACKEND=memory` and accepts that a
+  restart discards every schedule, every run record and every wrapped Data Key.
+
+`OIDC_AUDIENCE` is required alongside `OIDC_ISSUER`. One OpenCloud issuer signs
+tokens for several applications, so without it a token minted for something else
+opens this API.
+
 ## Deployment: the state Space
 
 The service needs one OpenCloud Space of its own, and it is picky about which,
@@ -88,9 +117,10 @@ wrapped target credentials, never plaintext keys. Records whose loss cannot be
 repaired are written append-only: a new version each time, the previous one left
 untouched, so a crash mid-write cannot destroy one.
 
-Without `STATE_SPACE_ID` the service runs with in-memory state and says so
-loudly at startup. Schedules, history and key envelopes then die with the
-process; that mode is for smoke tests only.
+The service **refuses to start** without `STATE_SPACE_ID`. Setting
+`STATE_BACKEND=memory` instead runs it with in-memory state — schedules, history
+and key envelopes then die with the process, which is a smoke-test mode and
+nothing else.
 
 ## Who may do what
 
@@ -206,6 +236,9 @@ Users are unaffected and need do nothing.
 
 - **The Recovery Key is the whole story.** The server cannot reconstruct it. Lost
   key plus lost server means lost data — store it in a password manager now.
+- **History has a floor.** Retention can be shortened but not switched off: at
+  least a week is always kept. Depth is what makes ransomware survivable, and it
+  is not something a browser session should be able to give away.
 - Every backup run republishes the encrypted key envelopes to the target: the
   user's recovery envelope, so a Take-Out is always self-contained, and the
   service's own envelope, so losing the state Space costs a re-configuration

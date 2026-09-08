@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -128,8 +129,16 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "target_id is required")
 		return
 	}
+	// Zero means "use the default". Anything else has a floor: retention depth
+	// is what survives ransomware, and a session is not enough authority to
+	// remove it (decisions.md threat model).
 	if req.RetentionDays < 0 {
 		writeError(w, http.StatusBadRequest, "bad_request", "retention_days must not be negative")
+		return
+	}
+	if req.RetentionDays > 0 && time.Duration(req.RetentionDays)*24*time.Hour < spacecfg.MinRetentionWindow {
+		writeError(w, http.StatusBadRequest, "bad_request",
+			fmt.Sprintf("retention_days must be at least %d", int(spacecfg.MinRetentionWindow.Hours()/24)))
 		return
 	}
 

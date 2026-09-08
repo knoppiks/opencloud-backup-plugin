@@ -146,6 +146,19 @@ than drifting.
     The server cannot see the Recovery Key, so how hard it is to derive from is
     the only property of the client's ceremony it can check.
 
+20. **A grant that cannot be evaluated is refused, not guessed.** Group
+    membership is resolved from OpenCloud's graph API; when that is unavailable
+    the affected callers get an error rather than a decision. See "Amendments
+    from the September 2026 review — R3".
+
+21. **A bearer token is accepted only if it was issued for this service.**
+    Audience is required configuration and expiry is required in the token. See
+    "Amendments from the September 2026 review — R5".
+
+22. **Retention has a floor.** A member may shorten their Space's history, but
+    not below a week: depth is the defence the threat model rests on, and a
+    browser session is not enough authority to remove it. Same amendment section.
+
 ---
 
 ## Still open (must be resolved in Phase 0, may amend decisions)
@@ -554,6 +567,61 @@ decision.
   newest manifest of any kind would let a mid-upload checkpoint stand in for it,
   and the last genuinely restorable backup be deleted underneath it — retention
   destroying exactly what it promises to keep.
+
+### Amendments from the September 2026 review — R5 (deployment hardening)
+
+- **#14 made exact: target credentials never touch a filesystem.** kopia will not
+  open a repository without a local config file, and `repo.Connect` serialises the
+  storage's connection settings into it — for S3, the secret access key in clear
+  text. The repository is therefore connected through a **storage handle**: a
+  type registered with kopia's own `blob.AddSupportedStorage` whose serialised
+  form is a random per-run token resolved against an in-process registry. The
+  credentials exist in exactly two places — the TW-wrapped record in the state
+  Space, and process memory for the duration of a run — on any filesystem, after
+  any kind of crash.
+  *Also true of kopia's per-run cache, by a different mechanism:* it holds
+  repository content (ciphertext), so `BACKUP_WORK_DIR` must be memory-backed and
+  the service refuses to start otherwise unless
+  `BACKUP_WORK_DIR_ALLOW_DISK=true`. Run directories left by a killed process are
+  swept at startup.
+
+- **#16's single-instance constraint is enforced, not just documented.** The
+  manifest deploys `strategy: Recreate` — the default rolling update ran two
+  instances against one state Space on every image update — and each instance
+  writes a short-lived record announcing itself, refusing to start while another
+  one is live. **This is not a lock**: the same missing compare-and-set that stops
+  the run lease from being one stops this from being one. It catches the rollout
+  case, which is the one that actually happens.
+
+- **Durable state is required.** `STATE_SPACE_ID` unset used to mean "keep
+  everything in memory, with a warning". The loss is silent, arrives on an
+  ordinary restart, and includes every wrapped Data Key; a warning in a log is not
+  consent. A throwaway instance now says `STATE_BACKEND=memory` explicitly.
+
+- **New decision #21 (locked): a token is accepted only if it was issued for this
+  service.** `OIDC_AUDIENCE` is required whenever `OIDC_ISSUER` is set — one
+  OpenCloud issuer signs tokens for several clients, so "signed by the right
+  issuer" says nothing about who the token was for — and a token without an `exp`
+  claim is rejected rather than being valid forever. JWKS refetches are
+  rate-limited so an unknown key id, which anyone can mint unauthenticated, cannot
+  be turned into load on the household's identity provider.
+  *Corollary:* discovery moved to first use with background retry. An identity
+  provider that is a few seconds late in a co-ordinated restart now costs a 503 on
+  authenticated routes, not a crash-looping backup service.
+
+- **New decision #22 (locked): retention has a floor of 7 days.** Retention depth
+  is the entire defence against slow-burn ransomware, and setting it required no
+  more than a member's browser session — which, in the threat this project exists
+  for, is what the attacker has. The API refuses a shorter window with an
+  explanation; `EffectiveRetentionWindow` also raises anything below the floor,
+  so a record written before the floor existed cannot make prune delete history
+  the API would not have given up.
+
+- **The listener is plain HTTP and that is now stated where a deployer reads
+  it** (README preconditions, manifest comment): it must sit behind a
+  TLS-terminating ingress on the same origin as OpenCloud, because the DK crosses
+  it once at setup. `TLS_CERT_FILE`/`TLS_KEY_FILE` cover deployments with nothing
+  in front of them.
 
 ---
 

@@ -6,10 +6,19 @@ metadata:
     app.kubernetes.io/name: opencloud-backup
     app.kubernetes.io/component: backupd
 spec:
-  # Single replica for v1: the worker holds per-run repo state and maintenance
-  # ownership (phase-0-findings.md Spike 2). Scaling out needs coordination and
-  # is out of scope for Phase 1.
+  # Single replica, enforced through the rollout as well as the count. The
+  # backup service must never run twice against one state Space (decisions.md
+  # #16): the state backend has no compare-and-set, so two instances can mark
+  # each other's runs failed and dispatch the same Space at once. The default
+  # RollingUpdate strategy starts the new pod before stopping the old one and
+  # would do exactly that on every image update.
+  #
+  # The service also checks this itself and REFUSES TO START while another
+  # instance's record is live, so a mistake here costs a failed rollout rather
+  # than a corrupted run history.
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: opencloud-backup
@@ -20,6 +29,10 @@ spec:
         app.kubernetes.io/name: opencloud-backup
         app.kubernetes.io/component: backupd
     spec:
+      # Long enough for the scheduler to drain (30 s) and HTTP to finish (10 s),
+      # plus margin. A run cut short by the deadline fails through the normal
+      # path and is recovered from its lease on the next start.
+      terminationGracePeriodSeconds: 60
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -39,13 +52,27 @@ spec:
         env:
         - name: BACKUPD_ADDR
           value: ":8080"
+        # THE LISTENER IS PLAIN HTTP. A Space's Data Key crosses it once, at key
+        # setup, so it MUST sit behind a TLS-terminating ingress on the same
+        # origin as OpenCloud. A deployment with nothing in front of it sets
+        # TLS_CERT_FILE and TLS_KEY_FILE instead (both, or neither).
+        # - name: TLS_CERT_FILE
+        #   value: "/etc/backupd-tls/tls.crt"
+        # - name: TLS_KEY_FILE
+        #   value: "/etc/backupd-tls/tls.key"
         # Phase 2 — auth & space enumeration.
         # OIDC: the backend validates OpenCloud IDP bearer tokens (JWKS discovery
-        # from the issuer). OIDC_AUDIENCE is optional (enforced only when set).
+        # from the issuer, retried in the background — an IdP that is not up yet
+        # answers 503 on authenticated routes instead of preventing startup).
+        #
+        # OIDC_AUDIENCE is REQUIRED whenever OIDC_ISSUER is set: one OpenCloud
+        # issuer mints tokens for several clients, and without it a token issued
+        # for any of them is accepted here. Set it to the client id the browser
+        # UI authenticates with.
         - name: OIDC_ISSUER
           value: "https://cloud.example.org"
-        # - name: OIDC_AUDIENCE
-        #   value: "backup-api"
+        - name: OIDC_AUDIENCE
+          value: "REPLACE_ME_WITH_THE_OIDC_CLIENT_ID"
         # Admin detection (decisions.md #13). Primary: graph appRoleAssignments —
         # set OC_BASE_URL; OC_ADMIN_APP_ROLE_ID defaults to the pinned 7.3.0 Admin
         # role id (phase-0-findings.md) and only needs overriding on other builds.
@@ -64,12 +91,23 @@ spec:
         # CS3 read path (decisions.md #11). The worker authenticates with an
         # OpenCloud service account; the id/secret are Secret-backed and are the
         # same custody class as the wrapping keys.
+        #
+        # The service account is NOT optional: the worker reads every Space with
+        # it and the state Space lives behind it. Its secret grants owner scope
+        # on every Space in the deployment — the highest-value credential here,
+        # ahead of the wrapping keys, because it reaches plaintext.
         - name: CS3_GATEWAY_ADDR
           value: "opencloud-gateway:9142"
-        # - name: OC_SERVICE_ACCOUNT_ID
-        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: service-account-id } }
-        # - name: OC_SERVICE_ACCOUNT_SECRET
-        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: service-account-secret } }
+        - name: OC_SERVICE_ACCOUNT_ID
+          valueFrom:
+            secretKeyRef:
+              name: opencloud-backup-wrap-keys
+              key: service-account-id
+        - name: OC_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: opencloud-backup-wrap-keys
+              key: service-account-secret
         # Phase 3 — key service. The Server Runtime Wrap key wraps per-Space Data
         # Keys so unattended runs are possible (decisions.md #1). Base64 of 32
         # random bytes. Cluster/KMS custody: never in the admin UI, never logged.
@@ -103,28 +141,39 @@ spec:
         #                                      (0 = one per CPU).
         #   BACKUP_UPLOAD_BYTES_PER_SECOND     bandwidth cap towards the target
         #   BACKUP_DOWNLOAD_BYTES_PER_SECOND   (0 = unlimited).
-        #   BACKUP_WORK_DIR                    parent of the per-run kopia
-        #                                      config/cache; defaults to /tmp.
         # - name: BACKUP_PARALLELISM
         #   value: "4"
         # - name: BACKUP_UPLOAD_BYTES_PER_SECOND
         #   value: "10485760"
+        #
+        # BACKUP_WORK_DIR is the parent of the per-run kopia config and cache. It
+        # MUST be memory-backed: the cache holds repository content, and nothing
+        # about a run should be recoverable from a disk after the pod is gone.
+        # The service REFUSES TO START otherwise, unless
+        # BACKUP_WORK_DIR_ALLOW_DISK=true says the operator accepts it.
+        # (Target credentials are never written there at all — they live only in
+        # process memory, decisions.md #14.)
         - name: BACKUP_WORK_DIR
-          value: "/tmp"
+          value: "/work"
         # Phase 6 — durable state. The service keeps its own memory (schedules,
         # run history, wrapped key envelopes, target records) in a dedicated
         # OpenCloud Space reached over CS3 with the service account. That Space
         # must be one NO END USER IS A MEMBER OF: a member could delete the
         # service's state, and this is not a user's document. The service checks
         # this at startup and REFUSES TO START against a personal Space or one
-        # with any member grant. Without a Space id at all it falls back to
-        # in-memory state and says so at startup — schedules, history and key
-        # envelopes then die with the pod. See the state-Space runbook in
-        # README.md before setting this.
+        # with any member grant.
+        #
+        # It is REQUIRED. Without it the service would keep schedules, history
+        # and every wrapped Data Key in memory and lose them on the next pod
+        # restart — silently, long after the ceremony everyone watched. A
+        # throwaway instance says so explicitly with STATE_BACKEND=memory.
+        # See the state-Space runbook in README.md before setting this.
         - name: STATE_SPACE_ID
-          value: ""
+          value: "REPLACE_ME_WITH_THE_STATE_SPACE_ID"
         # - name: STATE_PREFIX
         #   value: ".backup-service-state"
+        # - name: STATE_BACKEND
+        #   value: "memory"   # smoke tests only: nothing survives a restart
         # Phase 6 — scheduling. All optional.
         #   SCHEDULE_TIMEZONE          schedules are local time to the family,
         #                              e.g. "Europe/Berlin" (default UTC).
@@ -194,11 +243,24 @@ spec:
           capabilities:
             drop: [ "ALL" ]
         volumeMounts:
+        - name: work
+          mountPath: /work
         - name: tmp
           mountPath: /tmp
       volumes:
-      # kopia connect writes a local config + cache per run; a writable tmp is
-      # required since the root filesystem is read-only
+      # kopia connect writes a local config + cache per run; a writable directory
+      # is required since the root filesystem is read-only
       # (phase-0-findings.md Spike 2, "Repo connect is stateful on local disk").
+      #
+      # Memory-backed on purpose: the cache holds repository content, and a
+      # memory medium means a killed pod leaves nothing behind to find. The
+      # service checks this at startup. sizeLimit counts against the pod's memory
+      # limit, so raise both together for very large Spaces.
+      - name: work
+        emptyDir:
+          medium: Memory
+          sizeLimit: 256Mi
       - name: tmp
-        emptyDir: { }
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Mi

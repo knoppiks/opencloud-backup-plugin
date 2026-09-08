@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +23,8 @@ type testIDP struct {
 	keyID  string
 	priv   *rsa.PrivateKey
 	server *httptest.Server
+	// onJWKS, when set, is called on every JWKS request so tests can count them.
+	onJWKS func()
 }
 
 func newTestIDP(t *testing.T) *testIDP {
@@ -39,6 +43,9 @@ func newTestIDP(t *testing.T) *testIDP {
 		})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
+		if idp.onJWKS != nil {
+			idp.onJWKS()
+		}
 		set := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
 			Key: priv.Public(), KeyID: idp.keyID, Algorithm: string(jose.RS256), Use: "sig",
 		}}}
@@ -96,10 +103,7 @@ func (idp *testIDP) mintWrongKey(t *testing.T, sub string) string {
 
 func newValidator(t *testing.T, idp *testIDP, aud string) TokenValidator {
 	t.Helper()
-	ks, err := DiscoverKeySet(context.Background(), idp.issuer, idp.server.Client(), time.Hour)
-	if err != nil {
-		t.Fatalf("discover keyset: %v", err)
-	}
+	ks := NewLazyKeySet(idp.issuer, idp.server.Client(), time.Hour, nil)
 	v, err := NewOIDCValidator(OIDCConfig{Issuer: idp.issuer, Audience: aud, KeySet: ks})
 	if err != nil {
 		t.Fatalf("new validator: %v", err)
@@ -142,10 +146,10 @@ func TestOIDCValidate_WrongAudience(t *testing.T) {
 
 func TestOIDCValidate_WrongIssuer(t *testing.T) {
 	idp := newTestIDP(t)
-	v := newValidator(t, idp, "")
+	v := newValidator(t, idp, "backup-api")
 	// Mint with a bogus issuer by using a second IDP's signer would change keys;
 	// instead override the iss claim directly.
-	tok := idp.mint(t, "user-1", "", time.Now().Add(time.Hour), map[string]any{
+	tok := idp.mint(t, "user-1", "backup-api", time.Now().Add(time.Hour), map[string]any{
 		"iss": "https://evil.example.org",
 	})
 	if _, err := v.Validate(context.Background(), tok); err == nil {
@@ -155,7 +159,7 @@ func TestOIDCValidate_WrongIssuer(t *testing.T) {
 
 func TestOIDCValidate_BadSignature(t *testing.T) {
 	idp := newTestIDP(t)
-	v := newValidator(t, idp, "")
+	v := newValidator(t, idp, "backup-api")
 	tok := idp.mintWrongKey(t, "user-1")
 	if _, err := v.Validate(context.Background(), tok); err == nil {
 		t.Fatal("token signed with wrong key must be rejected")
@@ -164,15 +168,130 @@ func TestOIDCValidate_BadSignature(t *testing.T) {
 
 func TestOIDCValidate_Empty(t *testing.T) {
 	idp := newTestIDP(t)
-	v := newValidator(t, idp, "")
+	v := newValidator(t, idp, "backup-api")
 	if _, err := v.Validate(context.Background(), ""); err == nil {
 		t.Fatal("empty token must be rejected")
 	}
 }
 
+// One OpenCloud issuer mints tokens for several clients. "Signed by the right
+// issuer" therefore says nothing about who the token was for.
+func TestNewOIDCValidator_RequiresAnAudience(t *testing.T) {
+	idp := newTestIDP(t)
+	ks := NewLazyKeySet(idp.issuer, idp.server.Client(), time.Hour, nil)
+	if _, err := NewOIDCValidator(OIDCConfig{Issuer: idp.issuer, KeySet: ks}); err == nil {
+		t.Fatal("a validator without an audience must be refused")
+	}
+	if _, err := NewOIDCValidator(OIDCConfig{Audience: "backup-api", KeySet: ks}); err == nil {
+		t.Fatal("a validator without an issuer must be refused")
+	}
+	if _, err := NewOIDCValidator(OIDCConfig{Issuer: idp.issuer, Audience: "backup-api"}); err == nil {
+		t.Fatal("a validator without a key set must be refused")
+	}
+}
+
+// go-jose validates expiry only when the claim is present, so a token without
+// one would be valid forever.
+func TestOIDCValidate_TokenWithoutExpiry(t *testing.T) {
+	idp := newTestIDP(t)
+	v := newValidator(t, idp, "backup-api")
+
+	tok := idp.mint(t, "user-1", "backup-api", time.Now().Add(time.Hour), map[string]any{"exp": nil})
+	_, err := v.Validate(context.Background(), tok)
+	if err == nil {
+		t.Fatal("a token with no expiry must be rejected")
+	}
+	if !strings.Contains(err.Error(), "no expiry") {
+		t.Fatalf("err = %v, want the rejection to be about the missing expiry", err)
+	}
+}
+
+// Anyone can put an unknown key id in a token's header without being
+// authenticated. Refetching the JWKS for each one turns that into load on the
+// household's identity provider.
+func TestJWKSKeySet_UnknownKeyIDIsNegativelyCached(t *testing.T) {
+	idp := newTestIDP(t)
+	var fetches int
+	idp.onJWKS = func() { fetches++ }
+
+	ks := NewJWKSKeySet(idp.issuer+"/jwks", idp.server.Client(), time.Hour)
+	ctx := context.Background()
+
+	for range 5 {
+		keys, err := ks.Key(ctx, "no-such-key")
+		if err != nil {
+			t.Fatalf("Key: %v", err)
+		}
+		if len(keys) != 0 {
+			t.Fatal("an unknown key id must resolve to nothing")
+		}
+	}
+	if fetches != 1 {
+		t.Fatalf("the identity provider was asked %d times, want 1", fetches)
+	}
+
+	// A key the provider does publish is still found, from the same one fetch.
+	keys, err := ks.Key(ctx, idp.keyID)
+	if err != nil {
+		t.Fatalf("Key: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("known key id resolved to %d keys", len(keys))
+	}
+}
+
+// A provider that is not up yet must delay authentication, not startup: a
+// crash-looping backup service is harder to diagnose than a 503.
+func TestLazyKeySet_RetriesDiscoveryAndSaysWhy(t *testing.T) {
+	ctx := context.Background()
+	idp := newTestIDP(t)
+
+	unreachable := NewLazyKeySet("http://127.0.0.1:1/idp", idp.server.Client(), time.Hour, nil)
+	if _, err := unreachable.Key(ctx, "any"); !errors.Is(err, ErrKeySetUnavailable) {
+		t.Fatalf("Key with the IdP down = %v, want ErrKeySetUnavailable", err)
+	}
+	// The retry is rate-limited, so the second attempt is answered from the
+	// failure rather than by hammering the provider.
+	if _, err := unreachable.Key(ctx, "any"); !errors.Is(err, ErrKeySetUnavailable) {
+		t.Fatalf("second Key = %v, want ErrKeySetUnavailable", err)
+	}
+
+	reachable := NewLazyKeySet(idp.issuer, idp.server.Client(), time.Hour, nil)
+	keys, err := reachable.Key(ctx, idp.keyID)
+	if err != nil {
+		t.Fatalf("Key once the IdP is reachable: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("resolved %d keys, want 1", len(keys))
+	}
+}
+
+// An unreachable identity provider is not the caller's fault: 503, not 401, so
+// a client retries instead of discarding a good session.
+func TestAuthenticate_AnswersUnavailableWhenKeysCannotBeFetched(t *testing.T) {
+	ks := NewLazyKeySet("http://127.0.0.1:1/idp", nil, time.Hour, nil)
+	v, err := NewOIDCValidator(OIDCConfig{Issuer: "http://127.0.0.1:1/idp", Audience: "backup-api", KeySet: ks})
+	if err != nil {
+		t.Fatalf("new validator: %v", err)
+	}
+	srv := NewServer(WithTokenValidator(v))
+
+	idp := newTestIDP(t)
+	tok := idp.mint(t, "user-1", "backup-api", time.Now().Add(time.Hour), nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/spaces", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
 func TestAuthenticateMiddleware(t *testing.T) {
 	idp := newTestIDP(t)
-	v := newValidator(t, idp, "")
+	v := newValidator(t, idp, "backup-api")
 	srv := NewServer(WithTokenValidator(v))
 
 	// Reach an authed route: /api/v1/spaces (no space reader -> 503, but only
@@ -197,7 +316,7 @@ func TestAuthenticateMiddleware(t *testing.T) {
 	})
 
 	t.Run("valid token passes auth", func(t *testing.T) {
-		tok := idp.mint(t, "user-1", "", time.Now().Add(time.Hour), nil)
+		tok := idp.mint(t, "user-1", "backup-api", time.Now().Add(time.Hour), nil)
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/spaces", nil)
 		req.Header.Set("Authorization", "Bearer "+tok)
