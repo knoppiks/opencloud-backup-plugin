@@ -174,11 +174,22 @@ spec:
         #   value: ".backup-service-state"
         # - name: STATE_BACKEND
         #   value: "memory"   # smoke tests only: nothing survives a restart
-        # Phase 6 — scheduling. All optional.
-        #   SCHEDULE_TIMEZONE          schedules are local time to the family,
-        #                              e.g. "Europe/Berlin" (default UTC).
+        # Phase 6 — scheduling.
+        #
+        # TZ is the container's timezone and, by default, the one schedules are
+        # read in: "nightly at 02:30" means the family's night, not the
+        # server's idea of it. Set it to the household's zone. It is spelled out
+        # here rather than left unset because an unset TZ means UTC, and a
+        # backup that runs at 02:30 UTC in Berlin runs at 03:30 or 04:30 —
+        # quietly, and differently in summer.
+        - name: TZ
+          value: "UTC"
+        # The rest are optional.
+        #   SCHEDULE_TIMEZONE          overrides TZ for schedules only, e.g.
+        #                              when the logs should stay in UTC.
         #   SCHEDULER_MAX_CONCURRENT   simultaneous scheduled runs (default 2).
-        #   JOB_HISTORY_DAYS           how long finished runs are kept
+        #   JOB_HISTORY_DAYS           how long finished runs — and the
+        #                              notifications about them — are kept
         #                              (default 365; time-based, like every
         #                              retention here — decisions.md #10).
         # - name: SCHEDULE_TIMEZONE

@@ -95,6 +95,22 @@ func (m *MemoryStore) ListRecent(_ context.Context, spaceID string, limit int) (
 	return applyLimit(out, limit), nil
 }
 
+// ListRunning returns every job that never reached a terminal state, newest
+// first.
+func (m *MemoryStore) ListRunning(_ context.Context) ([]Job, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]Job, 0, len(m.jobs))
+	for _, j := range m.jobs {
+		if !j.State.Terminal() {
+			out = append(out, j)
+		}
+	}
+	sortNewestFirst(out)
+	return out, nil
+}
+
 // Finish records a terminal state and the run's outcome.
 func (m *MemoryStore) Finish(_ context.Context, id string, out Outcome) error {
 	if !out.State.Terminal() {

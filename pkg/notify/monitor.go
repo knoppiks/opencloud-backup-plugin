@@ -99,11 +99,12 @@ func NewMonitor(deps MonitorDeps, opts MonitorOptions) (*Monitor, error) {
 // Sweep checks every scheduled Space and notifies about the stale ones. It is
 // safe to call on every scheduler tick: re-notification is rate-limited.
 func (m *Monitor) Sweep(ctx context.Context, now time.Time) {
-	configs, err := m.configs.List(ctx)
+	configs, unreadable, err := m.configs.List(ctx)
 	if err != nil {
 		m.logger.Error("could not read space configurations for staleness check", "err", err)
 		return
 	}
+	m.reportUnreadable(ctx, len(unreadable), now)
 
 	for _, cfg := range configs {
 		if !cfg.Enabled {
@@ -129,6 +130,34 @@ func (m *Monitor) Sweep(ctx context.Context, now time.Time) {
 		if _, err := m.notifier.SpaceEvent(ctx, KindBackupStale, cfg.SpaceID, staleMessage(since)); err != nil {
 			m.logger.Error("could not record stale-backup notification", "space", cfg.SpaceID, "err", err)
 		}
+	}
+}
+
+// reportUnreadable tells the operator that stored records cannot be decoded.
+//
+// A Space whose configuration is corrupt drops out of the schedule and out of
+// this sweep — it is not stale, it is invisible, and nobody would ever be told.
+// The count is all the operator gets: the document's key contains the space id,
+// and an operator event must not name a Space (decisions.md #15). The log line
+// the scheduler writes carries the key, for whoever has the log.
+func (m *Monitor) reportUnreadable(ctx context.Context, count int, now time.Time) {
+	if count == 0 {
+		return
+	}
+	m.logger.Error("state documents could not be read", "count", count)
+
+	notified, err := m.notifiedRecentlyToOperator(ctx, KindStateUnreadable, now)
+	if err != nil {
+		m.logger.Error("could not read operator notification history", "err", err)
+		return
+	}
+	if notified {
+		return
+	}
+	msg := fmt.Sprintf("%d stored record(s) could not be read. "+
+		"Spaces whose configuration is affected are not being backed up.", count)
+	if _, err := m.notifier.OperatorEvent(ctx, KindStateUnreadable, msg); err != nil {
+		m.logger.Error("could not record unreadable-state notification", "err", err)
 	}
 }
 
@@ -172,6 +201,22 @@ func (m *Monitor) notifiedRecently(ctx context.Context, spaceID string, now time
 	}
 	for _, e := range events {
 		if e.Kind != KindBackupStale {
+			continue
+		}
+		return now.Sub(e.CreatedAt) < m.opts.RepeatAfter, nil
+	}
+	return false, nil
+}
+
+// notifiedRecentlyToOperator reports whether the operator was already told
+// about this kind of problem within the repeat window.
+func (m *Monitor) notifiedRecentlyToOperator(ctx context.Context, kind Kind, now time.Time) (bool, error) {
+	events, err := m.events.ListOperator(ctx, historyLookback)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range events {
+		if e.Kind != kind {
 			continue
 		}
 		return now.Sub(e.CreatedAt) < m.opts.RepeatAfter, nil

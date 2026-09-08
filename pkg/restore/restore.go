@@ -79,6 +79,9 @@ type Deps struct {
 	Clock Clock
 	// RunTimeout bounds a background run started by StartRestore.
 	RunTimeout time.Duration
+	// Outcome tunes how a run's terminal outcome is written. The zero value is
+	// the production setting; tests shorten the retry backoff.
+	Outcome jobs.RecordOptions
 }
 
 // Clock supplies the current time.
@@ -174,7 +177,6 @@ func (r *Runner) RunRestore(ctx context.Context, spaceID string, id snapshot.Sna
 	if err != nil {
 		return Result{}, err
 	}
-	defer pending.release()
 	return r.finish(ctx, pending)
 }
 
@@ -190,7 +192,6 @@ func (r *Runner) StartRestore(ctx context.Context, spaceID string, id snapshot.S
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.runTimeout())
 	go func() {
 		defer cancel()
-		defer pending.release()
 		_, _ = r.finish(runCtx, pending)
 	}()
 	return pending.job.ID, nil
@@ -244,21 +245,20 @@ func (r *Runner) begin(ctx context.Context, spaceID string, id snapshot.Snapshot
 	}, nil
 }
 
-// finish performs the restore and records the outcome.
+// finish performs the restore, records the outcome, and gives the run lock
+// back. It owns the lock from the moment begin returned it.
 func (r *Runner) finish(ctx context.Context, pending run) (Result, error) {
 	stats, err := r.restoreSnapshot(ctx, pending)
 	if err != nil {
-		r.fail(ctx, pending.job.ID, pending.space.ID, err)
+		r.fail(ctx, pending, err)
 		return Result{}, err
 	}
 
-	if err := r.deps.Jobs.Finish(ctx, pending.job.ID, jobs.Outcome{
+	r.settle(ctx, pending, jobs.Outcome{
 		State:      jobs.StateSucceeded,
 		FileCount:  stats.files,
 		TotalBytes: stats.bytes,
-	}); err != nil {
-		r.deps.Logger.Warn("could not record job success", "job", pending.job.ID, "err", err)
-	}
+	})
 
 	finishedAt := r.deps.Clock.Now()
 	r.deps.Logger.Info("restore run succeeded",
@@ -452,14 +452,23 @@ func (r *Runner) unwrapDataKey(spaceID string) ([]byte, error) {
 }
 
 // fail records a sanitized failure on the job record.
-func (r *Runner) fail(ctx context.Context, jobID, spaceID string, cause error) {
-	if err := r.deps.Jobs.Finish(ctx, jobID, jobs.Outcome{
-		State: jobs.StateFailed,
-		Error: userMessage(cause),
-	}); err != nil {
-		r.deps.Logger.Warn("could not record job failure", "job", jobID, "err", err)
+func (r *Runner) fail(ctx context.Context, pending run, cause error) {
+	r.settle(ctx, pending, jobs.Outcome{State: jobs.StateFailed, Error: userMessage(cause)})
+	r.deps.Logger.Error("restore run failed", "space", pending.space.ID, "job", pending.job.ID, "err", cause)
+}
+
+// settle records the run's terminal outcome and then, and only then, drops the
+// run lock. Losing that write with the lock already released would leave the
+// Space looking permanently busy with nothing left to recover from; keeping the
+// lease instead lets it expire and be recovered. Same reasoning, and the same
+// shape, as the backup runner.
+func (r *Runner) settle(ctx context.Context, pending run, out jobs.Outcome) {
+	if err := jobs.RecordOutcome(ctx, r.deps.Jobs, pending.job.ID, out, r.deps.Outcome); err != nil {
+		r.deps.Logger.Error("could not record the run's outcome; keeping the run lock so the run is recovered",
+			"space", pending.space.ID, "job", pending.job.ID, "err", err)
+		return
 	}
-	r.deps.Logger.Error("restore run failed", "space", spaceID, "job", jobID, "err", cause)
+	pending.release()
 }
 
 // userMessage maps an internal error onto text safe to store and show.

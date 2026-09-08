@@ -66,6 +66,23 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &nf)
 }
 
+// ErrMalformed is returned when a stored document cannot be decoded.
+//
+// It names the key and never the content: a document may hold wrapped key
+// material, and an error is the one place bytes escape by accident. It is a
+// distinct type because "the record is corrupt" and "the store is unreachable"
+// call for different reactions — one is reported and skipped, the other is
+// retried.
+type ErrMalformed struct{ Key string }
+
+func (e ErrMalformed) Error() string { return "state: malformed document at key " + e.Key }
+
+// IsMalformed reports whether err is a decode failure from any Store.
+func IsMalformed(err error) bool {
+	var m ErrMalformed
+	return errors.As(err, &m)
+}
+
 // ErrExists is returned when a create would overwrite an existing value.
 type ErrExists struct{ Key string }
 
@@ -176,7 +193,7 @@ func (d *Documents[T]) Get(ctx context.Context, id ...string) (T, error) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		// The value, not the error, is corrupt; never echo the bytes — a
 		// document may hold wrapped key material.
-		return zero, fmt.Errorf("state: decode %s: malformed document", d.prefix)
+		return zero, ErrMalformed{Key: d.Key(id...)}
 	}
 	return v, nil
 }
@@ -190,7 +207,7 @@ func (d *Documents[T]) GetKey(ctx context.Context, key string) (T, error) {
 	}
 	var v T
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return zero, fmt.Errorf("state: decode %s: malformed document", d.prefix)
+		return zero, ErrMalformed{Key: key}
 	}
 	return v, nil
 }
@@ -287,12 +304,13 @@ func (d *Documents[T]) IDs(ctx context.Context) ([]string, error) {
 }
 
 // All decodes every document below an id path, in key order. A document that
-// fails to decode is skipped rather than failing the whole listing: one corrupt
-// record must not make a Space's entire history unreadable.
-func (d *Documents[T]) All(ctx context.Context, id ...string) ([]T, error) {
+// fails to decode is left out and reported by key in unreadable: one corrupt
+// record must not make a Space's entire history unreadable, and it must not
+// vanish without trace either.
+func (d *Documents[T]) All(ctx context.Context, id ...string) (values []T, unreadable []string, err error) {
 	keys, err := d.Keys(ctx, id...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sort.Strings(keys)
 
@@ -300,12 +318,14 @@ func (d *Documents[T]) All(ctx context.Context, id ...string) ([]T, error) {
 	for _, k := range keys {
 		v, err := d.GetKey(ctx, k)
 		if err != nil {
-			if IsNotFound(err) {
-				continue // deleted between listing and reading
+			if IsMalformed(err) {
+				unreadable = append(unreadable, k)
 			}
-			continue // malformed; skipped deliberately
+			// Anything else means the document went away between listing and
+			// reading, which is not worth reporting.
+			continue
 		}
 		out = append(out, v)
 	}
-	return out, nil
+	return out, unreadable, nil
 }

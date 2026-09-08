@@ -86,6 +86,7 @@ func (c *Client) Delete(ctx context.Context, space Space, relPath string) error 
 	if err != nil {
 		return fmt.Errorf("cs3 delete: %w", err)
 	}
+	c.noteStatus(res.GetStatus())
 	switch res.GetStatus().GetCode() {
 	case rpc.Code_CODE_OK:
 		return nil
@@ -117,6 +118,7 @@ func (c *Client) MakeDir(ctx context.Context, space Space, relDir string) error 
 	if err != nil {
 		return fmt.Errorf("cs3 create container: %w", err)
 	}
+	c.noteStatus(res.GetStatus())
 	switch res.GetStatus().GetCode() {
 	case rpc.Code_CODE_OK, rpc.Code_CODE_ALREADY_EXISTS:
 		return nil
@@ -155,7 +157,7 @@ func (c *Client) Upload(ctx context.Context, space Space, relPath string, size i
 	if code := res.GetStatus().GetCode(); code == rpc.Code_CODE_ALREADY_EXISTS {
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, rel)
 	}
-	if err := statusErr(res.GetStatus(), "InitiateFileUpload"); err != nil {
+	if err := c.status(res.GetStatus(), "InitiateFileUpload"); err != nil {
 		return err
 	}
 
@@ -167,8 +169,21 @@ func (c *Client) Upload(ctx context.Context, space Space, relPath string, size i
 }
 
 // put streams the body to the data gateway.
+//
+// The same inactivity deadline the download path uses applies here: a gateway
+// that stops accepting bytes stops the transport reading the body, no progress
+// is made, and the request is cancelled instead of hanging.
+//
+// It does not cover a *source* that blocks forever inside a single Read — Go's
+// transport waits for its write loop before returning, so cancelling cannot
+// unwedge it. That case belongs to the run timeout, which cancels the context
+// the source itself was opened with.
 func (c *Client) put(ctx context.Context, endpoint, accessToken, transferToken string, size int64, modTime time.Time, body io.Reader) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, body)
+	reqCtx, cancel := context.WithCancel(ctx)
+	guard := newStallGuard(body, cancel, c.stallTimeout())
+	defer guard.stop()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPut, endpoint, guard)
 	if err != nil {
 		return fmt.Errorf("cs3 upload request: %w", err)
 	}
@@ -184,6 +199,9 @@ func (c *Client) put(ctx context.Context, endpoint, accessToken, transferToken s
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if guard.stalled() {
+			return fmt.Errorf("cs3 upload: %w", ErrTransferStalled)
+		}
 		return fmt.Errorf("cs3 upload: %w", err)
 	}
 	defer func() {
@@ -191,6 +209,9 @@ func (c *Client) put(ctx context.Context, endpoint, accessToken, transferToken s
 		_ = resp.Body.Close()
 	}()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		c.forgetToken()
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// Status only — the response body may echo internal detail.
 		return fmt.Errorf("cs3 upload: unexpected status %d", resp.StatusCode)

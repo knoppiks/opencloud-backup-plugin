@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 
 	"opencloud-backup-plugin/pkg/keys"
 )
@@ -104,4 +105,54 @@ func TestLoadWrapKeyRejectsMalformedValues(t *testing.T) {
 			}
 		})
 	}
+}
+
+// "Nightly at half past two" is about the family's night. The container's own
+// zone is the closest thing this process can know, and a deployment that sets
+// TZ has already said which zone it thinks in.
+func TestSchedulerOptions_DefaultsToTheContainerTimezone(t *testing.T) {
+	t.Setenv("TZ", "Europe/Berlin")
+	// Go reads TZ once, at first use; force the re-read this test depends on.
+	time.Local = mustLoad(t, "Europe/Berlin")
+
+	opts, err := schedulerOptions()
+	if err != nil {
+		t.Fatalf("schedulerOptions: %v", err)
+	}
+	if opts.Location.String() != "Europe/Berlin" {
+		t.Fatalf("location = %q, want the container's zone", opts.Location)
+	}
+}
+
+func TestSchedulerOptions_ExplicitTimezoneWins(t *testing.T) {
+	time.Local = mustLoad(t, "Europe/Berlin")
+	t.Setenv("SCHEDULE_TIMEZONE", "America/New_York")
+
+	opts, err := schedulerOptions()
+	if err != nil {
+		t.Fatalf("schedulerOptions: %v", err)
+	}
+	if opts.Location.String() != "America/New_York" {
+		t.Fatalf("location = %q, want the configured zone", opts.Location)
+	}
+}
+
+func TestSchedulerOptions_RejectsAnUnknownTimezone(t *testing.T) {
+	t.Setenv("SCHEDULE_TIMEZONE", "Middle/Earth")
+
+	if _, err := schedulerOptions(); err == nil {
+		t.Fatal("an unknown timezone must be refused at startup, not at 02:30")
+	}
+}
+
+func mustLoad(t *testing.T, name string) *time.Location {
+	t.Helper()
+	original := time.Local
+	t.Cleanup(func() { time.Local = original })
+
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Skipf("timezone %s unavailable: %v", name, err)
+	}
+	return loc
 }

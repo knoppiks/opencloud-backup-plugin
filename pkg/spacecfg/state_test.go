@@ -86,7 +86,7 @@ func TestStoreContract(t *testing.T) {
 			if _, err := store.Put(ctx, Config{SpaceID: "b-space", TargetID: "t1"}); err != nil {
 				t.Fatalf("Put second: %v", err)
 			}
-			list, err := store.List(ctx)
+			list, _, err := store.List(ctx)
 			if err != nil {
 				t.Fatalf("List: %v", err)
 			}
@@ -156,7 +156,7 @@ func TestStateStore_ReadsPreVersionedConfigurations(t *testing.T) {
 	if err != nil || got.TargetID != "t1" {
 		t.Fatalf("Get = %+v (%v), want the pre-versioned configuration", got, err)
 	}
-	if list, err := store.List(ctx); err != nil || len(list) != 1 {
+	if list, _, err := store.List(ctx); err != nil || len(list) != 1 {
 		t.Fatalf("List = %+v (%v)", list, err)
 	}
 
@@ -172,7 +172,7 @@ func TestStateStore_ReadsPreVersionedConfigurations(t *testing.T) {
 	if stored, err := legacy.Get(ctx, "s1"); err != nil || stored.TargetID != "t1" {
 		t.Fatalf("pre-versioned configuration = %+v (%v), want it untouched", stored, err)
 	}
-	if list, err := store.List(ctx); err != nil || len(list) != 1 {
+	if list, _, err := store.List(ctx); err != nil || len(list) != 1 {
 		t.Fatalf("List after the edit = %+v (%v), want the record listed once", list, err)
 	}
 

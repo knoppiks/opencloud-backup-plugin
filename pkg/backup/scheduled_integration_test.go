@@ -210,11 +210,15 @@ func startProcess(
 			return err
 		}),
 		Recoverer:     locker,
+		Runs:          locker,
+		Events:        f.events,
 		Clock:         clock,
 		Logger:        logger,
 		OnRunFinished: reporter.RunFinished,
-		OnTick:        monitor.Sweep,
-	}, scheduler.Options{Jitter: -1})
+		OnSweep:       monitor.Sweep,
+		// The exit-criteria tests drive ticks by hand and expect each one to
+		// sweep; production spaces them out (DefaultSweepInterval).
+	}, scheduler.Options{Jitter: -1, SweepInterval: time.Nanosecond})
 	if err != nil {
 		t.Fatalf("scheduler.New: %v", err)
 	}

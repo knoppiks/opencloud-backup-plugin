@@ -40,6 +40,10 @@ const (
 	// KindTargetUnavailable reports that a backup target could not be used.
 	// Operator-scoped and deliberately anonymous.
 	KindTargetUnavailable Kind = "target_unavailable"
+	// KindStateUnreadable reports that stored records could not be decoded.
+	// Operator-scoped: it carries a count and nothing else, because the key of
+	// such a document contains the space id it belongs to (decisions.md #15).
+	KindStateUnreadable Kind = "state_unreadable"
 )
 
 // Audience decides who may see an event.

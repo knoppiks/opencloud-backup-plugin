@@ -100,7 +100,9 @@ func validate(c Config) error {
 }
 
 // List returns every configuration, ordered by space id for determinism.
-func (m *MemoryStore) List(_ context.Context) ([]Config, error) {
+// Nothing here can be corrupt: the records are Go values, not documents, so the
+// unreadable list is always empty.
+func (m *MemoryStore) List(_ context.Context) ([]Config, []string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]Config, 0, len(m.configs))
@@ -108,5 +110,5 @@ func (m *MemoryStore) List(_ context.Context) ([]Config, error) {
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SpaceID < out[j].SpaceID })
-	return out, nil
+	return out, nil, nil
 }

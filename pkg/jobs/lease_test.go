@@ -269,3 +269,135 @@ func TestNewLeaseLocker_RequiresState(t *testing.T) {
 		t.Fatal("nil state store must be rejected")
 	}
 }
+
+// The wedge this exists for: a run that ended, released its lock, and then
+// failed to record its outcome. There is no lease left to expire, so the pass
+// above cannot see it, and every later scheduler tick sees a run in progress
+// that does not exist.
+func TestLeaseLocker_RecoverClosesOutARunWithNoLockBehindIt(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+	store := NewStateStore(backing, clock)
+
+	locker, err := NewLeaseLocker(backing, LeaseOptions{
+		TTL:         10 * time.Minute,
+		OrphanSweep: time.Hour,
+		Clock:       clock,
+		After:       func(time.Duration) <-chan time.Time { return make(chan time.Time) },
+	})
+	if err != nil {
+		t.Fatalf("NewLeaseLocker: %v", err)
+	}
+
+	// A run whose lock is already gone: exactly what a lost Finish leaves.
+	orphan, err := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup, State: StateRunning})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// The sweep reads job documents, so it is not run at startup and not run on
+	// every tick.
+	if n, err := locker.Recover(ctx, store); err != nil || n != 0 {
+		t.Fatalf("Recover before the sweep is due = %d, %v", n, err)
+	}
+	if j, _ := store.Get(ctx, orphan.ID); j.State != StateRunning {
+		t.Fatalf("job state = %q, want it untouched", j.State)
+	}
+
+	clock.Advance(61 * time.Minute)
+	n, err := locker.Recover(ctx, store)
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("recovered = %d, want 1", n)
+	}
+	got, _ := store.Get(ctx, orphan.ID)
+	if got.State != StateFailed || got.Error != MessageInterrupted {
+		t.Fatalf("recovered job = %+v", got)
+	}
+}
+
+// Absence of a lease is only evidence once. A run genuinely under way is either
+// held in this process or covered by a live lease, and a run takes its lock
+// before it creates its job record — so there is no window in which a
+// legitimate run looks orphaned.
+func TestLeaseLocker_RecoverSparesRunsThatAreStillHeld(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+	store := NewStateStore(backing, clock)
+
+	opts := LeaseOptions{
+		TTL:         2 * time.Hour, // longer than the sweep interval below
+		OrphanSweep: time.Hour,
+		Clock:       clock,
+		After:       func(time.Duration) <-chan time.Time { return make(chan time.Time) },
+	}
+
+	mine, err := NewLeaseLocker(backing, opts)
+	if err != nil {
+		t.Fatalf("NewLeaseLocker: %v", err)
+	}
+	elsewhere, err := NewLeaseLocker(backing, opts)
+	if err != nil {
+		t.Fatalf("NewLeaseLocker: %v", err)
+	}
+
+	if _, err := mine.Acquire(ctx, "s1"); err != nil {
+		t.Fatalf("Acquire local: %v", err)
+	}
+	if _, err := elsewhere.Acquire(ctx, "s2"); err != nil {
+		t.Fatalf("Acquire remote: %v", err)
+	}
+	local, _ := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup, State: StateRunning})
+	remote, _ := store.Create(ctx, Job{SpaceID: "s2", Kind: KindRestore, State: StateRunning})
+
+	clock.Advance(61 * time.Minute)
+	if n, err := mine.Recover(ctx, store); err != nil || n != 0 {
+		t.Fatalf("Recover = %d, %v; want both runs spared", n, err)
+	}
+	for _, id := range []string{local.ID, remote.ID} {
+		if j, _ := store.Get(ctx, id); j.State != StateRunning {
+			t.Fatalf("live run %s was failed: %+v", id, j)
+		}
+	}
+}
+
+// Busy is what lets the scheduler ask "is something already running here"
+// without reading run history. It must count every kind of run and must not
+// count a lease whose holder is gone.
+func TestLeaseLocker_Busy(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+	locker, _ := newLocker(t, backing, clock, 10*time.Minute)
+
+	if busy, err := locker.Busy(ctx, "s1"); err != nil || busy {
+		t.Fatalf("Busy with no run = %v (%v)", busy, err)
+	}
+
+	release, err := locker.Acquire(ctx, "s1")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if busy, err := locker.Busy(ctx, "s1"); err != nil || !busy {
+		t.Fatalf("Busy while held = %v (%v)", busy, err)
+	}
+
+	// Another process's live lease counts; its expiry does not.
+	observer, _ := newLocker(t, backing, clock, 10*time.Minute)
+	if busy, err := observer.Busy(ctx, "s1"); err != nil || !busy {
+		t.Fatalf("Busy for another process's live lease = %v (%v)", busy, err)
+	}
+	clock.Advance(11 * time.Minute)
+	if busy, err := observer.Busy(ctx, "s1"); err != nil || busy {
+		t.Fatalf("Busy for an expired lease = %v (%v)", busy, err)
+	}
+
+	release()
+	if busy, err := locker.Busy(ctx, "s1"); err != nil || busy {
+		t.Fatalf("Busy after release = %v (%v)", busy, err)
+	}
+}

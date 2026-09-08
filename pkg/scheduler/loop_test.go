@@ -1,8 +1,10 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -80,9 +82,10 @@ type harness struct {
 	jobs    *jobs.MemoryStore
 	runner  *fakeRunner
 	sched   *Scheduler
+	logs    bytes.Buffer
 }
 
-func newHarness(t *testing.T, opts Options) *harness {
+func newHarness(t *testing.T, opts Options, tweaks ...func(*Deps)) *harness {
 	t.Helper()
 
 	clock := testutil.NewFakeClock(epoch)
@@ -95,12 +98,18 @@ func newHarness(t *testing.T, opts Options) *harness {
 		runner:  &fakeRunner{store: jobStore},
 	}
 
-	sched, err := New(Deps{
+	deps := Deps{
 		Configs: h.configs,
 		Jobs:    h.jobs,
 		Runner:  h.runner,
 		Clock:   clock,
-	}, opts)
+		Logger:  slog.New(slog.NewTextHandler(&h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	}
+	for _, tweak := range tweaks {
+		tweak(&deps)
+	}
+
+	sched, err := New(deps, opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

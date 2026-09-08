@@ -578,6 +578,76 @@ Each item has a deterministic unit test with the injected clock; item 3/4
 additionally an integration test against `cs3state` when the fixture is
 present.
 
+### Outcome (implemented, issue #21)
+
+All nine items, with one item narrowed by what Go's HTTP transport can actually
+do, two placed differently than the plan said, and one addition without which
+item 1 cannot work.
+
+- **Addition — the outcome write is detached from the run's context.** Not in
+  the plan, and load-bearing: item 1 bounds a scheduled run by cancelling its
+  context, so the failure it causes cannot be recorded *with that context*. Item
+  4's retry therefore lives in `jobs.RecordOutcome`, which writes on
+  `context.WithoutCancel` with a per-attempt deadline. Without it, item 1 would
+  have replaced "a run that never ends" with "a run that ends and says nothing" —
+  the exact wedge item 3 exists to clean up.
+- **Deviation — the run lock is released by the runner's `finish`, not deferred
+  by its callers.** "Keep the lease when the outcome cannot be recorded" is not
+  expressible while a `defer pending.release()` two frames up always fires. Both
+  runners (backup and restore) now release only after `RecordOutcome` succeeds.
+  Restore was not in the plan's scope; it had the identical bug, and fixing one
+  copy of a two-copy bug is not fixing it.
+- **Deviation — item 3's sweep runs on a slow cadence inside `Recover`, not on
+  every tick.** Nothing in a job's key says whether it finished, so "list running
+  jobs" means reading documents — from CS3, over the network, for every Space's
+  whole history. Once a minute that is worse than the bug. It therefore runs
+  hourly (`LeaseOptions.OrphanSweep`), is deliberately *not* run at startup (the
+  expired-lease pass already covers everything a crash leaves behind, and a
+  service should not read a year of history before accepting a request), and
+  `jobs.StateStore` remembers the keys it has already found terminal — a
+  finished run never becomes unfinished, so later sweeps read only what is new.
+- **Deviation — `Store.ListRunning` lost its Space parameter.** Recovery has to
+  visit every Space, and the per-Space variant the plan names had no production
+  caller at all. It is now `ListRunning(ctx)` on the interface, implemented by
+  both stores.
+- **Item 2 narrowed, and the narrowing is the interesting part.** The guard fails
+  a transfer that moves no bytes for two minutes, which covers a gateway that
+  stops sending or stops accepting. It does **not** cover a source that blocks
+  forever inside a single `Read`: Go's transport waits for its write loop before
+  returning, so cancelling the request cannot unwedge it — the run timeout is
+  what covers that case, and the comment in `put` says so rather than implying a
+  guarantee that does not exist. The guard also stops watching at end of input,
+  so a server spending a while finalising a large upload is not cut short by it.
+- **Deviation — item 5 changed `spacecfg.Store.List`, not `Documents.All`.** The
+  plan names `All`, which has no production caller; the place a corrupt document
+  actually disappears is `Versions.Latest`. `state.ErrMalformed` now separates
+  "corrupt" from "missing" — the two want opposite reactions — and `List` returns
+  the unreadable keys as a second value, so a caller has to look at them. The
+  scheduler logs each key; the monitor raises an operator event carrying only a
+  count, because the key contains a space id (#15).
+- **Deviation — the token cache is a wrapper, not a change to
+  `ServiceAccountAuth`.** `cs3.CachedAuth` wraps any `Authenticator`, keeping the
+  minter stateless and testable, and reads the token's own `exp` (a token this
+  service minted for itself a moment ago, never verified and never used for an
+  authorization decision) rather than guessing a lifetime. A token reva rejects
+  with `UNAUTHENTICATED` is dropped; the plan's "re-authenticate on
+  UNAUTHENTICATED" is deliberately not an automatic retry — the *next* call
+  re-mints, and one refused call surfaces rather than being papered over.
+- **Deviation — item 8's `ListRecent(1)` widens when it has to.** One record
+  answers "when did the last backup start" almost always, but not when the newest
+  run was a restore; flat `ListRecent(1)` would then fall back to the
+  configuration timestamp and schedule a spurious immediate run. The read widens
+  to the old lookback only in that case.
+- **`OnTick` became `OnSweep`,** with its own interval (15 min). A hook named for
+  the tick that no longer runs on every tick is a comment waiting to go stale.
+- **Item 9 defaults to `time.Local`,** so `TZ` — which a deployment sets anyway
+  for its logs — decides. The manifest ships `TZ: "UTC"` uncommented, stated as
+  the thing to change, rather than a commented-out override nobody reads.
+- **R1's revision-growth finding was not folded in here.** It is a slow leak
+  rather than a failure, the fix depends on what OpenCloud permits (there may be
+  no delete-revision RPC at all), and mixing an open investigation into a
+  robustness plan would have delayed both. It is now **R10**.
+
 ---
 
 ## R7 — Prune and maintenance: bring Phase 7 Tier 1 forward (F7)
@@ -706,6 +776,97 @@ fallback if runner minutes are a concern.
 
 ---
 
+## R10 — Unbounded revision and trash growth in the state Space
+
+### Problem
+
+Found while implementing R1, deliberately left out of R6 so it gets its own
+treatment. `InitiateFileUpload` over an existing path overwrites silently on
+OpenCloud 7.3.0, and every overwrite leaves a **file revision that nothing
+reclaims** (measured on the fixture: five writes to one path left four revision
+nodes). Deleting does not help either — `cs3state.Delete` moves the document to
+the Space's trash, and nothing empties that.
+
+Three records are written by replacement, at very different rates:
+
+| Record | Cadence | Revisions/year, one pod |
+|---|---|---|
+| `instances/<id>` | every TTL/3 ≈ 40 s, for the life of the process | ~790,000 |
+| `leases/<space>` | every TTL/3 ≈ 3 min 20 s, while a run lives | ~430/day of running time, per Space |
+| `jobs/<space>/<...>` | once per run (`Finish`) | one per run |
+
+The instance heartbeat dominates by two orders of magnitude and is the one the
+R1 note did not name. The objects are tiny, but the growth is unbounded, it
+never stops while the service is up, and it accumulates in the one Space that
+also holds every wrapped Data Key — the Space an operator is least likely to
+want to go poking around in with a bulk-delete tool.
+
+Nothing here is a correctness bug today. It is a slow leak with no end state,
+which is why it is a plan item rather than a `TODO`.
+
+### Options
+
+**Option A — write less often.** Raise the instance TTL and lease TTL so the
+heartbeats are minutes apart rather than seconds. Cheap, entirely inside this
+codebase, and reduces the rate by an order of magnitude — but the growth is
+still unbounded, and a longer lease TTL directly lengthens how long a crashed
+run wedges a Space (the two are the same number). Mitigation, not a fix.
+
+**Option B — reclaim from the service.** Requires an RPC that deletes a file
+revision. CS3 exposes `ListFileVersions` and `RestoreFileVersion`; there is no
+delete-version call, so this may be impossible through the supported API.
+`PurgeRecycle` does exist, so the *trash* half is reachable. **A spike must
+establish what OpenCloud 7.3.0 actually permits before this option can be
+costed.**
+
+**Option C — stop replacing.** Make the heartbeats append-only (`Versions`, as
+R1 did for the records that matter) and prune old versions on a slow cadence.
+Trades one revision per write for one document per write plus one trash entry
+per prune — probably worse, unless the prune can be made rare (write a version
+per hour, not per heartbeat, and carry the liveness in the *newest version's*
+timestamp rather than in a rewritten document).
+
+**Option D — document an OpenCloud-side cleanup** the operator runs (or a
+policy they configure), and state the growth rate honestly in the runbook so
+the number is not a surprise. Cheap, and may be the only *complete* answer if
+the spike says the API cannot reclaim revisions.
+
+**DECISION NEEDED** once the spike lands. Provisional recommendation: A + D
+together (slow the bleeding, tell the truth about the rest), with C considered
+only for the instance record, which is the sole one whose write rate is
+independent of what the service is actually doing.
+
+### Tasks
+
+1. Spike against the OpenCloud fixture: can a revision be reclaimed at all
+   (`ListFileVersions`, any delete path, storage-driver setting, server-side
+   policy)? Can `PurgeRecycle` be reached with the service account, and does it
+   apply to a state Space? Record findings in `phase-0-findings.md`; pin
+   whatever is learned with an integration test.
+2. Measure, do not guess: a fixture test that writes a heartbeat N times and
+   reports revision count and on-disk bytes, so the projection above becomes a
+   number this repo owns rather than an estimate.
+3. Implement the option chosen after step 1, including the TTL/liveness
+   trade-off if Option A is taken (a longer lease TTL must not silently make
+   the R6 recovery window worse than what the phase-6 doc promises).
+4. Whatever is chosen, state it in the state-Space runbook: expected growth per
+   year for an idle deployment, and what an operator does about it.
+
+### Tests
+
+Integration (OpenCloud fixture): the measurement in task 2, and the reclaim
+path in task 1 if one exists. Unit: whatever TTL/liveness arithmetic changes —
+in particular that a lease still expires strictly before recovery treats it as
+abandoned.
+
+### Docs
+
+`decisions.md` #16 (the R1 amendment already records this as an open item —
+close it with the outcome), `README.md` state-Space runbook,
+`phase-0-findings.md` for the spike.
+
+---
+
 ## Cross-cutting: plan-level additions (for the phase index)
 
 - **Phase 5b — Re-attach after rebuild (new, small).** Client-side flow: user
@@ -736,6 +897,7 @@ fallback if runner minutes are a concern.
 | 6 | R5 work-dir handling, R9 CI job | Infrastructure; can run in parallel with 4–5. |
 | 7 | R2 rotation endpoints/CLI, R8 truth pass | Rotation needs R1's append-only layout; docs last so they describe what shipped. |
 | 8 | Phase 7 (Tier 2/3), Phase 8 (UI) with the client invariants from R2 | Unchanged, on a fixed foundation. |
+| — | R10 (revision growth) | Not on the critical path: a slow leak, not a failure. Needs a spike before it can be costed, so it sits outside the sequence until that lands. |
 
 Decisions the owner needs to make before merging:
 
@@ -748,3 +910,5 @@ Decisions the owner needs to make before merging:
    (recommendation: accept and document)
 5. Phase 5b — v1 or backlog? (recommendation: v1; it is the family's realistic
    "the server died" story and the pieces exist after R1/R2)
+6. R10 — which option, once the spike says what OpenCloud permits?
+   (provisional recommendation: slow the heartbeats and document the residual)

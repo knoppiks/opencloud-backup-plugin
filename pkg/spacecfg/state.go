@@ -96,12 +96,13 @@ func (s *StateStore) Delete(ctx context.Context, spaceID string) error {
 	return nil
 }
 
-// List returns every configuration, ordered by space id for determinism.
-func (s *StateStore) List(ctx context.Context) ([]Config, error) {
-	out, err := s.configs.Latest(ctx)
+// List returns every configuration, ordered by space id for determinism, and
+// the keys of the configurations that could not be read.
+func (s *StateStore) List(ctx context.Context) ([]Config, []string, error) {
+	out, unreadable, err := s.configs.Latest(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("spacecfg: list configurations: %w", err)
+		return nil, nil, fmt.Errorf("spacecfg: list configurations: %w", err)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SpaceID < out[j].SpaceID })
-	return out, nil
+	return out, unreadable, nil
 }

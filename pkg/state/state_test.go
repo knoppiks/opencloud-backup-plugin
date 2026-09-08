@@ -154,9 +154,12 @@ func TestDocumentsRoundTripAndList(t *testing.T) {
 		t.Fatalf("Get: got %+v", got)
 	}
 
-	all, err := docs.All(ctx, "space$a!a")
+	all, unreadable, err := docs.All(ctx, "space$a!a")
 	if err != nil {
 		t.Fatalf("All: %v", err)
+	}
+	if len(unreadable) != 0 {
+		t.Fatalf("All reported %v as unreadable", unreadable)
 	}
 	if len(all) != 2 || all[0].Name != "one" || all[1].Name != "two" {
 		t.Fatalf("All: got %+v", all)
@@ -184,13 +187,17 @@ func TestDocumentsSkipsMalformedRecords(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// One corrupt record must not make a Space's whole history unreadable.
-	all, err := docs.All(ctx, "space")
+	// One corrupt record must not make a Space's whole history unreadable —
+	// and must not disappear without trace either.
+	all, unreadable, err := docs.All(ctx, "space")
 	if err != nil {
 		t.Fatalf("All: %v", err)
 	}
 	if len(all) != 1 || all[0].Name != "good" {
 		t.Fatalf("All: got %+v", all)
+	}
+	if len(unreadable) != 1 || unreadable[0] != "docs/space/bad" {
+		t.Fatalf("All reported %v as unreadable, want the corrupt key", unreadable)
 	}
 
 	if _, err := docs.Get(ctx, "space", "bad"); err == nil {

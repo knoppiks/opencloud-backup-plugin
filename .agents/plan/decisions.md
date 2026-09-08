@@ -623,6 +623,63 @@ decision.
   it once at setup. `TLS_CERT_FILE`/`TLS_KEY_FILE` cover deployments with nothing
   in front of them.
 
+### Amendments from the September 2026 review — R6 (scheduler and runner)
+
+- **A run gives up its lock only after its outcome is durable.** The order used
+  to be the other way round, and one lost write was permanent: the job record
+  stayed at `running`, the lease that would have recovered it was already gone,
+  and every later tick saw a run in progress that did not exist — that Space
+  never backed up again, silently. The outcome write is now retried, on a context
+  detached from the run's (a run stopped by shutdown or by its own deadline must
+  still be able to say why), and if it cannot be recorded the **lease is kept on
+  purpose**: it expires, and recovery closes the run out.
+  *Second line of defence:* recovery also sweeps, on a slow cadence, for jobs
+  recorded as running that no live lease corresponds to — the one shape the
+  expired-lease pass cannot see, since it has no lease to expire.
+
+- **Unattended runs are bounded in time.** A scheduled run had no deadline at
+  all, so a target that accepted a connection and then stalled held one of the
+  service's few run slots until the process restarted. It now takes the same
+  bound a backgrounded manual run has, and a run stopped that way records "the
+  backup run timed out" rather than whichever read happened to be in flight.
+
+- **Transfers must make progress, not finish quickly.** Reading a file out of
+  OpenCloud has no overall timeout — a large file may legitimately take an hour —
+  but a transfer that moves no bytes for two minutes is failed. The guard stops
+  watching at end of input, so a server finalising an upload is not cut short.
+  *It does not cover a source that blocks forever inside a single read:* Go's
+  HTTP transport waits for its write loop, so cancelling cannot unwedge that.
+  The run timeout covers it.
+
+- **"Is a run already under way" is answered by the run lock, not by history.**
+  A non-terminal job record is not evidence — it can outlive the run it describes,
+  which is how the wedge above became permanent. The lease can not: it expires.
+  Due-ness now reads one history record for the schedule baseline (widening only
+  when the newest run was a restore) and asks the lock about the rest.
+
+- **Silence is reserved for things that are fine.** A stored document that cannot
+  be decoded used to be skipped without a trace, which for a Space configuration
+  means that Space silently stops being scheduled. The store now reports
+  unreadable records by key: the scheduler logs each one, and the monitor raises
+  an operator notification carrying **only a count** — the key contains a space
+  id, and #15 forbids naming a Space to the operator.
+
+- **Everything the service keeps is trimmed.** Notification history grew forever;
+  it is now pruned with the run history it describes, on the same cadence and to
+  the same window.
+
+- **An idle service is close to idle.** The staleness sweep runs every 15 minutes
+  rather than every minute (staleness is measured in days), and the worker's reva
+  token is reused until shortly before its own expiry instead of being minted
+  once per gateway call — which had made a thousand-file backup a thousand extra
+  round trips against the OpenCloud instance this service sits beside. A token
+  reva rejects is dropped immediately.
+
+- **Schedules default to the container's timezone (`TZ`), not UTC.** "Nightly at
+  02:30" is about the family's night; a household that sets `TZ` has already said
+  which zone it means. `SCHEDULE_TIMEZONE` still overrides it, and an unknown
+  zone is refused at startup rather than at 02:30.
+
 ---
 
 ## Trust & key model

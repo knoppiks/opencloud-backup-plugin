@@ -48,6 +48,9 @@ const (
 	DefaultJitter = 5 * time.Minute
 	// DefaultPruneInterval is how often run history is trimmed.
 	DefaultPruneInterval = time.Hour
+	// DefaultSweepInterval is how often the staleness sweep runs. Staleness is
+	// measured in days; checking it every minute only generates load.
+	DefaultSweepInterval = 15 * time.Minute
 	// historyLookback bounds how much history due-ness needs to inspect.
 	historyLookback = 10
 )
@@ -83,6 +86,19 @@ type Recoverer interface {
 	Recover(ctx context.Context, store jobs.Store) (int, error)
 }
 
+// RunGuard answers "is a run already under way for this Space", from the run
+// lock rather than from run history. It is satisfied by *jobs.LeaseLocker.
+type RunGuard interface {
+	Busy(ctx context.Context, spaceID string) (bool, error)
+}
+
+// Pruner trims a durable collection to a retention window. Both the job store
+// and the notification store satisfy it; the scheduler owns the cadence because
+// it is the only component that ticks.
+type Pruner interface {
+	PruneBefore(ctx context.Context, cutoff time.Time) (int, error)
+}
+
 // Options tunes the scheduler. The zero value is usable.
 type Options struct {
 	// Interval between due-ness evaluations; zero uses DefaultInterval.
@@ -99,6 +115,9 @@ type Options struct {
 	// PruneInterval is how often history is trimmed; zero uses
 	// DefaultPruneInterval.
 	PruneInterval time.Duration
+	// SweepInterval is how often OnSweep is called; zero uses
+	// DefaultSweepInterval.
+	SweepInterval time.Duration
 	// Location is the timezone schedules are interpreted in; nil uses UTC.
 	// "Nightly at 02:30" means the family's night, not the server's idea of it.
 	Location *time.Location
@@ -117,6 +136,13 @@ type Deps struct {
 	Runner Runner
 	// Recoverer is optional; when set, abandoned runs are closed out each tick.
 	Recoverer Recoverer
+	// Runs is optional; when set, "is this Space already running" is answered
+	// from the run lock instead of by reading run history every tick.
+	Runs RunGuard
+	// Events is optional; when set, the notification history is trimmed on the
+	// same cadence and to the same window as the run history. Everything the
+	// service keeps has to be trimmed by somebody.
+	Events Pruner
 	// Clock is injected for deterministic tests.
 	Clock Clock
 	// Logger receives operational detail; never key material.
@@ -125,9 +151,11 @@ type Deps struct {
 	// The notification layer hangs off this; the scheduler itself does not know
 	// what a notification is.
 	OnRunFinished func(ctx context.Context, spaceID string, err error)
-	// OnTick is called at the end of every tick, after due Spaces are
-	// dispatched. The stale-backup monitor hangs off this.
-	OnTick func(ctx context.Context, now time.Time)
+	// OnSweep is called after due Spaces are dispatched, on its own slow
+	// cadence (Options.SweepInterval). The stale-backup monitor hangs off this:
+	// staleness is measured in days, so running it every tick would be pure
+	// load for an answer that cannot have changed.
+	OnSweep func(ctx context.Context, now time.Time)
 }
 
 // Scheduler dispatches due backup runs.
@@ -141,6 +169,7 @@ type Scheduler struct {
 	mu        sync.Mutex
 	inflight  map[string]struct{}
 	lastPrune time.Time
+	lastSweep time.Time
 }
 
 // New validates dependencies and constructs a Scheduler.
@@ -179,6 +208,9 @@ func New(deps Deps, opts Options) (*Scheduler, error) {
 	}
 	if opts.PruneInterval <= 0 {
 		opts.PruneInterval = DefaultPruneInterval
+	}
+	if opts.SweepInterval <= 0 {
+		opts.SweepInterval = DefaultSweepInterval
 	}
 	if opts.Location == nil {
 		opts.Location = time.UTC
@@ -229,10 +261,18 @@ func (s *Scheduler) RunOnce(ctx context.Context) error {
 
 	s.recoverAbandoned(ctx)
 
-	configs, err := s.deps.Configs.List(ctx)
+	configs, unreadable, err := s.deps.Configs.List(ctx)
 	if err != nil {
 		return fmt.Errorf("scheduler: list space configurations: %w", err)
 	}
+	// A configuration that cannot be read takes its Space out of the schedule.
+	// Skipping it is right; skipping it quietly is not — that is a backup that
+	// stops with nothing to show for it.
+	for _, key := range unreadable {
+		s.deps.Logger.Error("a space configuration could not be read; that space is not being scheduled",
+			"document", key)
+	}
+
 	for _, cfg := range configs {
 		if !s.eligible(cfg) {
 			continue
@@ -252,10 +292,7 @@ func (s *Scheduler) RunOnce(ctx context.Context) error {
 	}
 
 	s.pruneHistory(ctx, now)
-
-	if s.deps.OnTick != nil {
-		s.deps.OnTick(ctx, now)
-	}
+	s.sweep(ctx, now)
 	return nil
 }
 
@@ -269,15 +306,17 @@ func (s *Scheduler) eligible(cfg spacecfg.Config) bool {
 
 // due reports whether a Space's next occurrence has passed.
 func (s *Scheduler) due(ctx context.Context, cfg spacecfg.Config, now time.Time) (bool, error) {
-	history, err := s.deps.Jobs.ListRecent(ctx, cfg.SpaceID, historyLookback)
+	busy, err := s.busy(ctx, cfg.SpaceID)
 	if err != nil {
-		return false, fmt.Errorf("scheduler: read run history: %w", err)
+		return false, err
 	}
-	for _, j := range history {
-		if !j.State.Terminal() {
-			// A run (of any kind, including a restore) is already under way.
-			return false, nil
-		}
+	if busy {
+		return false, nil
+	}
+
+	history, err := s.baselineHistory(ctx, cfg.SpaceID)
+	if err != nil {
+		return false, err
 	}
 
 	next, err := s.nextOccurrence(cfg, history, now)
@@ -289,6 +328,55 @@ func (s *Scheduler) due(ctx context.Context, cfg spacecfg.Config, now time.Time)
 		return false, nil
 	}
 	return !now.Before(next), nil
+}
+
+// busy reports whether a run — of any kind, including a restore — is already
+// under way for a Space.
+//
+// The run lock is the authority when there is one: it is a single read, it
+// covers every process, and it expires, so a crashed run cannot make a Space
+// look busy forever. Without a lock guard the question is answered from run
+// history, which is what the scheduler did everywhere before and is kept for
+// the in-memory locker the tests and the degraded deployment use.
+func (s *Scheduler) busy(ctx context.Context, spaceID string) (bool, error) {
+	if s.deps.Runs != nil {
+		busy, err := s.deps.Runs.Busy(ctx, spaceID)
+		if err != nil {
+			return false, fmt.Errorf("scheduler: read run lock: %w", err)
+		}
+		return busy, nil
+	}
+
+	history, err := s.deps.Jobs.ListRecent(ctx, spaceID, historyLookback)
+	if err != nil {
+		return false, fmt.Errorf("scheduler: read run history: %w", err)
+	}
+	for _, j := range history {
+		if !j.State.Terminal() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// baselineHistory reads the least history that can answer "when did the last
+// backup start": one record, widened only when the newest run turns out to be
+// something else. Reading ten records per Space per minute to find one number
+// is load an idle household deployment should not generate.
+func (s *Scheduler) baselineHistory(ctx context.Context, spaceID string) ([]jobs.Job, error) {
+	history, err := s.deps.Jobs.ListRecent(ctx, spaceID, 1)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: read run history: %w", err)
+	}
+	if _, ok := jobs.LastOf(history, jobs.KindBackup, ""); ok || len(history) == 0 {
+		return history, nil
+	}
+
+	history, err = s.deps.Jobs.ListRecent(ctx, spaceID, historyLookback)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: read run history: %w", err)
+	}
+	return history, nil
 }
 
 // NextRun reports when a Space is next due, so the status board can say "next
@@ -426,22 +514,48 @@ func (s *Scheduler) recoverAbandoned(ctx context.Context) {
 	}
 }
 
-// pruneHistory trims finished runs older than the history window, on its own
-// slow cadence so it does not run on every tick.
+// pruneHistory trims finished runs — and the notifications about them — older
+// than the history window, on its own slow cadence so it does not run on every
+// tick.
 func (s *Scheduler) pruneHistory(ctx context.Context, now time.Time) {
 	if !s.lastPrune.IsZero() && now.Sub(s.lastPrune) < s.opts.PruneInterval {
 		return
 	}
 	s.lastPrune = now
+	cutoff := now.Add(-s.opts.HistoryWindow)
 
-	removed, err := s.deps.Jobs.PruneBefore(ctx, now.Add(-s.opts.HistoryWindow))
+	removed, err := s.deps.Jobs.PruneBefore(ctx, cutoff)
 	if err != nil {
 		s.deps.Logger.Error("could not prune run history", "err", err)
+	} else if removed > 0 {
+		s.deps.Logger.Info("pruned run history", "jobs", removed)
+	}
+
+	if s.deps.Events == nil {
+		return
+	}
+	// Notifications are written on the same cadence as the runs they describe,
+	// so they grow at the same rate and are kept for the same window.
+	removed, err = s.deps.Events.PruneBefore(ctx, cutoff)
+	if err != nil {
+		s.deps.Logger.Error("could not prune notification history", "err", err)
 		return
 	}
 	if removed > 0 {
-		s.deps.Logger.Info("pruned run history", "jobs", removed)
+		s.deps.Logger.Info("pruned notification history", "events", removed)
 	}
+}
+
+// sweep runs the staleness check on its own cadence.
+func (s *Scheduler) sweep(ctx context.Context, now time.Time) {
+	if s.deps.OnSweep == nil {
+		return
+	}
+	if !s.lastSweep.IsZero() && now.Sub(s.lastSweep) < s.opts.SweepInterval {
+		return
+	}
+	s.lastSweep = now
+	s.deps.OnSweep(ctx, now)
 }
 
 // now returns the current time in the scheduler's timezone.

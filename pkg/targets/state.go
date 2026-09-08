@@ -126,7 +126,10 @@ func (s *StateStore) GetTarget(ctx context.Context, id string) (Target, error) {
 
 // ListTargets returns all targets (admin view).
 func (s *StateStore) ListTargets(ctx context.Context) ([]Target, error) {
-	out, err := s.targets.Latest(ctx)
+	// An unreadable target record is not silent the way a Space configuration
+	// is: the admin UI lists targets, so a missing one is visible to the person
+	// who can fix it.
+	out, _, err := s.targets.Latest(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("targets: list targets: %w", err)
 	}

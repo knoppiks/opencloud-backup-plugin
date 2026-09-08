@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	gateway "github.com/cs3org/go-cs3apis/cs3/gateway/v1beta1"
 	rpc "github.com/cs3org/go-cs3apis/cs3/rpc/v1beta1"
@@ -59,9 +60,10 @@ type Authenticator interface {
 }
 
 // ServiceAccountAuth authenticates the unattended worker with an OpenCloud
-// service account (CS3 auth type "serviceaccounts"; decisions.md #11). The
-// token is short-lived and re-minted per call — cheap, and keeps the client
-// stateless.
+// service account (CS3 auth type "serviceaccounts"; decisions.md #11). It mints
+// a token per call and holds none, which keeps it stateless and trivially
+// testable; wrap it in CachedAuth (as the service does) so an operation that
+// touches a thousand files does not mint a thousand tokens.
 type ServiceAccountAuth struct {
 	Gateway  GatewayClient
 	ClientID string
@@ -104,6 +106,8 @@ type Client struct {
 	gw   GatewayClient
 	auth Authenticator
 	http *http.Client
+	// stall is how long a transfer may make no progress; zero uses the default.
+	stall time.Duration
 }
 
 var _ SpaceReader = (*Client)(nil)
@@ -120,6 +124,12 @@ func WithHTTPClient(h *http.Client) ClientOption {
 			c.http = h
 		}
 	}
+}
+
+// WithStallTimeout sets how long a file transfer may make no progress before it
+// is failed. Zero or less uses DefaultStallTimeout.
+func WithStallTimeout(d time.Duration) ClientOption {
+	return func(c *Client) { c.stall = d }
 }
 
 // NewClient builds a Client from an injected gateway and authenticator.
@@ -154,7 +164,7 @@ func (c *Client) ListSpaces(ctx context.Context) ([]Space, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cs3 list storage spaces: %w", err)
 	}
-	if err := statusErr(res.GetStatus(), "ListStorageSpaces"); err != nil {
+	if err := c.status(res.GetStatus(), "ListStorageSpaces"); err != nil {
 		return nil, err
 	}
 
@@ -184,7 +194,7 @@ func (c *Client) listDir(ctx context.Context, space Space, relDir string) ([]Ent
 	if err != nil {
 		return nil, fmt.Errorf("cs3 list container: %w", err)
 	}
-	if err := statusErr(res.GetStatus(), "ListContainer"); err != nil {
+	if err := c.status(res.GetStatus(), "ListContainer"); err != nil {
 		return nil, err
 	}
 
@@ -261,7 +271,7 @@ func (c *Client) OpenFile(ctx context.Context, space Space, relPath string, offs
 	if err != nil {
 		return nil, fmt.Errorf("cs3 initiate download: %w", err)
 	}
-	if err := statusErr(res.GetStatus(), "InitiateFileDownload"); err != nil {
+	if err := c.status(res.GetStatus(), "InitiateFileDownload"); err != nil {
 		return nil, err
 	}
 	endpoint, transfer := pickDownloadProtocol(res.GetProtocols())
@@ -274,9 +284,18 @@ func (c *Client) OpenFile(ctx context.Context, space Space, relPath string, offs
 
 // stream performs the data-gateway GET and returns the body positioned at
 // offset. It never includes tokens in error messages.
+//
+// The returned body carries an inactivity deadline: the caller may take as long
+// as it likes to read a large file, but a gateway that stops sending fails the
+// transfer instead of holding the run open (see stall.go). Closing the body is
+// what releases it, which callers must do anyway.
 func (c *Client) stream(ctx context.Context, endpoint, accessToken, transferToken string, offset int64) (io.ReadCloser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	// Cancellable independently of ctx so the guard can end this one request.
+	reqCtx, cancel := context.WithCancel(ctx)
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("cs3 download request: %w", err)
 	}
 	req.Header.Set(TokenHeader, accessToken)
@@ -287,33 +306,47 @@ func (c *Client) stream(ctx context.Context, endpoint, accessToken, transferToke
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 
+	// The body is not closed here on purpose: it is either handed to the caller
+	// wrapped in guardedBody, whose Close closes it, or closed by fail() below.
+	//nolint:bodyclose // closed through guardedBody.Close on every path
 	resp, err := c.http.Do(req)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("cs3 download: %w", err)
 	}
+
+	guarded := &guardedBody{
+		stallGuard: newStallGuard(resp.Body, cancel, c.stallTimeout()),
+		body:       resp.Body,
+	}
+	fail := func(err error) (io.ReadCloser, error) {
+		_ = guarded.Close()
+		return nil, err
+	}
+
 	switch resp.StatusCode {
 	case http.StatusPartialContent:
 		// Server honoured the range; body already starts at offset.
-		return resp.Body, nil
+		return guarded, nil
 	case http.StatusOK:
 		if offset == 0 {
-			return resp.Body, nil
+			return guarded, nil
 		}
 		// Range ignored: skip forward so the caller's contract still holds.
-		if _, err := io.CopyN(io.Discard, resp.Body, offset); err != nil {
-			_ = resp.Body.Close()
-			return nil, fmt.Errorf("cs3 download: seek to offset %d: %w", offset, err)
+		if _, err := io.CopyN(io.Discard, guarded, offset); err != nil {
+			return fail(fmt.Errorf("cs3 download: seek to offset %d: %w", offset, err))
 		}
-		return resp.Body, nil
+		return guarded, nil
+	case http.StatusUnauthorized:
+		c.forgetToken()
+		return fail(fmt.Errorf("cs3 download: unexpected status %d", resp.StatusCode))
 	case http.StatusNotFound:
-		_ = resp.Body.Close()
 		// The gateway answers a missing file on the data path with a plain 404;
 		// callers distinguish "not there" from "went wrong" (pkg/cs3state).
-		return nil, ErrNotFound
+		return fail(ErrNotFound)
 	default:
-		_ = resp.Body.Close()
 		// Status only — the response body may echo internal detail.
-		return nil, fmt.Errorf("cs3 download: unexpected status %d", resp.StatusCode)
+		return fail(fmt.Errorf("cs3 download: unexpected status %d", resp.StatusCode))
 	}
 }
 
