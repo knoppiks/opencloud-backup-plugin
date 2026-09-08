@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -190,18 +191,62 @@ func TestStateStore_ListRunning(t *testing.T) {
 	store := NewStateStore(state.NewMemoryStore(), clock)
 
 	running, _ := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup, State: StateRunning})
-	done, _ := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup, State: StateRunning})
+	done, _ := store.Create(ctx, Job{SpaceID: "s2", Kind: KindBackup, State: StateRunning})
 	if err := store.Finish(ctx, done.ID, Outcome{State: StateSucceeded}); err != nil {
 		t.Fatalf("Finish: %v", err)
 	}
 
-	got, err := store.ListRunning(ctx, "s1")
+	got, err := store.ListRunning(ctx)
 	if err != nil {
 		t.Fatalf("ListRunning: %v", err)
 	}
 	if len(got) != 1 || got[0].ID != running.ID {
 		t.Fatalf("ListRunning: %+v", got)
 	}
+}
+
+// A finished run is read once and then remembered: the sweep runs on a
+// schedule, and re-reading a Space's whole history every hour to be told the
+// same thing is exactly the idle load this service must not generate.
+func TestStateStore_ListRunningReadsAFinishedJobOnlyOnce(t *testing.T) {
+	ctx := context.Background()
+	backing := &countingStore{Store: state.NewMemoryStore()}
+	store := NewStateStore(backing, testutil.NewFakeClock(epoch))
+
+	done, _ := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup, State: StateRunning})
+	if err := store.Finish(ctx, done.ID, Outcome{State: StateSucceeded}); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	// A second store reads the finished record cold: Finish already marked it
+	// settled in the first, which is a different path than the one under test.
+	cold := NewStateStore(backing, testutil.NewFakeClock(epoch))
+	if _, err := cold.ListRunning(ctx); err != nil {
+		t.Fatalf("ListRunning: %v", err)
+	}
+	after := backing.gets.Load()
+	if after == 0 {
+		t.Fatal("the first sweep read no documents at all")
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := cold.ListRunning(ctx); err != nil {
+			t.Fatalf("ListRunning: %v", err)
+		}
+	}
+	if got := backing.gets.Load(); got != after {
+		t.Fatalf("later sweeps re-read documents: %d reads, want %d", got, after)
+	}
+}
+
+// countingStore counts document reads.
+type countingStore struct {
+	state.Store
+	gets atomic.Int64
+}
+
+func (c *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	c.gets.Add(1)
+	return c.Store.Get(ctx, key)
 }
 
 func hasSuffix(s, suffix string) bool {

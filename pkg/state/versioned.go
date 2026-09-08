@@ -155,10 +155,15 @@ func (v *Versions[T]) Load(ctx context.Context, id ...string) (T, Span, error) {
 
 // Latest returns the newest version of every record in the collection, in id
 // order, including records that exist only in the legacy layout.
-func (v *Versions[T]) Latest(ctx context.Context) ([]T, error) {
+//
+// A record that cannot be decoded is left out of the values and reported by key
+// in unreadable. Both halves matter: one corrupt document must not make the
+// whole collection unreadable, and a record that silently disappears from a
+// listing is a Space that silently stops being backed up.
+func (v *Versions[T]) Latest(ctx context.Context) (values []T, unreadable []string, err error) {
 	keys, err := v.docs.store.List(ctx, v.docs.prefix)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	newestByID := make(map[string]string, len(keys))
@@ -183,25 +188,35 @@ func (v *Versions[T]) Latest(ctx context.Context) ([]T, error) {
 
 	out := make([]T, 0, len(ids)+1)
 	for _, id := range ids {
-		value, err := v.docs.GetKey(ctx, newestByID[id])
+		key := newestByID[id]
+		value, err := v.docs.GetKey(ctx, key)
 		if err != nil {
 			// A record removed or corrupted underneath the listing must not
-			// make the whole collection unreadable.
+			// make the whole collection unreadable — but a corrupt one is
+			// reported, because it is invisible everywhere else.
+			if IsMalformed(err) {
+				unreadable = append(unreadable, key)
+			}
 			continue
 		}
 		out = append(out, value)
 	}
-	return v.appendLegacy(ctx, out, newestByID)
+	return v.appendLegacy(ctx, out, unreadable, newestByID)
 }
 
 // appendLegacy adds records that exist only in the pre-versioned layout.
-func (v *Versions[T]) appendLegacy(ctx context.Context, out []T, versioned map[string]string) ([]T, error) {
+func (v *Versions[T]) appendLegacy(
+	ctx context.Context,
+	out []T,
+	unreadable []string,
+	versioned map[string]string,
+) ([]T, []string, error) {
 	if v.legacy == nil {
-		return out, nil
+		return out, unreadable, nil
 	}
 	keys, err := v.legacy.Keys(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, key := range keys {
 		id, ok := strings.CutPrefix(key, v.legacy.prefix+"/")
@@ -213,11 +228,14 @@ func (v *Versions[T]) appendLegacy(ctx context.Context, out []T, versioned map[s
 		}
 		value, err := v.legacy.GetKey(ctx, key)
 		if err != nil {
+			if IsMalformed(err) {
+				unreadable = append(unreadable, key)
+			}
 			continue
 		}
 		out = append(out, value)
 	}
-	return out, nil
+	return out, unreadable, nil
 }
 
 // IDs returns the first-level record ids the collection holds, unescaped and in

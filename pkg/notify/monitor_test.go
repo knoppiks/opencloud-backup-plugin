@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -356,5 +357,83 @@ func TestReporter_SuccessIsSilent(t *testing.T) {
 	got, err := events.List(context.Background(), "s1", 0)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("events after a successful run = %+v (%v)", got, err)
+	}
+}
+
+// brokenConfigs reports an unreadable document alongside the readable ones,
+// as the durable store does when a document will not decode.
+type brokenConfigs struct {
+	spacecfg.Store
+
+	unreadable []string
+}
+
+func (b brokenConfigs) List(ctx context.Context) ([]spacecfg.Config, []string, error) {
+	configs, _, err := b.Store.List(ctx)
+	return configs, b.unreadable, err
+}
+
+// A Space whose configuration is corrupt is not stale — it is invisible. It
+// drops out of the schedule and out of this sweep, so without this the operator
+// is never told anything at all.
+func TestSweep_ReportsUnreadableStateToTheOperator(t *testing.T) {
+	ctx := context.Background()
+	h := newMonitorHarness(t, MonitorOptions{})
+	h.monitor.configs = brokenConfigs{Store: h.configs, unreadable: []string{"spaceconfigs/s1/000"}}
+
+	h.monitor.Sweep(ctx, h.clock.Now())
+
+	events, err := h.events.ListOperator(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListOperator: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != KindStateUnreadable {
+		t.Fatalf("operator events = %+v, want one unreadable-state event", events)
+	}
+	// The document's key contains the space id it belongs to; an operator event
+	// must not name a Space (decisions.md #15).
+	if events[0].SpaceID != "" || strings.Contains(events[0].Message, "s1") {
+		t.Fatalf("the operator event leaks a space: %+v", events[0])
+	}
+	if !strings.Contains(events[0].Message, "1 stored record") {
+		t.Fatalf("the operator event does not carry the count: %q", events[0].Message)
+	}
+}
+
+// Nagging is how notifications get muted, so the operator hears about an
+// unchanged problem on the same repeat cadence as everything else.
+func TestSweep_DoesNotRepeatTheUnreadableStateEvent(t *testing.T) {
+	ctx := context.Background()
+	h := newMonitorHarness(t, MonitorOptions{RepeatAfter: 24 * time.Hour})
+	h.monitor.configs = brokenConfigs{Store: h.configs, unreadable: []string{"spaceconfigs/s1/000"}}
+
+	h.monitor.Sweep(ctx, h.clock.Now())
+	h.clock.Advance(time.Hour)
+	h.monitor.Sweep(ctx, h.clock.Now())
+
+	events, _ := h.events.ListOperator(ctx, 10)
+	if len(events) != 1 {
+		t.Fatalf("operator events = %d, want the repeat suppressed", len(events))
+	}
+
+	h.clock.Advance(24 * time.Hour)
+	h.monitor.Sweep(ctx, h.clock.Now())
+	events, _ = h.events.ListOperator(ctx, 10)
+	if len(events) != 2 {
+		t.Fatalf("operator events = %d, want a repeat once the window passed", len(events))
+	}
+}
+
+// A sweep with nothing wrong says nothing.
+func TestSweep_SaysNothingWhenEverythingIsReadable(t *testing.T) {
+	ctx := context.Background()
+	h := newMonitorHarness(t, MonitorOptions{})
+	h.configure("s1", "0 2 * * *", true)
+
+	h.monitor.Sweep(ctx, h.clock.Now())
+
+	events, _ := h.events.ListOperator(ctx, 10)
+	if len(events) != 0 {
+		t.Fatalf("operator events = %+v, want none", events)
 	}
 }

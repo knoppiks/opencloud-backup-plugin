@@ -90,8 +90,15 @@ type Store interface {
 	// Delete removes a Space's configuration. Deleting a configuration never
 	// touches the snapshots already on the target.
 	Delete(ctx context.Context, spaceID string) error
-	// List returns every configured Space (used by the Phase-6 scheduler).
-	List(ctx context.Context) ([]Config, error)
+	// List returns every configured Space (used by the Phase-6 scheduler),
+	// together with the keys of any configuration documents that could not be
+	// decoded.
+	//
+	// The second return exists because the alternative is silence: a Space
+	// whose configuration is corrupt simply stops appearing in the schedule,
+	// which is precisely the failure this service is built to notice. Callers
+	// must surface it — the store cannot, it has no logger and no audience.
+	List(ctx context.Context) (configs []Config, unreadable []string, err error)
 }
 
 // ErrNotFound is returned when a Space has no backup configuration.

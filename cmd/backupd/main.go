@@ -451,11 +451,17 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 				_, err := runner.RunScheduled(ctx, spaceID)
 				return err
 			}),
-			Recoverer:     locker,
+			Recoverer: locker,
+			// The run lock answers "is this Space already running" in one read,
+			// for every process, instead of scanning run history every tick.
+			Runs: locker,
+			// Notifications are trimmed with the run history they describe;
+			// nothing else in the service would ever trim them.
+			Events:        events,
 			Clock:         scheduler.SystemClock(),
 			Logger:        logger,
 			OnRunFinished: reporter.RunFinished,
-			OnTick:        monitor.Sweep,
+			OnSweep:       monitor.Sweep,
 		}, schedOpts)
 		if err != nil {
 			return service{}, cleanup, err
@@ -486,11 +492,15 @@ func dialCS3() (*cs3.Client, func(), error) {
 		return nil, noop, err
 	}
 	gw := gateway.NewGatewayAPIClient(conn)
-	auth := cs3.ServiceAccountAuth{
+	// Cached: a token is good for minutes and every gateway call needs one, so
+	// minting per call would double the traffic this service sends OpenCloud
+	// for no benefit. The cache honours the token's own expiry and drops it the
+	// moment reva rejects one.
+	auth := cs3.NewCachedAuth(cs3.ServiceAccountAuth{
 		Gateway:  gw,
 		ClientID: os.Getenv("OC_SERVICE_ACCOUNT_ID"),
 		Secret:   os.Getenv("OC_SERVICE_ACCOUNT_SECRET"),
-	}
+	})
 	client := cs3.NewClient(gw, auth, cs3.WithHTTPClient(dataGatewayClient()))
 	return client, func() { _ = conn.Close() }, nil
 }
@@ -597,7 +607,11 @@ func schedulerOptions() (scheduler.Options, error) {
 	opts := scheduler.Options{
 		MaxConcurrent: maxConcurrent,
 		HistoryWindow: time.Duration(historyDays) * 24 * time.Hour,
-		Location:      time.UTC,
+		// "Nightly at half past two" means the family's night. The container's
+		// own zone (TZ) is the closest thing to that this process can know, and
+		// a deployment that sets TZ for its logs has already said which zone it
+		// thinks in; defaulting to UTC would quietly disagree with it.
+		Location: time.Local,
 	}
 	if name := os.Getenv("SCHEDULE_TIMEZONE"); name != "" {
 		loc, err := time.LoadLocation(name)
@@ -693,9 +707,9 @@ func envInt(key string, fallback int) (int, error) {
 
 // dataGatewayClient streams file bytes from reva's data gateway. It has no
 // overall timeout on purpose — a single large file may legitimately take a long
-// while — but bounds the phases before the body starts flowing, so a wedged
-// gateway cannot stall a run indefinitely. The run itself is bounded by
-// backup.DefaultRunTimeout.
+// while — but bounds the phases before the body starts flowing. Once bytes are
+// moving the client's own inactivity guard takes over (cs3.DefaultStallTimeout),
+// and the run itself is bounded by backup.DefaultRunTimeout.
 func dataGatewayClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 60 * time.Second

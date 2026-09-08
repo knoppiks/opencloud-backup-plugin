@@ -126,7 +126,7 @@ func TestVersionsLatestReturnsTheNewestOfEachRecord(t *testing.T) {
 		}
 	}
 
-	all, err := versions.Latest(ctx)
+	all, _, err := versions.Latest(ctx)
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestVersionsFallsBackToTheLegacyLayout(t *testing.T) {
 
 	// Listing sees each record once: versioned where a version exists, legacy
 	// where it does not.
-	all, err := versions.Latest(ctx)
+	all, _, err := versions.Latest(ctx)
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
 	}

@@ -82,6 +82,25 @@ Deviations from the plan above, all recorded in `decisions.md`:
   identity, per locked decision #15.
 - **Live progress not tracked**; counts are recorded when a run finishes.
 
+### Hardened by R6 (September 2026 review)
+
+The Phase-6 machinery worked and stopped working quietly. See the R6 amendments
+in `decisions.md` for the reasoning; in short:
+
+- A run releases its lock only once its outcome is durable, the outcome write is
+  retried on a detached context, and a run that cannot record one keeps its lease
+  so recovery closes it out. Recovery additionally sweeps for job records with no
+  lock behind them.
+- Scheduled runs are bounded in time, and data-gateway transfers must keep making
+  progress.
+- Due-ness asks the run lock instead of trusting a job record's state, and reads
+  one history record instead of ten.
+- Unreadable state documents are logged (by key) and reported to the operator (as
+  a count).
+- Notification history is pruned with the run history.
+- The staleness sweep runs every 15 minutes; the worker's reva token is cached.
+- Schedules default to the container's timezone.
+
 ## Risks / notes
 
 - Lease/lock correctness on crash is the classic subtle bug — cover with tests,

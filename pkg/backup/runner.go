@@ -53,6 +53,8 @@ var (
 	ErrRunInProgress = errors.New("backup: a run is already in progress for this space")
 	// ErrRunFailed means the snapshot itself failed.
 	ErrRunFailed = errors.New("backup: snapshot run failed")
+	// ErrRunTimedOut means the run exhausted its time limit and was stopped.
+	ErrRunTimedOut = errors.New("backup: the run exceeded its time limit")
 )
 
 // Deps are the Runner's injected collaborators. Every one is an interface so a
@@ -77,9 +79,12 @@ type Deps struct {
 	Logger *slog.Logger
 	// Clock is injected for deterministic tests.
 	Clock Clock
-	// RunTimeout bounds a background run started by StartBackup.
-	// Zero uses DefaultRunTimeout.
+	// RunTimeout bounds a background run started by StartBackup and every
+	// scheduled run. Zero uses DefaultRunTimeout.
 	RunTimeout time.Duration
+	// Outcome tunes how a run's terminal outcome is written. The zero value is
+	// the production setting; tests shorten the retry backoff.
+	Outcome jobs.RecordOptions
 }
 
 // DefaultRunTimeout bounds a background backup run. It is generous: a first run
@@ -157,17 +162,23 @@ func (r *Runner) RunBackup(ctx context.Context, spaceID string) (Result, error) 
 // the status board tell "your backup ran last night" from "you pressed the
 // button". The credentials and the code path are identical: the SRW-wrapped
 // Data Key (decisions.md #1), with no user session involved.
+// It is also the only run nobody is watching, so it is bounded in time exactly
+// like a backgrounded manual run: a target that accepts a connection and then
+// stops responding must not hold one of the scheduler's few run slots until the
+// process is restarted.
 func (r *Runner) RunScheduled(ctx context.Context, spaceID string) (Result, error) {
-	return r.run(ctx, spaceID, jobs.TriggerSchedule)
+	runCtx, cancel := context.WithTimeout(ctx, r.runTimeout())
+	defer cancel()
+	return r.run(runCtx, spaceID, jobs.TriggerSchedule)
 }
 
-// run executes one backup run to completion.
+// run executes one backup run to completion. The run lock is released by
+// finish, once the outcome is durable — see settle.
 func (r *Runner) run(ctx context.Context, spaceID string, trigger jobs.Trigger) (Result, error) {
 	pending, err := r.begin(ctx, spaceID, trigger)
 	if err != nil {
 		return Result{}, err
 	}
-	defer pending.release()
 	return r.finish(ctx, pending)
 }
 
@@ -186,7 +197,6 @@ func (r *Runner) StartBackup(ctx context.Context, spaceID string) (string, error
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.runTimeout())
 	go func() {
 		defer cancel()
-		defer pending.release()
 		_, _ = r.finish(runCtx, pending)
 	}()
 	return pending.job.ID, nil
@@ -229,24 +239,23 @@ func (r *Runner) begin(ctx context.Context, spaceID string, trigger jobs.Trigger
 	return run{space: space, job: job, startedAt: r.deps.Clock.Now(), release: release}, nil
 }
 
-// finish performs the snapshot and records the outcome.
+// finish performs the snapshot, records the outcome, and gives the run lock
+// back. It owns the lock from the moment begin returned it.
 func (r *Runner) finish(ctx context.Context, pending run) (Result, error) {
 	spaceID := pending.space.ID
 
 	info, err := r.snapshotSpace(ctx, pending.space)
 	if err != nil {
-		r.fail(ctx, pending.job.ID, spaceID, err)
+		r.fail(ctx, pending, err)
 		return Result{}, err
 	}
 
-	if err := r.deps.Jobs.Finish(ctx, pending.job.ID, jobs.Outcome{
+	r.settle(ctx, pending, jobs.Outcome{
 		State:      jobs.StateSucceeded,
 		SnapshotID: string(info.ID),
 		FileCount:  info.FileCount,
 		TotalBytes: info.TotalBytes,
-	}); err != nil {
-		r.deps.Logger.Warn("could not record job success", "job", pending.job.ID, "err", err)
-	}
+	})
 
 	finishedAt := r.deps.Clock.Now()
 	r.deps.Logger.Info("backup run succeeded",
@@ -464,15 +473,35 @@ func (r *Runner) unwrapDataKey(spaceID string) ([]byte, error) {
 	return dk, nil
 }
 
-// fail records a sanitized failure on the job record.
-func (r *Runner) fail(ctx context.Context, jobID, spaceID string, cause error) {
-	if err := r.deps.Jobs.Finish(ctx, jobID, jobs.Outcome{
-		State: jobs.StateFailed,
-		Error: userMessage(cause),
-	}); err != nil {
-		r.deps.Logger.Warn("could not record job failure", "job", jobID, "err", err)
+// fail records a sanitized failure on the job record and gives the lock back.
+//
+// A run stopped by its own deadline is reported as such: the snapshot error
+// underneath it describes whichever read happened to be in flight when the
+// deadline passed, which tells a user nothing they can act on.
+func (r *Runner) fail(ctx context.Context, pending run, cause error) {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		cause = fmt.Errorf("%w: %w", ErrRunTimedOut, cause)
 	}
-	r.deps.Logger.Error("backup run failed", "space", spaceID, "job", jobID, "err", cause)
+	r.settle(ctx, pending, jobs.Outcome{State: jobs.StateFailed, Error: userMessage(cause)})
+	r.deps.Logger.Error("backup run failed", "space", pending.space.ID, "job", pending.job.ID, "err", cause)
+}
+
+// settle records the run's terminal outcome and then, and only then, drops the
+// run lock.
+//
+// The order is the point. Dropping the lock first and recording second is how a
+// Space gets wedged: if the write is lost, the job record stays at "running",
+// the lease it would have been recovered from is already gone, and every later
+// scheduler tick sees a run in progress that does not exist. Keeping the lease
+// instead is not a leak — it expires on its own, and recovery then closes the
+// run out and frees the Space.
+func (r *Runner) settle(ctx context.Context, pending run, out jobs.Outcome) {
+	if err := jobs.RecordOutcome(ctx, r.deps.Jobs, pending.job.ID, out, r.deps.Outcome); err != nil {
+		r.deps.Logger.Error("could not record the run's outcome; keeping the run lock so the run is recovered",
+			"space", pending.space.ID, "job", pending.job.ID, "err", err)
+		return
+	}
+	pending.release()
 }
 
 // userMessage maps an internal error onto text safe to store and show. Anything
@@ -480,6 +509,8 @@ func (r *Runner) fail(ctx context.Context, jobID, spaceID string, cause error) {
 // (AGENTS.md error rules).
 func userMessage(err error) string {
 	switch {
+	case errors.Is(err, ErrRunTimedOut):
+		return "the backup run timed out"
 	case errors.Is(err, ErrNotConfigured):
 		return "backup is not configured for this space"
 	case errors.Is(err, ErrTargetUnavailable):

@@ -42,6 +42,12 @@ const (
 	// leaseWriteTimeout bounds a renewal or release write, which run on their
 	// own context because the run's context may already be cancelled.
 	leaseWriteTimeout = 30 * time.Second
+	// DefaultOrphanSweep is how often Recover looks for runs recorded as
+	// running that no lease corresponds to. It is slow because the sweep reads
+	// job documents while the lease pass only lists leases, and because the
+	// thing it catches — an outcome write that was lost after the lock was
+	// dropped — is rare by construction.
+	DefaultOrphanSweep = time.Hour
 )
 
 // MessageInterrupted is the sanitized error recorded on a run whose process
@@ -58,15 +64,17 @@ type lease struct {
 
 // LeaseLocker is a Locker whose locks survive — and expire after — a crash.
 type LeaseLocker struct {
-	docs   *state.Documents[lease]
-	clock  Clock
-	ttl    time.Duration
-	owner  string
-	logger *slog.Logger
-	after  func(time.Duration) <-chan time.Time
+	docs        *state.Documents[lease]
+	clock       Clock
+	ttl         time.Duration
+	orphanSweep time.Duration
+	owner       string
+	logger      *slog.Logger
+	after       func(time.Duration) <-chan time.Time
 
-	mu    sync.Mutex
-	local map[string]chan struct{}
+	mu         sync.Mutex
+	local      map[string]chan struct{}
+	lastOrphan time.Time
 }
 
 var _ Locker = (*LeaseLocker)(nil)
@@ -75,6 +83,9 @@ var _ Locker = (*LeaseLocker)(nil)
 type LeaseOptions struct {
 	// TTL is the lease lifetime; zero uses DefaultLeaseTTL.
 	TTL time.Duration
+	// OrphanSweep is how often Recover looks for running jobs with no lease;
+	// zero uses DefaultOrphanSweep.
+	OrphanSweep time.Duration
 	// Clock is injected for deterministic tests.
 	Clock Clock
 	// Logger receives lease diagnostics. It is never given key material.
@@ -93,6 +104,9 @@ func NewLeaseLocker(st state.Store, opts LeaseOptions) (*LeaseLocker, error) {
 	if opts.TTL <= 0 {
 		opts.TTL = DefaultLeaseTTL
 	}
+	if opts.OrphanSweep <= 0 {
+		opts.OrphanSweep = DefaultOrphanSweep
+	}
 	if opts.Clock == nil {
 		opts.Clock = systemClock{}
 	}
@@ -110,26 +124,36 @@ func NewLeaseLocker(st state.Store, opts LeaseOptions) (*LeaseLocker, error) {
 		opts.Owner = owner
 	}
 	return &LeaseLocker{
-		docs:   state.NewDocuments[lease](st, leasePrefix),
-		clock:  opts.Clock,
-		ttl:    opts.TTL,
-		owner:  opts.Owner,
-		logger: opts.Logger,
-		after:  opts.After,
-		local:  make(map[string]chan struct{}),
+		docs:        state.NewDocuments[lease](st, leasePrefix),
+		clock:       opts.Clock,
+		ttl:         opts.TTL,
+		orphanSweep: opts.OrphanSweep,
+		owner:       opts.Owner,
+		logger:      opts.Logger,
+		after:       opts.After,
+		local:       make(map[string]chan struct{}),
+		// The first orphan sweep is one interval away, not at startup: the
+		// lease pass already covers everything a crashed process left behind,
+		// and reading the whole run history is not what a service should do
+		// before it accepts its first request.
+		lastOrphan: opts.Clock.Now(),
 	}, nil
 }
 
 // Acquire takes the Space's run lock.
+//
+// The process-local reservation is taken first and the mutex is dropped before
+// any I/O: the durable read and write below go to OpenCloud, and holding the
+// lock that serialises every Space across a network round-trip would make one
+// slow state store stall every other Space's run. The reservation is undone on
+// every failure path, so a refused acquire leaves nothing behind.
 func (l *LeaseLocker) Acquire(ctx context.Context, spaceID string) (func(), error) {
 	if spaceID == "" {
 		return nil, fmt.Errorf("jobs: space id required")
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if _, held := l.local[spaceID]; held {
+	stop, ok := l.reserve(spaceID)
+	if !ok {
 		return nil, ErrLocked
 	}
 
@@ -137,6 +161,7 @@ func (l *LeaseLocker) Acquire(ctx context.Context, spaceID string) (func(), erro
 	switch current, err := l.docs.Get(ctx, spaceID); {
 	case err == nil:
 		if now.Before(current.ExpiresAt) {
+			l.undoReserve(spaceID, stop)
 			return nil, ErrLocked
 		}
 		// Expired: the holder is gone. Recover cleans up the job record; taking
@@ -144,15 +169,15 @@ func (l *LeaseLocker) Acquire(ctx context.Context, spaceID string) (func(), erro
 		l.logger.Warn("taking over an expired run lease", "space", spaceID)
 	case state.IsNotFound(err):
 	default:
+		l.undoReserve(spaceID, stop)
 		return nil, fmt.Errorf("jobs: read run lease: %w", err)
 	}
 
 	if err := l.write(ctx, spaceID, now); err != nil {
+		l.undoReserve(spaceID, stop)
 		return nil, err
 	}
 
-	stop := make(chan struct{})
-	l.local[spaceID] = stop
 	go l.renewUntil(spaceID, stop)
 
 	var once sync.Once
@@ -162,6 +187,27 @@ func (l *LeaseLocker) Acquire(ctx context.Context, spaceID string) (func(), erro
 			l.release(spaceID)
 		})
 	}, nil
+}
+
+// reserve claims the Space in this process, reporting whether it was free.
+func (l *LeaseLocker) reserve(spaceID string) (chan struct{}, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, held := l.local[spaceID]; held {
+		return nil, false
+	}
+	stop := make(chan struct{})
+	l.local[spaceID] = stop
+	return stop, true
+}
+
+// undoReserve gives the local claim back, and only if it is still ours.
+func (l *LeaseLocker) undoReserve(spaceID string, stop chan struct{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if held, ok := l.local[spaceID]; ok && held == stop {
+		delete(l.local, spaceID)
+	}
 }
 
 // write stores a lease valid from now.
@@ -218,13 +264,30 @@ func (l *LeaseLocker) release(spaceID string) {
 	}
 }
 
-// Recover closes out runs abandoned by a process that died holding a lease: the
-// lease is dropped and the Space's unfinished jobs are marked failed, so the
-// history shows what happened instead of a run that is "running" forever.
+// Recover closes out runs nothing is executing any more, in two passes:
+//
+//   - Expired leases: a process died holding the lock. The lease is dropped and
+//     the Space's unfinished jobs are marked failed, so the history shows what
+//     happened instead of a run that is "running" forever.
+//   - Orphaned records: a run that ended but could not record its outcome, and
+//     whose lock is already gone. Nothing else would ever revisit these, and a
+//     Space carrying one looks permanently busy. This pass reads job documents,
+//     so it runs on its own slow cadence (LeaseOptions.OrphanSweep) rather than
+//     on every tick.
 //
 // It is safe to call repeatedly — the scheduler calls it on every tick — and it
 // leaves live leases (including this process's own) alone.
 func (l *LeaseLocker) Recover(ctx context.Context, store Store) (int, error) {
+	recovered, err := l.recoverExpired(ctx, store)
+	if err != nil {
+		return recovered, err
+	}
+	orphans, err := l.recoverOrphans(ctx, store)
+	return recovered + orphans, err
+}
+
+// recoverExpired reaps leases whose holder is gone.
+func (l *LeaseLocker) recoverExpired(ctx context.Context, store Store) (int, error) {
 	keys, err := l.docs.Keys(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("jobs: list run leases: %w", err)
@@ -252,6 +315,89 @@ func (l *LeaseLocker) Recover(ctx context.Context, store Store) (int, error) {
 		recovered += failed
 	}
 	return recovered, nil
+}
+
+// recoverOrphans closes out jobs recorded as running that no lock corresponds
+// to.
+//
+// This is the failure the expired-lease pass cannot see. A run that ends
+// releases its lock and then records its outcome; if that record is lost the
+// lock is already gone, so there is no lease to expire and no trace left for
+// the pass above. The Space is then wedged: every scheduler tick sees a run in
+// progress that no longer exists. Reading the outcome the other way round — the
+// jobs first, the leases second — is what closes it.
+//
+// Absence of a lease is only evidence once: a job whose run is genuinely under
+// way is either held in this process or covered by a live lease, and a run
+// takes its lock before it creates its job record, so there is no window in
+// which a legitimate run looks orphaned.
+func (l *LeaseLocker) recoverOrphans(ctx context.Context, store Store) (int, error) {
+	if store == nil || !l.orphanSweepDue() {
+		return 0, nil
+	}
+
+	running, err := store.ListRunning(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("jobs: list running runs: %w", err)
+	}
+
+	recovered := 0
+	for _, j := range running {
+		if l.holdsLocally(j.SpaceID) {
+			continue
+		}
+		live, err := l.leaseLive(ctx, j.SpaceID)
+		if err != nil {
+			return recovered, err
+		}
+		if live {
+			continue
+		}
+		if err := store.Finish(ctx, j.ID, Outcome{State: StateFailed, Error: MessageInterrupted}); err != nil {
+			return recovered, fmt.Errorf("jobs: close orphaned run: %w", err)
+		}
+		l.logger.Warn("closed out a run with no lock behind it", "space", j.SpaceID, "job", j.ID)
+		recovered++
+	}
+	return recovered, nil
+}
+
+// orphanSweepDue reports whether the slow pass is due, and claims the slot.
+func (l *LeaseLocker) orphanSweepDue() bool {
+	now := l.clock.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if now.Sub(l.lastOrphan) < l.orphanSweep {
+		return false
+	}
+	l.lastOrphan = now
+	return true
+}
+
+// Busy reports whether a run holds the Space's lock, here or in the durable
+// lease. It answers the scheduler's "is something already running" question
+// without reading run history, and it counts every kind of run — a restore
+// holds the same lock a backup does.
+//
+// An expired lease is not busy: its holder is gone, and Recover will close the
+// run out.
+func (l *LeaseLocker) Busy(ctx context.Context, spaceID string) (bool, error) {
+	if l.holdsLocally(spaceID) {
+		return true, nil
+	}
+	return l.leaseLive(ctx, spaceID)
+}
+
+// leaseLive reports whether a Space's durable lease exists and has not expired.
+func (l *LeaseLocker) leaseLive(ctx context.Context, spaceID string) (bool, error) {
+	rec, err := l.docs.Get(ctx, spaceID)
+	switch {
+	case state.IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("jobs: read run lease: %w", err)
+	}
+	return l.clock.Now().Before(rec.ExpiresAt), nil
 }
 
 // ActiveLeases counts the run leases that have not expired at now.

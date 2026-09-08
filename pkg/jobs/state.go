@@ -36,11 +36,14 @@ type StateStore struct {
 	docs  *state.Documents[Job]
 	clock Clock
 
-	// mu guards the id index. The index maps job id -> full document key, so a
-	// job can be found by id without knowing its Space.
-	mu      sync.Mutex
-	index   map[string]string
-	indexed bool
+	// mu guards the id index and the terminal set. The index maps job id ->
+	// full document key, so a job can be found by id without knowing its Space;
+	// terminal holds the keys already known to hold a finished run, so a
+	// repeated ListRunning re-reads only what it has not seen.
+	mu       sync.Mutex
+	index    map[string]string
+	indexed  bool
+	terminal map[string]struct{}
 }
 
 var _ Store = (*StateStore)(nil)
@@ -51,9 +54,10 @@ func NewStateStore(st state.Store, clock Clock) *StateStore {
 		clock = systemClock{}
 	}
 	return &StateStore{
-		docs:  state.NewDocuments[Job](st, jobsPrefix),
-		clock: clock,
-		index: make(map[string]string),
+		docs:     state.NewDocuments[Job](st, jobsPrefix),
+		clock:    clock,
+		index:    make(map[string]string),
+		terminal: make(map[string]struct{}),
 	}
 }
 
@@ -148,6 +152,7 @@ func (s *StateStore) Finish(ctx context.Context, id string, out Outcome) error {
 	if err := s.docs.ReplaceKey(ctx, key, applyOutcome(j, out, s.clock.Now())); err != nil {
 		return fmt.Errorf("jobs: store job: %w", err)
 	}
+	s.markSettled(key)
 	return nil
 }
 
@@ -173,26 +178,60 @@ func (s *StateStore) PruneBefore(ctx context.Context, cutoff time.Time) (int, er
 		if err := s.docs.DeleteKey(ctx, key); err != nil && !state.IsNotFound(err) {
 			return removed, fmt.Errorf("jobs: prune history: %w", err)
 		}
-		s.forget(j.ID)
+		s.forget(j.ID, key)
 		removed++
 	}
 	return removed, nil
 }
 
-// ListRunning returns the jobs of one Space that never reached a terminal
-// state. Restart recovery uses it to close out runs whose process is gone.
-func (s *StateStore) ListRunning(ctx context.Context, spaceID string) ([]Job, error) {
-	all, err := s.List(ctx, spaceID)
+// ListRunning returns every job, in any Space, that never reached a terminal
+// state.
+//
+// Nothing in the key says whether a run finished, so answering this means
+// reading documents. What keeps that affordable is that the answer, once given,
+// never changes: a terminal job stays terminal. Keys already seen terminal are
+// therefore remembered and never read again, so the first sweep of a process
+// reads the history once and every later sweep reads only what is new.
+func (s *StateStore) ListRunning(ctx context.Context) ([]Job, error) {
+	keys, err := s.docs.Keys(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("jobs: list history: %w", err)
 	}
+
 	var out []Job
-	for _, j := range all {
-		if !j.State.Terminal() {
-			out = append(out, j)
+	for _, key := range keys {
+		if s.settled(key) {
+			continue
 		}
+		j, err := s.docs.GetKey(ctx, key)
+		if err != nil {
+			// A record deleted or corrupted underneath us must not hide the
+			// running jobs this exists to find.
+			continue
+		}
+		if j.State.Terminal() {
+			s.markSettled(key)
+			continue
+		}
+		out = append(out, j)
 	}
+	sortNewestFirst(out)
 	return out, nil
+}
+
+// settled reports whether a key has already been read and found terminal.
+func (s *StateStore) settled(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.terminal[key]
+	return ok
+}
+
+// markSettled remembers that a key holds a finished run.
+func (s *StateStore) markSettled(key string) {
+	s.mu.Lock()
+	s.terminal[key] = struct{}{}
+	s.mu.Unlock()
 }
 
 // keyFor resolves a job id to its document key, building the index on first
@@ -237,9 +276,14 @@ func (s *StateStore) remember(id, key string) {
 	s.mu.Unlock()
 }
 
-func (s *StateStore) forget(id string) {
+// forget drops a job from both caches. The key is optional: a lookup that found
+// nothing knows the id but not where it would have lived.
+func (s *StateStore) forget(id string, key ...string) {
 	s.mu.Lock()
 	delete(s.index, id)
+	for _, k := range key {
+		delete(s.terminal, k)
+	}
 	s.mu.Unlock()
 }
 

@@ -147,7 +147,7 @@ func TestList_SortedBySpaceID(t *testing.T) {
 			t.Fatalf("Put %s: %v", id, err)
 		}
 	}
-	got, err := store.List(ctx)
+	got, _, err := store.List(ctx)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestMemoryStore_ConcurrentAccess(t *testing.T) {
 	}()
 	for range 100 {
 		_, _ = store.Get(ctx, "s1")
-		_, _ = store.List(ctx)
+		_, _, _ = store.List(ctx)
 	}
 	<-done
 }

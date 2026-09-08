@@ -112,6 +112,11 @@ type Store interface {
 	// ListRecent returns at most limit of a Space's jobs, newest first. A limit
 	// of zero or less means "all".
 	ListRecent(ctx context.Context, spaceID string, limit int) ([]Job, error)
+	// ListRunning returns every job, in any Space, that never reached a
+	// terminal state. Recovery uses it to find runs whose process is gone: a
+	// record left at "running" makes its Space look permanently busy, and
+	// nothing else in the system would ever revisit it.
+	ListRunning(ctx context.Context) ([]Job, error)
 	// Finish records a terminal state and the run's outcome in one write.
 	Finish(ctx context.Context, id string, out Outcome) error
 	// PruneBefore deletes finished jobs created before cutoff and returns how

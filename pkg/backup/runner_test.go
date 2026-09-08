@@ -35,7 +35,10 @@ type harness struct {
 	logs      *bytes.Buffer
 }
 
-func newHarness(t *testing.T) *harness {
+// newHarness wires a Runner over in-memory stores. Tweaks are applied to the
+// dependencies before the Runner is built, so a test can substitute one
+// collaborator without rebuilding the rest.
+func newHarness(t *testing.T, tweaks ...func(*Deps)) *harness {
 	t.Helper()
 
 	space := cs3.Space{
@@ -69,7 +72,7 @@ func newHarness(t *testing.T) *harness {
 	h.dk = seedKeys(t, h.keys, wrapper, testSpaceID)
 	h.rk = seedRK(t, h.keys, testSpaceID, h.dk)
 
-	runner, err := NewRunner(Deps{
+	deps := Deps{
 		Spaces:    reader,
 		Configs:   h.configs,
 		Targets:   h.targets,
@@ -82,7 +85,15 @@ func newHarness(t *testing.T) *harness {
 		Envelopes: h.envelopes,
 		Logger:    slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Clock:     h.clock,
-	})
+		// Tests must not spend the production retry backoff; a negative value
+		// means "no pause".
+		Outcome: jobs.RecordOptions{Backoff: -1},
+	}
+	for _, tweak := range tweaks {
+		tweak(&deps)
+	}
+
+	runner, err := NewRunner(deps)
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
