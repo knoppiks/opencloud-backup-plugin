@@ -117,6 +117,19 @@ jobs:
         path: dist/decrypt-*
         if-no-files-found: error
 
+  image:
+    name: container image (build only)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    # Nothing is published: there is no release process yet, and an image nobody
+    # can deploy is not worth a registry, a tag scheme and a signing key. What
+    # this job buys is that the Dockerfile — which is where the entrypoint
+    # contract deploy/ depends on actually lives — cannot rot unnoticed.
+    - name: docker build
+      run: docker build -t opencloud-backupd:ci .
+
   manifests:
     name: k8s manifests (kubeconform)
     runs-on: ubuntu-latest

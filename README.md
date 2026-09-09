@@ -87,6 +87,13 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
 
 ## Deployment preconditions
 
+The image is built from the `Dockerfile` in this repository (`make image`) and
+pushed to a registry of your own; none is published yet. It contains the service
+and the admin `takeout` tool, runs as uid 65532, and starts the service with no
+arguments — an argument is an operator subcommand, which is how key rotation
+runs from the same image. The offline `decrypt` CLI is deliberately not in it;
+that one belongs on the user's machine.
+
 Four things the service assumes. Three of them it checks at startup and refuses
 to run rather than working in a way that looks fine and is not. The first it
 cannot check, so it is on you.
@@ -183,11 +190,14 @@ store still exists, the data is recoverable. This path needs **no OpenCloud, no
 database, and no server**: just the S3 store and the user's Recovery Key.
 
 **Step 1 — the administrator extracts the backup.** This moves *encrypted* data
-only. The `takeout` tool cannot decrypt anything; there is no option to give it a
-key, so an administrator can never read a user's files.
+only. The `takeout` tool cannot decrypt anything: there is no option to give it a
+key, and the code that could unwrap one is not built into it. An administrator
+can never read a user's files.
 
-Credentials come from the environment, never from flags: a command line is
-readable by every process on the machine.
+It ships in the service image (`--entrypoint /takeout`), so this runs from the
+cluster the deployment already has, without OpenCloud being up. Credentials come
+from the environment, never from flags: a command line is readable by every
+process on the machine.
 
 ```sh
 export S3_ACCESS_KEY_ID=...        # credentials for the backup store
