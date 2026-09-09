@@ -1,9 +1,9 @@
 package state
 
 // In-memory Store. It is the reference implementation the unit tests exercise,
-// and the fallback the service runs with when no durable backend is configured
-// (in which case schedules and history do not survive a restart — the service
-// says so at startup rather than pretending otherwise).
+// and the store the service uses only when an operator opts in explicitly with
+// STATE_BACKEND=memory. A missing durable backend is a startup error, not a
+// silent fallback: what would be lost includes every wrapped Data Key.
 
 import (
 	"context"

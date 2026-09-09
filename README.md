@@ -12,9 +12,13 @@ backups **without ever seeing the plaintext content** of a user's data.
 > OpenCloud Space is snapshotted, encrypted and deduplicated onto an S3 target —
 > and **both restore paths work**: an admin Take-Out that the user decrypts
 > offline with their Recovery Key (verified with OpenCloud stopped), and a
-> user-triggered restore back into their Space. Scheduling and the Web UI are
-> still to come. The design and phased roadmap live in
-> [`.agents/plan/`](.agents/plan/).
+> user-triggered restore back into their Space. Unattended scheduling, retention
+> and key rotation have landed since. **There is no user interface yet**: every
+> flow below that mentions one is an HTTP API today, including the key ceremony,
+> which needs a client that generates the Recovery Key in the browser. Admin
+> management of backup targets is likewise API-less — targets come from
+> first-start seeding. Both are the next phase. The design and phased roadmap
+> live in [`.agents/plan/`](.agents/plan/).
 
 ## What it does
 
@@ -24,7 +28,11 @@ backups **without ever seeing the plaintext content** of a user's data.
   for the S3 target. The target ("Buddy S3") only ever sees encrypted, obfuscated
   objects.
 - **The user holds the key.** At setup the user gets a Recovery Key to store in
-  their password manager. It is the only thing that can decrypt their backup.
+  their password manager. It is the only way *anyone outside the server* can
+  decrypt their backup, and the only one that still works when the server is
+  gone. The server keeps its own wrapped copy of the same key — that is what
+  makes unattended backups possible, and it is a deliberate, documented
+  trade-off: this is not a zero-knowledge design.
 - **Admin-supported recovery, admin stays blind.** The admin can extract an
   encrypted "Take-Out" of a Space and hand it to the user, who decrypts it offline
   with their Recovery Key. The admin never sees plaintext and cannot restore into
@@ -61,8 +69,11 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
   and server-side, with a per-Space lock so runs never overlap. Runs are staggered
   so they do not all start at once, at most a couple run at a time, and a service
   restart neither repeats a run nor loses one. If a Space stops backing up
-  successfully, its members are told — a backup that quietly died is the failure
-  this is most worried about.
+  successfully, a notification is raised for its members — a backup that quietly
+  died is the failure this is most worried about. Member notifications are
+  recorded and served over the API; mailing them needs the user directory and is
+  not wired yet, so today the operator's log is where a failure is noticed
+  first.
 - **Retention that actually happens.** Each Space keeps its snapshots for a time
   window it chooses. Applying that window — expiring what has aged out and
   reclaiming the storage it frees, including what a failed run left behind — is
@@ -76,15 +87,17 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
 
 ## Deployment preconditions
 
-Four things the service assumes. It checks each of them at startup and refuses to
-run rather than working in a way that looks fine and is not.
+Four things the service assumes. Three of them it checks at startup and refuses
+to run rather than working in a way that looks fine and is not. The first it
+cannot check, so it is on you.
 
 - **TLS in front.** The listener speaks plain HTTP. A Space's Data Key is sent to
   the server once, at key setup — that is the price of unattended backups, and it
   is the only key material that ever crosses the wire (the Recovery Key never
   does). Put the service behind an ingress that terminates TLS on the same origin
   as OpenCloud, or set `TLS_CERT_FILE` and `TLS_KEY_FILE` and let it terminate
-  TLS itself.
+  TLS itself. **Nothing enforces this from inside the process** — it cannot see
+  what is in front of it, so it logs which mode it started in and trusts you.
 - **Exactly one instance.** Two instances against one state Space can mark each
   other's runs failed and back up the same Space twice, so the manifest deploys
   with `strategy: Recreate` — a rolling update would run two by design. Each
@@ -106,7 +119,9 @@ opens this API.
 Set `TZ` to the household's timezone. Schedules are read in the container's zone,
 because "nightly at 02:30" is about the family's night — an unset `TZ` means UTC,
 which in Berlin is 03:30 in winter and 04:30 in summer. `SCHEDULE_TIMEZONE`
-overrides it for schedules alone, and an unknown zone is refused at startup.
+overrides it for schedules alone, and an unknown zone *there* is refused at
+startup; a misspelt `TZ` is not caught by anything and silently means UTC, so
+check the startup log says the zone you meant.
 
 ## Deployment: the state Space
 
@@ -121,7 +136,10 @@ because that Space holds the server-side copy of every wrapped Data Key.
 The service **refuses to start** if the configured Space is a personal Space or
 carries any member grant. A member could delete the folder without knowing what
 it was, and losing it would mean every unattended backup for the affected Spaces
-stopping until each user re-ran the key ceremony with their Recovery Key.
+stopping until each user re-ran the key ceremony with their Recovery Key. (If
+OpenCloud is not reachable at startup the check is deferred to first use with a
+warning — an IdP or gateway that is a few seconds late must not crash-loop the
+backup service.)
 
 What lives there is metadata and ciphertext only — wrapped key envelopes and
 wrapped target credentials, never plaintext keys. Records whose loss cannot be
@@ -168,16 +186,23 @@ database, and no server**: just the S3 store and the user's Recovery Key.
 only. The `takeout` tool cannot decrypt anything; there is no option to give it a
 key, so an administrator can never read a user's files.
 
+Credentials come from the environment, never from flags: a command line is
+readable by every process on the machine.
+
 ```sh
 export S3_ACCESS_KEY_ID=...        # credentials for the backup store
 export S3_SECRET_ACCESS_KEY=...
 
+# -prefix is the deployment prefix configured on the target.
+# -insecure is needed for a plain-HTTP endpoint, which a self-hosted Garage
+# usually is; drop it if the store is behind TLS.
 takeout \
-  -endpoint buddy.example:3900 \   # the S3 endpoint
+  -endpoint buddy.example:3900 \
   -bucket   backups \
-  -prefix   oc/ \                  # as configured on the target
+  -prefix   oc/ \
   -space    <space-id> \
-  -out      ./takeout-alice
+  -out      ./takeout-alice \
+  -insecure
 ```
 
 The result is a self-contained folder: the encrypted repository, the user's
@@ -202,12 +227,13 @@ needs no key at all.
 
 ### The normal case: OpenCloud is running (Path B)
 
-The user restores from the web UI: pick a backup, confirm, done. The files
-appear in a new `Restore/<timestamp>/` folder inside their Space — existing files
-are never overwritten or deleted. Only members of a Space can do this; an
-administrator cannot restore into someone else's Space, by design.
+The user picks a backup and confirms; the files appear in a new
+`Restore/<timestamp>/` folder inside their Space — existing files are never
+overwritten or deleted. Only members of a Space can do this; an administrator
+cannot restore into someone else's Space, by design.
 
-Under the hood: `GET /api/v1/spaces/{id}/snapshots` lists the backups,
+Until the web UI lands this is two API calls with the user's own session:
+`GET /api/v1/spaces/{id}/snapshots` lists the backups,
 `POST /api/v1/spaces/{id}/restore` with `{"snapshot_id":"…"}` starts the restore
 as a background job.
 
@@ -217,18 +243,24 @@ Nothing here re-encrypts a backup. A key is replaced by re-wrapping what it
 protects, so no data is re-uploaded and no existing backup stops working.
 
 **A user's Recovery Key** (lost paper, a key that was photographed or shared):
-replace it from the web UI. The browser asks for the current Recovery Key,
-unwraps the envelope locally, and stores a new one. The old key stops working;
-the plaintext of neither key ever reaches the server. A user who has *lost* their
-Recovery Key cannot do this — there is no escrow, by design.
+the current key unwraps the envelope on the user's own device, a new key is
+generated there, and only the re-wrapped envelope is sent back
+(`POST /api/v1/spaces/{id}/backup/recovery-key/rotate`). The old key stops
+working; the plaintext of neither key ever reaches the server, and no backup is
+re-uploaded. A user who has *lost* their Recovery Key cannot do this — there is
+no escrow, by design. **The client that performs this in a browser is the next
+phase**; the server side is in place.
 
 Setting up a Space again is **not** a way to fix a lost key. The service refuses
 it, on purpose: a second setup would install a new Data Key and every existing
 backup for that Space would become unreadable.
 
 **The server's own keys** (`SRW_KEY`, `TW_KEY` — a leaked secret, a departing
-admin, a cluster restored from a snapshot). Stop the service first; the same
-image runs the command:
+admin, a cluster restored from a snapshot). Stop the service first, then run the
+command from a pod with the service's **full environment** — it reads and
+rewrites records in the state Space, so it needs `CS3_GATEWAY_ADDR`,
+`STATE_SPACE_ID` and the service account exactly as the service does. Only the
+key variables change:
 
 ```sh
 # Data-key custody. Both variables must be set; the old one is retired.

@@ -9,6 +9,7 @@ import (
 	"flag"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -55,12 +56,66 @@ func TestSourceDoesNotUseKeyUnwrappingAPIs(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"UnwrapRK", "UnwrapSRW", "DecodeRecoveryKey", "GenerateDK", "keys.WrappedDK",
-		"snapshot.Repo{", "RestoreAll", "takeout.Decrypt",
+		"snapshot.Repo{", "RestoreAll", "takeout/decrypt",
 	} {
 		if strings.Contains(string(src), forbidden) {
 			t.Errorf("takeout must not reference %s", forbidden)
 		}
 	}
+}
+
+// forbiddenDeps are packages that must never be linked into this binary. Reading
+// the source (above) catches the obvious mistake; this catches the indirect one,
+// where a package this binary already imports grows an import of its own.
+//
+// pkg/takeout/decrypt exists as a separate package for exactly this reason: the
+// admin's tool is built without the code that unwraps a Data Key and restores a
+// repository, rather than merely never calling it (decisions.md #2, #15).
+//
+// pkg/keys is deliberately *not* on this list: extraction reads an envelope's
+// public header, so the package is linked. That its unwrap functions stay
+// unreferenced is what the source audit above checks.
+var forbiddenDeps = []string{
+	"opencloud-backup-plugin/pkg/takeout/decrypt",
+	"opencloud-backup-plugin/pkg/restore",
+}
+
+func TestBinaryDoesNotLinkTheDecryptPath(t *testing.T) {
+	deps := packageDeps(t, ".")
+	for _, forbidden := range forbiddenDeps {
+		if deps[forbidden] {
+			t.Errorf("takeout links %s; the admin's tool must not be built with the ability to decrypt", forbidden)
+		}
+	}
+
+	// A control: the check above must be failing for the right reason. If the
+	// decrypt package were renamed or removed, the loop would pass vacuously.
+	userSide := packageDeps(t, "../decrypt")
+	if !userSide["opencloud-backup-plugin/pkg/takeout/decrypt"] {
+		t.Fatal("the user-side decrypt CLI no longer links pkg/takeout/decrypt; " +
+			"the forbidden-dependency list above is now checking nothing")
+	}
+}
+
+// packageDeps returns the full transitive dependency set of a package.
+func packageDeps(t *testing.T, pkg string) map[string]bool {
+	t.Helper()
+
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		// The source audit still applies; only the structural check is lost.
+		t.Skipf("go toolchain not on PATH: %v", err)
+	}
+
+	out, err := exec.Command(goBin, "list", "-deps", pkg).Output()
+	if err != nil {
+		t.Fatalf("go list -deps %s: %v", pkg, err)
+	}
+	deps := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		deps[line] = true
+	}
+	return deps
 }
 
 func TestValidateRequiresTargetAndSpace(t *testing.T) {

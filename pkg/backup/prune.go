@@ -9,9 +9,9 @@ package backup
 // Tier 1).
 //
 // It shares this package with the backup runner because it needs exactly the
-// same three secrets in the same order — the target's credentials, the Space's
-// Data Key, and nothing else — and duplicating that resolution somewhere else
-// would mean two places where a plaintext Data Key can be mishandled.
+// same two secrets, resolved the same way — the target's credentials and the
+// Space's Data Key — and duplicating that resolution somewhere else would mean
+// two places where a plaintext Data Key can be mishandled.
 
 import (
 	"context"

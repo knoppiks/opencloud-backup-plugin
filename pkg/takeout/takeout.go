@@ -1,14 +1,17 @@
-// Package takeout implements restore Path A: the admin Take-Out and the
-// user-side offline decrypt (decisions.md, "Restore paths (contract)").
+// Package takeout implements the admin half of restore Path A: extracting a
+// Space's ciphertext from a target and verifying it (decisions.md, "Restore
+// paths (contract)").
 //
-// The split of powers is the whole point and is enforced by this package's
-// shape:
+// The split of powers is the whole point and is enforced by the package layout:
 //
 //   - Extract runs with S3 access only. It has no key parameter of any kind and
 //     therefore *cannot* decrypt: the admin moves ciphertext, nothing else
 //     (decisions.md #2, #15).
-//   - Decrypt runs on the user's own machine with the Recovery Key. It touches
-//     no network and needs no OpenCloud (decisions.md, Path A).
+//   - The user-side half lives in the subpackage takeout/decrypt, which runs on
+//     the user's own machine with the Recovery Key, touches no network and needs
+//     no OpenCloud (decisions.md, Path A). Keeping it out of this package is
+//     what lets the admin's binary be built without any code that unwraps a Data
+//     Key or restores a repository, rather than merely not calling it.
 //
 // A Take-Out is a plain directory so it stays readable by hand and by future
 // tooling:
@@ -55,13 +58,8 @@ var (
 	// ErrNoEnvelope means the target holds no key envelope for the Space, so a
 	// Take-Out from it could never be decrypted.
 	ErrNoEnvelope = errors.New("takeout: no recovery key envelope found for this space")
-	// ErrWrongRecoveryKey means the Recovery Key does not open this Take-Out.
-	ErrWrongRecoveryKey = errors.New("takeout: key does not match this take-out")
 	// ErrCorrupt means the Take-Out failed its integrity check.
 	ErrCorrupt = errors.New("takeout: take-out is damaged")
-	// ErrUnsupportedEnvelope means the envelope's format version is newer than
-	// this tool understands.
-	ErrUnsupportedEnvelope = errors.New("takeout: unsupported key envelope version")
 )
 
 // SourceRef records where a Take-Out came from. It is provenance only and holds
@@ -143,8 +141,8 @@ func ReadManifest(dir string) (Manifest, error) {
 	return m, nil
 }
 
-// repoPath returns the directory holding the copied repository.
-func repoPath(dir string, m Manifest) string {
+// RepoPath returns the directory holding the copied repository.
+func (m Manifest) RepoPath(dir string) string {
 	sub := m.RepoDir
 	if sub == "" {
 		sub = RepoDir
@@ -152,8 +150,8 @@ func repoPath(dir string, m Manifest) string {
 	return filepath.Join(dir, filepath.FromSlash(sub))
 }
 
-// envelopePath returns the file holding the RK-wrapped Data Key envelope.
-func envelopePath(dir string, m Manifest) string {
+// EnvelopePath returns the file holding the RK-wrapped Data Key envelope.
+func (m Manifest) EnvelopePath(dir string) string {
 	name := m.EnvelopeRef
 	if name == "" {
 		name = EnvelopeFile

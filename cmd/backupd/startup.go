@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 
 	"opencloud-backup-plugin/pkg/snapshot"
@@ -72,6 +73,58 @@ func resolveWorkDir(logger *slog.Logger) (string, error) {
 			workDirVar, resolved, workDirAllowDiskVar)
 	}
 	return dir, nil
+}
+
+// placeholderMarker is what the shipped manifests put where a deployer must fill
+// something in.
+const placeholderMarker = "REPLACE_ME"
+
+// configPrefixes are the environment variables this service reads. The list is
+// by prefix so it does not have to track every variable, and it is scoped so a
+// placeholder belonging to some other component of the deployment is not this
+// service's business to refuse.
+var configPrefixes = []string{
+	"ADMIN_", "BACKUP_", "BACKUPD_", "BOOTSTRAP_", "CS3_", "JOB_", "NOTIFY_",
+	"OC_", "OIDC_", "PRUNE_", "SCHEDULE", "SMTP_", "SRW_KEY", "STATE_",
+	"TLS_", "TW_KEY",
+}
+
+// checkPlaceholders refuses to start on a manifest that was deployed unedited.
+//
+// The placeholders are not all equal: an unreplaced wrapping key fails loudly on
+// its own (it is not base64), while an unreplaced OIDC audience or state Space id
+// used to start perfectly well and then reject every token, or write state to a
+// Space that does not exist. "Comes up and does not work" is the worst of the
+// available outcomes, because it looks like a bug in the service rather than an
+// unfinished deployment.
+func checkPlaceholders(environ []string) error {
+	names := unreplacedPlaceholders(environ)
+	if len(names) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"%s still holds the manifest's placeholder value: fill it in before deploying "+
+			"(see deploy/ and the README preconditions)", strings.Join(names, ", "))
+}
+
+// unreplacedPlaceholders returns the names of this service's configuration
+// variables whose value still contains the placeholder marker.
+func unreplacedPlaceholders(environ []string) []string {
+	var names []string
+	for _, entry := range environ {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok || !strings.Contains(value, placeholderMarker) {
+			continue
+		}
+		for _, prefix := range configPrefixes {
+			if strings.HasPrefix(name, prefix) {
+				names = append(names, name)
+				break
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // chain composes cleanup functions, running them in the order given.

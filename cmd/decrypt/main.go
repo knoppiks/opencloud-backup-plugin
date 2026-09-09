@@ -30,6 +30,7 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/takeout"
+	takeoutdecrypt "opencloud-backup-plugin/pkg/takeout/decrypt"
 )
 
 func main() {
@@ -102,7 +103,7 @@ func verify(ctx context.Context, dir string) error {
 }
 
 func list(ctx context.Context, cfg config, rk []byte) error {
-	snaps, err := takeout.ListSnapshots(ctx, cfg.in, rk, cfg.workDir)
+	snaps, err := takeoutdecrypt.ListSnapshots(ctx, cfg.in, rk, cfg.workDir)
 	if err != nil {
 		return explain(err)
 	}
@@ -115,7 +116,7 @@ func list(ctx context.Context, cfg config, rk []byte) error {
 }
 
 func decrypt(ctx context.Context, cfg config, rk []byte) error {
-	res, err := takeout.Decrypt(ctx, takeout.DecryptOptions{
+	res, err := takeoutdecrypt.Decrypt(ctx, takeoutdecrypt.Options{
 		Dir:         cfg.in,
 		RecoveryKey: rk,
 		OutDir:      cfg.out,
@@ -169,7 +170,7 @@ func readRecoveryKey(in *os.File, out io.Writer) ([]byte, error) {
 // family member on the worst day of their digital life, not an operator.
 func explain(err error) error {
 	switch {
-	case errors.Is(err, takeout.ErrWrongRecoveryKey):
+	case errors.Is(err, takeoutdecrypt.ErrWrongRecoveryKey):
 		return errors.New("key does not match: this recovery key cannot open this take-out.\n" +
 			"       check that you used the key for this space, and that it was copied in full")
 	case errors.Is(err, takeout.ErrNoTakeOut):
@@ -178,7 +179,7 @@ func explain(err error) error {
 	case errors.Is(err, takeout.ErrNoEnvelope):
 		return errors.New("this take-out has no key envelope, so it cannot be decrypted.\n" +
 			"       ask the administrator to extract it again after a backup has run")
-	case errors.Is(err, takeout.ErrUnsupportedEnvelope):
+	case errors.Is(err, takeoutdecrypt.ErrUnsupportedEnvelope):
 		return errors.New("this take-out was written by a newer version of the backup service.\n" +
 			"       use a newer 'decrypt' build to open it")
 	case errors.Is(err, takeout.ErrCorrupt):

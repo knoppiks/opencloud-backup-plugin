@@ -42,10 +42,16 @@ spec:
           type: RuntimeDefault
       containers:
       - name: backupd
-        # Image is built and pushed by CI; tag is set at deploy time.
+        # No image is published yet: CI builds and uploads the binaries, not a
+        # container. Build and push one yourself, and pin a tag here rather than
+        # tracking :latest — a single-instance service with Recreate is down
+        # while it rolls, so you want to choose when.
+        #
+        # The entrypoint must run the binary with NO arguments: an argument is
+        # read as an operator subcommand (rotate-srw, rotate-tw) and anything
+        # else exits 1.
         image: ghcr.io/knoppiks/opencloud-backupd:latest
         imagePullPolicy: IfNotPresent
-        args: [ "/backupd" ]
         ports:
         - name: http
           containerPort: 8080
@@ -69,14 +75,22 @@ spec:
         # issuer mints tokens for several clients, and without it a token issued
         # for any of them is accepted here. Set it to the client id the browser
         # UI authenticates with.
+        #
+        # Every REPLACE_ME below is REFUSED AT STARTUP. A service that comes up
+        # and then rejects every token looks like a broken service rather than an
+        # unfinished deployment.
         - name: OIDC_ISSUER
           value: "https://cloud.example.org"
         - name: OIDC_AUDIENCE
           value: "REPLACE_ME_WITH_THE_OIDC_CLIENT_ID"
-        # Admin detection (decisions.md #13). Primary: graph appRoleAssignments —
-        # set OC_BASE_URL; OC_ADMIN_APP_ROLE_ID defaults to the pinned 7.3.0 Admin
-        # role id (phase-0-findings.md) and only needs overriding on other builds.
-        # Fallback: set ADMIN_SUBJECT_ALLOWLIST (comma-separated subs) instead.
+        # Admin detection (decisions.md #13). Preferred: graph appRoleAssignments
+        # — set OC_BASE_URL; OC_ADMIN_APP_ROLE_ID defaults to the pinned 7.3.0
+        # Admin role id (phase-0-findings.md) and only needs overriding on other
+        # builds. The fallback is ADMIN_SUBJECT_ALLOWLIST (comma-separated subs).
+        #
+        # ADMIN_SUBJECT_ALLOWLIST WINS when both are set: it is checked first, so
+        # setting it silently disables graph detection. Leave it empty unless the
+        # graph route is unavailable.
         #
         # OC_BASE_URL also backs group-grant resolution (graph memberOf,
         # decisions.md #20) and is NOT optional for that: without it, a Space
@@ -161,7 +175,9 @@ spec:
         # must be one NO END USER IS A MEMBER OF: a member could delete the
         # service's state, and this is not a user's document. The service checks
         # this at startup and REFUSES TO START against a personal Space or one
-        # with any member grant.
+        # with any member grant. If the Space cannot be resolved at all — a
+        # co-ordinated restart where OpenCloud is not up yet — it logs a warning
+        # and checks again on first use instead.
         #
         # It is REQUIRED. Without it the service would keep schedules, history
         # and every wrapped Data Key in memory and lose them on the next pod

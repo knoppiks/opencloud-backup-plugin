@@ -26,6 +26,7 @@ import (
 	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/takeout"
+	takeoutdecrypt "opencloud-backup-plugin/pkg/takeout/decrypt"
 )
 
 // garageObjects opens a plain object-store client against the fixture, as the
@@ -103,7 +104,7 @@ func TestIntegration_PathA_TakeOutAndDecryptWithOpenCloudDown(t *testing.T) {
 
 	// --- user decrypt, offline --------------------------------------------
 	out := filepath.Join(t.TempDir(), "restored")
-	res, err := takeout.Decrypt(ctx, takeout.DecryptOptions{
+	res, err := takeoutdecrypt.Decrypt(ctx, takeoutdecrypt.Options{
 		Dir:         takeoutDir,
 		RecoveryKey: p.rk,
 		OutDir:      out,
@@ -175,10 +176,10 @@ func TestIntegration_PathA_WrongRecoveryKeyLeavesNothing(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "restored")
-	_, err = takeout.Decrypt(ctx, takeout.DecryptOptions{
+	_, err = takeoutdecrypt.Decrypt(ctx, takeoutdecrypt.Options{
 		Dir: takeoutDir, RecoveryKey: wrong, OutDir: out, WorkDir: t.TempDir(),
 	})
-	if !errors.Is(err, takeout.ErrWrongRecoveryKey) {
+	if !errors.Is(err, takeoutdecrypt.ErrWrongRecoveryKey) {
 		t.Fatalf("err = %v, want ErrWrongRecoveryKey", err)
 	}
 	if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {

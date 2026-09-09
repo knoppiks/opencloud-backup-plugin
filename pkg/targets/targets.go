@@ -5,7 +5,7 @@
 // users/spaces. End users see and use only the targets granted to them.
 //
 // Hard rules from decisions.md #14 and AGENTS.md — enforced by this package's
-// shape, implemented in a later phase:
+// shape:
 //   - Target S3 credentials are key-class. They are stored only as TW-wrapped
 //     ciphertext (WrappedCreds), never persisted or returned in plaintext.
 //   - Credentials are write-only across the API: no read path returns them.
@@ -14,10 +14,12 @@
 //     memory at run time via CredSealer.
 //   - Never log credentials or the TW key.
 //
-// This file defines value types and boundary interfaces only; storage, crypto,
-// and enforcement are implemented in their respective phases (target store +
-// admin API in Phase 2/adjacent; at-rest crypto reuses the Phase 3 envelope
-// primitive; worker use in Phase 4).
+// This file defines value types and boundary interfaces only. Storage
+// (state.go), at-rest crypto (credsealer.go, reusing the key-envelope
+// primitive), optional first-start seeding (bootstrap.go) and worker use all
+// exist. The admin HTTP surface for creating targets and granting them does
+// not — it lands with the UI in Phase 8, and until then the only writer is the
+// seeder.
 package targets
 
 import (

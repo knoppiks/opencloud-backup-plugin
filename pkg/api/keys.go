@@ -3,7 +3,10 @@
 // Trust invariants enforced here (decisions.md, AGENTS.md):
 //   - The plaintext Recovery Key NEVER crosses the network. The browser
 //     generates the RK, generates the DK, wraps the DK under the RK, and sends
-//     only the RK-wrapped envelope plus the DK sealed for the server.
+//     the RK-wrapped envelope plus the raw DK. The DK does cross the wire, once,
+//     at setup, over TLS: the server has to see it to produce the SRW wrap that
+//     unattended runs need (decisions.md #1 — this is not zero-knowledge). It is
+//     held for the length of that request and zeroized.
 //   - The server adds the SRW wrap so unattended runs are possible
 //     (decisions.md #1) and persists both envelopes. It stores no plaintext.
 //   - Key material never appears in a response, an error message, or a log line.

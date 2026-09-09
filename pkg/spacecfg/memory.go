@@ -1,8 +1,8 @@
 package spacecfg
 
-// In-memory reference Store. It is the implementation the service wires today;
-// a persistent store lands with the scheduler phase, which is when configuration
-// must survive a restart.
+// In-memory reference Store. The service runs the state-backed store
+// (state.go); this stays as the test double and the behaviour reference the
+// contract tests hold both implementations to.
 
 import (
 	"context"

@@ -26,18 +26,19 @@ const (
 
 var testMTime = time.Date(2021, 3, 14, 15, 9, 26, 0, time.UTC)
 
+// sourceFiles is what the fixture's Space contains. The markers are deliberately
+// distinctive: one test walks the whole Take-Out looking for them.
+var sourceFiles = map[string]string{
+	"readme.txt":     "top-secret plaintext ALPHA",
+	"docs/notes.txt": "nested BRAVO",
+	"фото/café.txt":  "unicode content",
+}
+
 // fixture is a seeded "bucket": one Space's repository plus its published
 // recovery envelope.
 type fixture struct {
-	bucket  string
-	store   objstore.Store
-	dk      []byte
-	rk      []byte
-	rkBlob  []byte
-	repo    snapshot.Repo
-	engine  *snapshot.KopiaEngine
-	snapIDs []snapshot.SnapshotID
-	files   map[string]string
+	bucket string
+	store  objstore.Store
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -76,27 +77,11 @@ func newFixture(t *testing.T) *fixture {
 		Space:    snapshot.SpaceRef{SpaceID: testSpaceID},
 		DK:       dk,
 	}
-	files := map[string]string{
-		"readme.txt":     "top-secret plaintext ALPHA",
-		"docs/notes.txt": "nested BRAVO",
-		"фото/café.txt":  "unicode content",
-	}
-	info, err := engine.Snapshot(ctx, repo, newMemSource(files))
-	if err != nil {
+	if _, err := engine.Snapshot(ctx, repo, newMemSource(sourceFiles)); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 
-	return &fixture{
-		bucket:  bucket,
-		store:   store,
-		dk:      dk,
-		rk:      rk,
-		rkBlob:  wrapped.Blob,
-		repo:    repo,
-		engine:  engine,
-		snapIDs: []snapshot.SnapshotID{info.ID},
-		files:   files,
-	}
+	return &fixture{bucket: bucket, store: store}
 }
 
 // extractOptions builds a Take-Out configuration against the fixture's bucket.
@@ -234,13 +219,8 @@ func TestExtractRequiresAnEnvelope(t *testing.T) {
 	if m.Envelope != nil {
 		t.Fatalf("manifest claims an envelope that does not exist: %+v", m.Envelope)
 	}
-
-	// ... and decrypting it fails for the honest reason.
-	if _, err := Decrypt(context.Background(), DecryptOptions{
-		Dir: opts.OutDir, RecoveryKey: f.rk, OutDir: filepath.Join(t.TempDir(), "out"),
-	}); !errors.Is(err, ErrNoEnvelope) {
-		t.Fatalf("err = %v, want ErrNoEnvelope", err)
-	}
+	// Decrypting such a Take-Out fails for the honest reason; that half is
+	// asserted in takeout/decrypt, which is the package that can decrypt.
 }
 
 func TestExtractValidation(t *testing.T) {
@@ -268,189 +248,6 @@ func TestExtractValidation(t *testing.T) {
 	unknown.AllowMissingEnvelope = true
 	if _, err := Extract(ctx, unknown); err == nil {
 		t.Error("extracting an unknown space must fail")
-	}
-}
-
-func TestDecryptRestoresTheSnapshot(t *testing.T) {
-	f := newFixture(t)
-	dir, _ := f.extract(t)
-
-	out := filepath.Join(t.TempDir(), "restored")
-	res, err := Decrypt(context.Background(), DecryptOptions{
-		Dir: dir, RecoveryKey: f.rk, OutDir: out, WorkDir: t.TempDir(),
-	})
-	if err != nil {
-		t.Fatalf("Decrypt: %v", err)
-	}
-	if res.SpaceID != testSpaceID || res.SnapshotID != string(f.snapIDs[0]) {
-		t.Fatalf("result = %+v", res)
-	}
-
-	for rel, want := range f.files {
-		got, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatalf("read %s: %v", rel, err)
-		}
-		if string(got) != want {
-			t.Fatalf("%s = %q, want %q", rel, got, want)
-		}
-	}
-
-	fi, err := os.Stat(filepath.Join(out, "readme.txt"))
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if !fi.ModTime().Truncate(time.Second).Equal(testMTime.Truncate(time.Second)) {
-		t.Fatalf("mtime = %v, want %v", fi.ModTime(), testMTime)
-	}
-}
-
-// A wrong Recovery Key must fail cleanly and leave no partial plaintext behind.
-func TestDecryptWithWrongRecoveryKeyLeavesNothing(t *testing.T) {
-	f := newFixture(t)
-	dir, _ := f.extract(t)
-
-	_, wrong, err := keys.GenerateRecoveryKey()
-	if err != nil {
-		t.Fatalf("GenerateRecoveryKey: %v", err)
-	}
-
-	out := filepath.Join(t.TempDir(), "restored")
-	if _, err := Decrypt(context.Background(), DecryptOptions{
-		Dir: dir, RecoveryKey: wrong, OutDir: out, WorkDir: t.TempDir(),
-	}); !errors.Is(err, ErrWrongRecoveryKey) {
-		t.Fatalf("err = %v, want ErrWrongRecoveryKey", err)
-	}
-	if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("output directory exists after a failed decrypt: %v", err)
-	}
-}
-
-// The failure message must not describe key material or hint at the cause.
-func TestDecryptErrorsCarryNoKeyMaterial(t *testing.T) {
-	f := newFixture(t)
-	dir, _ := f.extract(t)
-
-	_, wrong, err := keys.GenerateRecoveryKey()
-	if err != nil {
-		t.Fatalf("GenerateRecoveryKey: %v", err)
-	}
-	_, err = Decrypt(context.Background(), DecryptOptions{
-		Dir: dir, RecoveryKey: wrong, OutDir: filepath.Join(t.TempDir(), "out"), WorkDir: t.TempDir(),
-	})
-	if err == nil {
-		t.Fatal("expected an error")
-	}
-	msg := err.Error()
-	for _, secret := range [][]byte{wrong, f.rk, f.dk} {
-		if strings.Contains(msg, string(secret)) {
-			t.Fatalf("error message leaked key material: %q", msg)
-		}
-	}
-}
-
-func TestDecryptSelectsSnapshot(t *testing.T) {
-	ctx := context.Background()
-	f := newFixture(t)
-
-	// A second snapshot with changed content.
-	files := map[string]string{"readme.txt": "second version"}
-	info, err := f.engine.Snapshot(ctx, f.repo, newMemSource(files))
-	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
-	}
-	dir, _ := f.extract(t)
-
-	snaps, err := ListSnapshots(ctx, dir, f.rk, t.TempDir())
-	if err != nil {
-		t.Fatalf("ListSnapshots: %v", err)
-	}
-	if len(snaps) != 2 {
-		t.Fatalf("snapshots = %+v, want 2", snaps)
-	}
-	if snaps[0].ID != string(info.ID) {
-		t.Fatalf("newest snapshot = %s, want %s", snaps[0].ID, info.ID)
-	}
-
-	// Default: newest.
-	out := filepath.Join(t.TempDir(), "newest")
-	if _, err := Decrypt(ctx, DecryptOptions{Dir: dir, RecoveryKey: f.rk, OutDir: out, WorkDir: t.TempDir()}); err != nil {
-		t.Fatalf("Decrypt: %v", err)
-	}
-	assertContent(t, filepath.Join(out, "readme.txt"), "second version")
-
-	// Explicit older snapshot.
-	older := filepath.Join(t.TempDir(), "older")
-	if _, err := Decrypt(ctx, DecryptOptions{
-		Dir: dir, RecoveryKey: f.rk, OutDir: older, SnapshotID: string(f.snapIDs[0]), WorkDir: t.TempDir(),
-	}); err != nil {
-		t.Fatalf("Decrypt(older): %v", err)
-	}
-	assertContent(t, filepath.Join(older, "readme.txt"), f.files["readme.txt"])
-
-	// Unknown snapshot id.
-	if _, err := Decrypt(ctx, DecryptOptions{
-		Dir: dir, RecoveryKey: f.rk, OutDir: t.TempDir(), SnapshotID: "nope", WorkDir: t.TempDir(),
-	}); !errors.Is(err, snapshot.ErrSnapshotNotFound) {
-		t.Fatalf("err = %v, want ErrSnapshotNotFound", err)
-	}
-}
-
-func TestDecryptRejectsDamagedTakeOut(t *testing.T) {
-	f := newFixture(t)
-	dir, _ := f.extract(t)
-
-	if err := os.WriteFile(filepath.Join(dir, EnvelopeFile), []byte("not an envelope"), 0o600); err != nil {
-		t.Fatalf("corrupt envelope: %v", err)
-	}
-	if _, err := Decrypt(context.Background(), DecryptOptions{
-		Dir: dir, RecoveryKey: f.rk, OutDir: t.TempDir(), WorkDir: t.TempDir(),
-	}); !errors.Is(err, ErrCorrupt) {
-		t.Fatalf("err = %v, want ErrCorrupt", err)
-	}
-}
-
-// An envelope written by a future version must produce an actionable message:
-// "get a newer tool", not "wrong key".
-func TestDecryptRejectsFutureEnvelopeVersion(t *testing.T) {
-	f := newFixture(t)
-	dir, _ := f.extract(t)
-
-	blob, err := os.ReadFile(filepath.Join(dir, EnvelopeFile))
-	if err != nil {
-		t.Fatalf("read envelope: %v", err)
-	}
-	blob[5] = byte(keys.EnvelopeVersion + 1)
-	if err := os.WriteFile(filepath.Join(dir, EnvelopeFile), blob, 0o600); err != nil {
-		t.Fatalf("write envelope: %v", err)
-	}
-
-	if _, err := Decrypt(context.Background(), DecryptOptions{
-		Dir: dir, RecoveryKey: f.rk, OutDir: t.TempDir(), WorkDir: t.TempDir(),
-	}); !errors.Is(err, ErrUnsupportedEnvelope) {
-		t.Fatalf("err = %v, want ErrUnsupportedEnvelope", err)
-	}
-}
-
-func TestDecryptRejectsNonTakeOutDirectory(t *testing.T) {
-	if _, err := Decrypt(context.Background(), DecryptOptions{
-		Dir: t.TempDir(), RecoveryKey: []byte("x"), OutDir: t.TempDir(),
-	}); !errors.Is(err, ErrNoTakeOut) {
-		t.Fatalf("err = %v, want ErrNoTakeOut", err)
-	}
-}
-
-func TestDecryptRequiresRecoveryKeyAndOutput(t *testing.T) {
-	f := newFixture(t)
-	dir, _ := f.extract(t)
-
-	if _, err := Decrypt(context.Background(), DecryptOptions{Dir: dir, RecoveryKey: f.rk}); err == nil {
-		t.Fatal("missing output directory must be rejected")
-	}
-	if _, err := Decrypt(context.Background(), DecryptOptions{
-		Dir: dir, OutDir: filepath.Join(t.TempDir(), "out"),
-	}); err == nil {
-		t.Fatal("missing recovery key must be rejected")
 	}
 }
 
@@ -582,17 +379,6 @@ func TestPublishToValidation(t *testing.T) {
 }
 
 // --- helpers ---------------------------------------------------------------
-
-func assertContent(t *testing.T, path, want string) {
-	t.Helper()
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	if string(got) != want {
-		t.Fatalf("%s = %q, want %q", path, got, want)
-	}
-}
 
 func modTime(t *testing.T, path string) time.Time {
 	t.Helper()

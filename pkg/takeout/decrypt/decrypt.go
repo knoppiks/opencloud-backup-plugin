@@ -1,12 +1,23 @@
-package takeout
-
-// The user-side half of Path A: unwrap the Data Key with the Recovery Key and
-// restore a snapshot out of a Take-Out directory.
+// Package decrypt is the user-side half of Path A: unwrap the Data Key with the
+// Recovery Key and restore a snapshot out of a Take-Out directory.
 //
-// Everything here is offline by construction — a local directory, a local
-// kopia repository, no network client of any kind. This is the family's last
-// resort, so it stays deliberately small: parse manifest, unwrap envelope, open
+// It is a package of its own so that the split of powers is structural rather
+// than conventional: the admin's `takeout` binary links the parent package
+// (extract, verify, publish) and never this one, and a test in cmd/takeout
+// asserts that dependency graph (decisions.md #2, #15).
+//
+// Exactly what that buys, stated honestly: the admin's binary contains no code
+// that turns an envelope plus a Recovery Key into a Data Key, and none that
+// turns a repository into files. It does still link pkg/keys, because extraction
+// has to read an envelope's public header to record what it copied; the unwrap
+// functions in that package are unreferenced there, which the same test file
+// checks by reading the source.
+//
+// Everything here is offline by construction — a local directory, a local kopia
+// repository, no network client of any kind. This is the family's last resort,
+// so it stays deliberately small: parse manifest, unwrap envelope, open
 // repository, restore.
+package decrypt
 
 import (
 	"context"
@@ -17,6 +28,18 @@ import (
 
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/takeout"
+)
+
+// Errors this package adds to the Take-Out set. Like those, they stay coarse on
+// purpose: an unwrap failure must not hint at which part of the input was wrong,
+// and no error ever carries key material.
+var (
+	// ErrWrongRecoveryKey means the Recovery Key does not open this Take-Out.
+	ErrWrongRecoveryKey = errors.New("takeout: key does not match this take-out")
+	// ErrUnsupportedEnvelope means the envelope's format version is newer than
+	// this tool understands.
+	ErrUnsupportedEnvelope = errors.New("takeout: unsupported key envelope version")
 )
 
 // Snapshot is one restorable snapshot inside a Take-Out.
@@ -35,8 +58,8 @@ type Result struct {
 	OutDir     string
 }
 
-// DecryptOptions configures an offline restore.
-type DecryptOptions struct {
+// Options configures an offline restore.
+type Options struct {
 	// Dir is the Take-Out directory.
 	Dir string
 	// RecoveryKey is the raw Recovery Key secret (as returned by
@@ -56,7 +79,7 @@ type DecryptOptions struct {
 // the Recovery Key because snapshot metadata lives inside the encrypted
 // repository — nothing about a backup is readable without it.
 func ListSnapshots(ctx context.Context, dir string, recoveryKey []byte, workDir string) ([]Snapshot, error) {
-	m, err := ReadManifest(dir)
+	m, err := takeout.ReadManifest(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +97,7 @@ func ListSnapshots(ctx context.Context, dir string, recoveryKey []byte, workDir 
 
 	infos, err := engine.List(ctx, repo)
 	if err != nil {
-		return nil, fmt.Errorf("%w: repository could not be read", ErrCorrupt)
+		return nil, fmt.Errorf("%w: repository could not be read", takeout.ErrCorrupt)
 	}
 
 	out := make([]Snapshot, 0, len(infos))
@@ -90,12 +113,12 @@ func ListSnapshots(ctx context.Context, dir string, recoveryKey []byte, workDir 
 }
 
 // Decrypt restores a snapshot from a Take-Out into OutDir.
-func Decrypt(ctx context.Context, opts DecryptOptions) (Result, error) {
+func Decrypt(ctx context.Context, opts Options) (Result, error) {
 	if opts.OutDir == "" {
 		return Result{}, fmt.Errorf("takeout: output directory is required")
 	}
 
-	m, err := ReadManifest(opts.Dir)
+	m, err := takeout.ReadManifest(opts.Dir)
 	if err != nil {
 		return Result{}, err
 	}
@@ -113,7 +136,7 @@ func Decrypt(ctx context.Context, opts DecryptOptions) (Result, error) {
 
 	infos, err := engine.List(ctx, repo)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: repository could not be read", ErrCorrupt)
+		return Result{}, fmt.Errorf("%w: repository could not be read", takeout.ErrCorrupt)
 	}
 	chosen, err := selectSnapshot(infos, opts.SnapshotID)
 	if err != nil {
@@ -142,18 +165,18 @@ func Decrypt(ctx context.Context, opts DecryptOptions) (Result, error) {
 // Failure modes are reported distinctly enough to be actionable — wrong key,
 // damaged file, format from the future — but never reveal key material and never
 // say *why* the AEAD rejected the input.
-func unwrapDataKey(dir string, m Manifest, recoveryKey []byte) ([]byte, error) {
+func unwrapDataKey(dir string, m takeout.Manifest, recoveryKey []byte) ([]byte, error) {
 	if len(recoveryKey) == 0 {
 		return nil, fmt.Errorf("takeout: recovery key is required")
 	}
 	if m.EnvelopeRef == "" && m.Envelope == nil {
-		return nil, ErrNoEnvelope
+		return nil, takeout.ErrNoEnvelope
 	}
 
-	blob, err := os.ReadFile(envelopePath(dir, m))
+	blob, err := os.ReadFile(m.EnvelopePath(dir))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, ErrNoEnvelope
+			return nil, takeout.ErrNoEnvelope
 		}
 		return nil, fmt.Errorf("takeout: read key envelope: %w", err)
 	}
@@ -165,10 +188,10 @@ func unwrapDataKey(dir string, m Manifest, recoveryKey []byte) ([]byte, error) {
 		if errors.Is(err, keys.ErrBadEnvelope) && isFutureVersion(blob) {
 			return nil, ErrUnsupportedEnvelope
 		}
-		return nil, fmt.Errorf("%w: key envelope is unreadable", ErrCorrupt)
+		return nil, fmt.Errorf("%w: key envelope is unreadable", takeout.ErrCorrupt)
 	}
 	if info.Kind != keys.WrapRK {
-		return nil, fmt.Errorf("%w: stored envelope is not a recovery-key envelope", ErrCorrupt)
+		return nil, fmt.Errorf("%w: stored envelope is not a recovery-key envelope", takeout.ErrCorrupt)
 	}
 
 	dk, err := keys.UnwrapRK(keys.WrappedDK{
@@ -192,10 +215,10 @@ func isFutureVersion(blob []byte) bool {
 }
 
 // openRepo builds an engine over the Take-Out's repository directory.
-func openRepo(dir string, m Manifest, dk []byte, workDir string) (*snapshot.KopiaEngine, snapshot.Repo, error) {
-	repoDir := repoPath(dir, m)
+func openRepo(dir string, m takeout.Manifest, dk []byte, workDir string) (*snapshot.KopiaEngine, snapshot.Repo, error) {
+	repoDir := m.RepoPath(dir)
 	if _, err := os.Stat(repoDir); err != nil {
-		return nil, snapshot.Repo{}, fmt.Errorf("%w: repository directory is missing", ErrCorrupt)
+		return nil, snapshot.Repo{}, fmt.Errorf("%w: repository directory is missing", takeout.ErrCorrupt)
 	}
 
 	engine, err := snapshot.NewEngine(snapshot.DirOpener{Dir: repoDir}, snapshot.EngineOptions{WorkDir: workDir})
