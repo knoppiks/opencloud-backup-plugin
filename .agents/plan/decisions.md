@@ -680,6 +680,54 @@ decision.
   which zone it means. `SCHEDULE_TIMEZONE` still overrides it, and an unknown
   zone is refused at startup rather than at 02:30.
 
+### Amendments from the September 2026 review — R7 (prune and maintenance)
+
+- **Tier 1's prune job exists, and it runs in this process.** Everything above
+  described retention as something a separate job did; nothing did it. Retention
+  is now applied by a job of its own kind (`prune`), started by the scheduler on
+  its own slow cadence (daily by default, `PRUNE_INTERVAL_HOURS`), holding the
+  same per-Space run lock a backup takes. **What Tier 2 changes is the
+  credentials, not the design:** the worker gets a write-only key and this job a
+  key that may delete. The job kind, the lock and the cadence stay.
+
+- **Retention has two numbers and they belong to different people.** How much
+  history a Space keeps is the Space's setting, per Space, time-based, floored at
+  a week (#10, #22). How often that window is *enforced* is the operator's, one
+  value for the deployment, staggered per Space so a household does not run full
+  maintenance against every repository at the same instant. Making the cadence a
+  per-Space setting would have been a knob nobody wants and a UI surface nobody
+  asked for.
+
+- **A Space with no successful backup is never pruned.** There is no repository
+  to open until one run has finished, so a prune could only fail — daily, for as
+  long as the Space stays broken, filling its history with failures that describe
+  a symptom rather than the cause. This also covers a Space whose runs never get
+  past a checkpoint: an incomplete run is not a success (R4 amendment), so it
+  never makes a Space prunable.
+
+- **Maintenance ownership is enforced rather than announced.** The code claimed
+  the repository's maintenance owner on first use and then passed kopia's
+  `force` flag, which skips the very check the claim exists for. The flag is gone.
+  A repository some other kopia client has claimed now fails the prune with a
+  clear error instead of two uncoordinated processes rewriting the same indexes;
+  the other owner's identity stays out of the job record, which a user can read.
+
+- **A failed prune is not a failed backup, and is not reported as one.** The
+  member-facing notification path is not called for prune runs: the data is
+  exactly where it was, and only the reclamation did not happen. It is on the job
+  record and in the operator's log, which is where somebody can act on it.
+
+- **A job's kind is part of its key.** Run history is one stream per Space, and
+  adding a daily prune to it would have halved the reach of every bounded scan
+  that looks for "the last backup" — the schedule baseline, the staleness check,
+  the status board — while roughly quintupling the reads an idle deployment makes
+  per tick. The durable layout is now
+  `jobs/<space-id>/<nanos>-<kind>-<job-id>`, so those questions are answered by
+  one listing and one document read, whatever else happened in between. Records
+  written under the old layout are still read; they simply cost a read to
+  classify. This retires R6's "widen the read when the newest run was a restore"
+  workaround, which prune would have made the common case.
+
 ---
 
 ## Trust & key model

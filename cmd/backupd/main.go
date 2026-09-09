@@ -451,6 +451,13 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 				_, err := runner.RunScheduled(ctx, spaceID)
 				return err
 			}),
+			// Retention is applied by the same runner, as its own job kind:
+			// nothing else ever expires a snapshot or reclaims the storage a
+			// failed run left behind (decisions.md #9 Tier 1).
+			Prunes: scheduler.PruneRunnerFunc(func(ctx context.Context, spaceID string) error {
+				_, err := runner.RunPrune(ctx, spaceID)
+				return err
+			}),
 			Recoverer: locker,
 			// The run lock answers "is this Space already running" in one read,
 			// for every process, instead of scanning run history every tick.
@@ -603,10 +610,18 @@ func schedulerOptions() (scheduler.Options, error) {
 	if err != nil {
 		return scheduler.Options{}, err
 	}
+	// How often retention is *applied*. How much is kept is the Space owner's
+	// setting; this is the operator's, and the default (daily) suits a target
+	// that is somebody's spare disk.
+	pruneHours, err := envInt("PRUNE_INTERVAL_HOURS", 0)
+	if err != nil {
+		return scheduler.Options{}, err
+	}
 
 	opts := scheduler.Options{
 		MaxConcurrent: maxConcurrent,
 		HistoryWindow: time.Duration(historyDays) * 24 * time.Hour,
+		PruneInterval: time.Duration(pruneHours) * time.Hour,
 		// "Nightly at half past two" means the family's night. The container's
 		// own zone (TZ) is the closest thing to that this process can know, and
 		// a deployment that sets TZ for its logs has already said which zone it

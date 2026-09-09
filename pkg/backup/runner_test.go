@@ -631,11 +631,24 @@ func TestUserMessage(t *testing.T) {
 		ErrTargetUnavailable:   "the backup target is unavailable",
 		ErrSpaceNotFound:       "space not found",
 		ErrRunInProgress:       "a run is already in progress",
+		ErrRunTimedOut:         "the backup run timed out",
 		errors.New("internal"): "the backup run failed",
 	}
 	for err, want := range cases {
-		if got := userMessage(err); got != want {
-			t.Fatalf("userMessage(%v) = %q, want %q", err, got, want)
+		if got := userMessage(jobs.KindBackup, err); got != want {
+			t.Fatalf("userMessage(backup, %v) = %q, want %q", err, got, want)
+		}
+	}
+
+	// A prune failure must not tell a user their backups stopped: what failed
+	// is the cleanup afterwards, and their data is exactly where it was.
+	pruneCases := map[error]string{
+		ErrPruneFailed: "cleaning up expired backups failed",
+		ErrRunTimedOut: "cleaning up expired backups timed out",
+	}
+	for err, want := range pruneCases {
+		if got := userMessage(jobs.KindPrune, err); got != want {
+			t.Fatalf("userMessage(prune, %v) = %q, want %q", err, got, want)
 		}
 	}
 }

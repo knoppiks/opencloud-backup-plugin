@@ -175,6 +175,19 @@ type fakeEngine struct {
 	err     error
 	// onSnapshot runs inside Snapshot, letting tests observe the live DK.
 	onSnapshot func(snapshot.Repo)
+
+	// prunes records the (repo, window) pairs Prune was called with.
+	prunes     []pruneCall
+	pruneStats snapshot.PruneStats
+	pruneErr   error
+	// onPrune runs inside Prune, letting tests observe the live DK and block.
+	onPrune func(snapshot.Repo)
+}
+
+// pruneCall is one recorded Prune invocation.
+type pruneCall struct {
+	repo   snapshot.Repo
+	window time.Duration
 }
 
 var _ snapshot.Engine = (*fakeEngine)(nil)
@@ -208,7 +221,29 @@ func (e *fakeEngine) Walk(context.Context, snapshot.Repo, snapshot.SnapshotID, f
 	return nil
 }
 
-func (e *fakeEngine) Prune(context.Context, snapshot.Repo, time.Duration) error { return nil }
+func (e *fakeEngine) Prune(_ context.Context, r snapshot.Repo, window time.Duration) (snapshot.PruneStats, error) {
+	e.mu.Lock()
+	// Copy the DK: the runner zeroizes its buffer after the call.
+	captured := r
+	captured.DK = append([]byte(nil), r.DK...)
+	e.prunes = append(e.prunes, pruneCall{repo: captured, window: window})
+	onPrune, stats, err := e.onPrune, e.pruneStats, e.pruneErr
+	e.mu.Unlock()
+
+	if onPrune != nil {
+		onPrune(r)
+	}
+	if err != nil {
+		return snapshot.PruneStats{}, err
+	}
+	return stats, nil
+}
+
+func (e *fakeEngine) pruneCalls() []pruneCall {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]pruneCall(nil), e.prunes...)
+}
 
 func (e *fakeEngine) List(context.Context, snapshot.Repo) ([]snapshot.Info, error) { return nil, nil }
 

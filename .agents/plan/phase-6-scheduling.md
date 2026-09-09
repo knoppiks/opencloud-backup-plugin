@@ -105,5 +105,6 @@ in `decisions.md` for the reasoning; in short:
 
 - Lease/lock correctness on crash is the classic subtle bug — cover with tests,
   keep it boring (SQLite transaction + expiry timestamp).
-- Prune/maintenance is deliberately **not** scheduled here with the same
-  credentials — that separation is Phase 7 Tier 2.
+- Prune/maintenance is scheduled here as of R7 (issue #24), as its own job kind
+  and on its own slow cadence, but still with the **same credentials**. That
+  separation is Phase 7 Tier 2 and is a wiring change, not a scheduling one.

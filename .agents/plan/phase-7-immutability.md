@@ -18,10 +18,13 @@
 Checklist-audit + tests, not features:
 
 - [ ] Write credentials exist only in the cluster (K8s secret), never client.
-- [ ] Retention is time-based `keep-within`, deep default (>= 90d), config
-      floor prevents accidental `1d` foot-gun.
-- [ ] Prune/maintenance runs as a **separate job type**, never inline in a
-      backup run.
+- [x] Retention is time-based `keep-within`, deep default (>= 90d), config
+      floor prevents accidental `1d` foot-gun. *(R5: floor is 7d, enforced at
+      the API boundary and again where prune reads the window.)*
+- [x] Prune/maintenance runs as a **separate job type**, never inline in a
+      backup run. *(R7, issue #24: `jobs.KindPrune`, scheduled on its own slow
+      cadence, holding the same per-Space run lock. Same process and same
+      credentials — that is what Tier 2 below changes.)*
 - [ ] Test: a "bad" snapshot (simulated ransomware content) does not evict
       good history within the retention window.
 

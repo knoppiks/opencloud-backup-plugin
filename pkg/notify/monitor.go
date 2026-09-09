@@ -164,7 +164,10 @@ func (m *Monitor) reportUnreadable(ctx context.Context, count int, now time.Time
 // isStale reports whether a Space has gone too long without a successful
 // backup, and since when.
 func (m *Monitor) isStale(ctx context.Context, cfg spacecfg.Config, now time.Time) (bool, time.Time, error) {
-	history, err := m.jobs.ListRecent(ctx, cfg.SpaceID, historyLookback)
+	// Only backups can answer this, and only backups are read: a Space that
+	// prunes and restores as well would otherwise crowd its own last successful
+	// backup out of the window and be reported stale while it is healthy.
+	history, err := m.jobs.ListRecentOfKind(ctx, cfg.SpaceID, jobs.KindBackup, historyLookback)
 	if err != nil {
 		return false, time.Time{}, fmt.Errorf("notify: read run history: %w", err)
 	}

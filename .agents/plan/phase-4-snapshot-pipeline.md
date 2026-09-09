@@ -70,8 +70,9 @@ Implemented in `backup.Runner`:
 
 Retention is **configured** here (`spacecfg.Config.RetentionWindow`, time-based
 `keep-within`, deep default 90d) but never **applied** here: prune and
-maintenance are a separate job (decisions.md #9 Tier 1, Phase 6/7). What Phase 4
-*does* guarantee is that kopia never expires anything on its own — see below.
+maintenance are a separate job kind, scheduled on its own cadence (decisions.md
+#9 Tier 1; implemented in R7, issue #24). What Phase 4 *does* guarantee is that
+kopia never expires anything on its own — see below.
 
 ### Consistency stance
 

@@ -219,6 +219,48 @@ func TestBackupStatus_ReportsHistoryAndNextRun(t *testing.T) {
 	}
 }
 
+// Prunes share the Space's run history and there are as many of them as there
+// are backups. The status board must still find the backup: a Space that has
+// been backing up nightly for a year must not read as "never backed up" because
+// its own housekeeping crowded the window.
+func TestBackupStatus_FindsTheLastBackupBehindABankOfPrunes(t *testing.T) {
+	env := newScheduleEnv(t, fakeAdvisor{})
+	env.configure(t, "30 2 * * *", true)
+	ctx := context.Background()
+
+	backup, err := env.jobs.Create(ctx, jobs.Job{SpaceID: "space-alice", Kind: jobs.KindBackup, State: jobs.StateRunning})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := env.jobs.Finish(ctx, backup.ID, jobs.Outcome{State: jobs.StateSucceeded, SnapshotID: "snap-1"}); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	for range defaultHistoryLimit + 10 {
+		prune, err := env.jobs.Create(ctx, jobs.Job{SpaceID: "space-alice", Kind: jobs.KindPrune, State: jobs.StateRunning})
+		if err != nil {
+			t.Fatalf("Create prune: %v", err)
+		}
+		if err := env.jobs.Finish(ctx, prune.ID, jobs.Outcome{State: jobs.StateSucceeded, SnapshotsKept: 3}); err != nil {
+			t.Fatalf("Finish prune: %v", err)
+		}
+	}
+
+	rec := doJSON(env.srv, http.MethodGet, "/api/v1/spaces/space-alice/backup/status", "alice-tok", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+
+	var got statusResponse
+	decodeBody(t, rec.Body, &got)
+	if got.LastRun == nil || got.LastRun.ID != backup.ID {
+		t.Fatalf("last run = %+v, want the backup", got.LastRun)
+	}
+	if got.LastSuccess == nil || got.LastSuccess.ID != backup.ID {
+		t.Fatalf("last successful run = %+v, want the backup", got.LastSuccess)
+	}
+}
+
 func TestBackupStatus_ReportsARunInFlight(t *testing.T) {
 	env := newScheduleEnv(t, fakeAdvisor{})
 	env.configure(t, "30 2 * * *", true)

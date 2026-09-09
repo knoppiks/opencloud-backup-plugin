@@ -407,12 +407,13 @@ func walkDir(ctx context.Context, dir fs.Directory, prefix string, fn func(conte
 // window: a Space that stopped being backed up must not silently lose its last
 // copy. Incomplete manifests are always deleted — a run that ends cleans up its
 // own, so any left here belong to a process that was killed.
-func (e *KopiaEngine) Prune(ctx context.Context, r Repo, window time.Duration) error {
+func (e *KopiaEngine) Prune(ctx context.Context, r Repo, window time.Duration) (PruneStats, error) {
 	if window <= 0 {
-		return fmt.Errorf("snapshot: retention window must be positive")
+		return PruneStats{}, fmt.Errorf("snapshot: retention window must be positive")
 	}
 
-	return e.withRepo(ctx, r, false, func(ctx context.Context, rep repo.Repository) error {
+	var stats PruneStats
+	err := e.withRepo(ctx, r, false, func(ctx context.Context, rep repo.Repository) error {
 		si := sourceInfo(r.Space)
 
 		err := repo.WriteSession(ctx, rep, repo.WriteSessionOptions{Purpose: "prune"},
@@ -421,11 +422,15 @@ func (e *KopiaEngine) Prune(ctx context.Context, r Repo, window time.Duration) e
 				if err != nil {
 					return fmt.Errorf("snapshot: list snapshots: %w", err)
 				}
-				for _, id := range expiredManifests(mans, w.Time().Add(-window)) {
+				expired := expiredManifests(mans, w.Time().Add(-window))
+				for _, id := range expired {
 					if err := w.DeleteManifest(ctx, id); err != nil {
 						return fmt.Errorf("snapshot: delete expired manifest: %w", err)
 					}
 				}
+				// Counted from this session's own decisions rather than by
+				// listing again afterwards: exact, and no extra read.
+				stats = PruneStats{Deleted: len(expired), Kept: keptCount(mans, expired)}
 				return nil
 			})
 		if err != nil {
@@ -433,6 +438,10 @@ func (e *KopiaEngine) Prune(ctx context.Context, r Repo, window time.Duration) e
 		}
 		return e.runMaintenance(ctx, rep)
 	})
+	if err != nil {
+		return PruneStats{}, err
+	}
+	return stats, nil
 }
 
 // expiredManifests returns the manifests to delete: everything incomplete, plus
@@ -466,9 +475,41 @@ func expiredManifests(mans []*ksnapshot.Manifest, cutoff time.Time) []manifest.I
 	return expired
 }
 
+// keptCount is how many restorable snapshots a prune leaves behind: the
+// complete manifests it did not delete. Incomplete ones are never counted —
+// nothing may be restored from them, so reporting them as kept would overstate
+// what the Space still has.
+func keptCount(mans []*ksnapshot.Manifest, expired []manifest.ID) int {
+	gone := make(map[manifest.ID]struct{}, len(expired))
+	for _, id := range expired {
+		gone[id] = struct{}{}
+	}
+
+	kept := 0
+	for _, m := range completeOnly(mans) {
+		if _, deleted := gone[m.ID]; !deleted {
+			kept++
+		}
+	}
+	return kept
+}
+
+// ErrMaintenanceNotOwned is returned when the repository records a maintenance
+// owner that is not this service. Every worker connects as the same identity
+// (see defaultUser/defaultHost), so this can only mean some other kopia client
+// claimed the repository — and running maintenance anyway would mean two
+// uncoordinated processes rewriting the same indexes.
+var ErrMaintenanceNotOwned = errors.New("snapshot: repository maintenance is owned by another client")
+
 // runMaintenance garbage-collects content no longer referenced by any manifest.
 // Only the maintenance owner may run it, so ownership is claimed on first use
 // (phase-0-findings.md Spike 2, "Maintenance ownership is a real concept").
+//
+// The ownership check is left switched on. kopia offers a force flag that skips
+// it, which is exactly what makes the claim above meaningless: with it set, the
+// "owner" is decoration and any client will happily run concurrent maintenance.
+// A repository owned by somebody else is therefore an error the prune job
+// reports, not a condition to run through.
 func (e *KopiaEngine) runMaintenance(ctx context.Context, rep repo.Repository) error {
 	dr, ok := rep.(repo.DirectRepository)
 	if !ok {
@@ -482,24 +523,42 @@ func (e *KopiaEngine) runMaintenance(ctx context.Context, rep repo.Repository) e
 
 	err := repo.DirectWriteSession(ctx, dr, repo.WriteSessionOptions{Purpose: "prune-gc"},
 		func(ctx context.Context, dw repo.DirectRepositoryWriter) error {
-			p, err := maintenance.GetParams(ctx, dw)
-			if err != nil {
-				return fmt.Errorf("snapshot: maintenance params: %w", err)
+			if err := claimMaintenance(ctx, dw); err != nil {
+				return err
 			}
-			if p.Owner == "" {
-				def := maintenance.DefaultParams()
-				def.Owner = dw.ClientOptions().UsernameAtHost()
-				if err := maintenance.SetParams(ctx, dw, &def); err != nil {
-					return fmt.Errorf("snapshot: claim maintenance ownership: %w", err)
-				}
-			}
-			return maintenance.RunExclusive(ctx, dw, maintenance.ModeFull, true,
+			return maintenance.RunExclusive(ctx, dw, maintenance.ModeFull, false,
 				func(ctx context.Context, rp maintenance.RunParameters) error {
 					return maintenance.Run(ctx, rp, safety)
 				})
 		})
 	if err != nil {
+		var notOwned maintenance.NotOwnedError
+		if errors.As(err, &notOwned) {
+			// The other owner's name is a username at a host; keep it out of
+			// the error a job record ends up storing.
+			return ErrMaintenanceNotOwned
+		}
 		return fmt.Errorf("snapshot: maintenance: %w", err)
+	}
+	return nil
+}
+
+// claimMaintenance records this service as the repository's maintenance owner
+// the first time it prunes. An owner already recorded is left alone — including
+// one that is not us, which RunExclusive then refuses.
+func claimMaintenance(ctx context.Context, dw repo.DirectRepositoryWriter) error {
+	p, err := maintenance.GetParams(ctx, dw)
+	if err != nil {
+		return fmt.Errorf("snapshot: maintenance params: %w", err)
+	}
+	if p.Owner != "" {
+		return nil
+	}
+
+	def := maintenance.DefaultParams()
+	def.Owner = dw.ClientOptions().UsernameAtHost()
+	if err := maintenance.SetParams(ctx, dw, &def); err != nil {
+		return fmt.Errorf("snapshot: claim maintenance ownership: %w", err)
 	}
 	return nil
 }

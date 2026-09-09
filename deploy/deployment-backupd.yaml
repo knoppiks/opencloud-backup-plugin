@@ -192,12 +192,19 @@ spec:
         #                              notifications about them — are kept
         #                              (default 365; time-based, like every
         #                              retention here — decisions.md #10).
+        #   PRUNE_INTERVAL_HOURS       how often each space's retention window
+        #                              is applied and the storage it frees is
+        #                              reclaimed (default 24). How *much* is
+        #                              kept is the space's own setting; this is
+        #                              only how often it is enforced.
         # - name: SCHEDULE_TIMEZONE
         #   value: "Europe/Berlin"
         # - name: SCHEDULER_MAX_CONCURRENT
         #   value: "2"
         # - name: JOB_HISTORY_DAYS
         #   value: "365"
+        # - name: PRUNE_INTERVAL_HOURS
+        #   value: "24"
         # Phase 6 — operator notifications. Space members' notifications are
         # recorded and served through the API; these settings only add email
         # delivery for OPERATOR events, which never name a Space or a user

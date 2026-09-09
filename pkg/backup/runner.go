@@ -17,9 +17,9 @@
 //  6. record the outcome in the job store
 //  7. zeroize the Data Key
 //
-// Retention is *configured* here (a time-based keep-within window on the Space's
-// configuration) but never *applied* here: prune and maintenance run as a
-// separate job (decisions.md #9 Tier 1).
+// Retention is never applied inside a backup run. It is applied by a run of its
+// own — see prune.go — which the scheduler starts on its own slow cadence and
+// which takes the same per-Space lock (decisions.md #9 Tier 1).
 package backup
 
 import (
@@ -53,6 +53,8 @@ var (
 	ErrRunInProgress = errors.New("backup: a run is already in progress for this space")
 	// ErrRunFailed means the snapshot itself failed.
 	ErrRunFailed = errors.New("backup: snapshot run failed")
+	// ErrPruneFailed means retention or maintenance failed.
+	ErrPruneFailed = errors.New("backup: prune run failed")
 	// ErrRunTimedOut means the run exhausted its time limit and was stopped.
 	ErrRunTimedOut = errors.New("backup: the run exceeded its time limit")
 )
@@ -175,7 +177,7 @@ func (r *Runner) RunScheduled(ctx context.Context, spaceID string) (Result, erro
 // run executes one backup run to completion. The run lock is released by
 // finish, once the outcome is durable — see settle.
 func (r *Runner) run(ctx context.Context, spaceID string, trigger jobs.Trigger) (Result, error) {
-	pending, err := r.begin(ctx, spaceID, trigger)
+	pending, err := r.begin(ctx, spaceID, jobs.KindBackup, trigger)
 	if err != nil {
 		return Result{}, err
 	}
@@ -187,7 +189,7 @@ func (r *Runner) run(ctx context.Context, spaceID string, trigger jobs.Trigger) 
 // run lock — is resolved before returning, so the caller gets a real answer
 // rather than a job that immediately fails.
 func (r *Runner) StartBackup(ctx context.Context, spaceID string) (string, error) {
-	pending, err := r.begin(ctx, spaceID, jobs.TriggerManual)
+	pending, err := r.begin(ctx, spaceID, jobs.KindBackup, jobs.TriggerManual)
 	if err != nil {
 		return "", err
 	}
@@ -204,7 +206,11 @@ func (r *Runner) StartBackup(ctx context.Context, spaceID string) (string, error
 
 // begin takes the Space's run lock and opens a job record. On error the lock is
 // already released.
-func (r *Runner) begin(ctx context.Context, spaceID string, trigger jobs.Trigger) (run, error) {
+//
+// The lock is per Space and not per kind: a prune deletes manifests and
+// rewrites indexes in the same repository a backup is writing to, so the two
+// must never overlap even though they are different work.
+func (r *Runner) begin(ctx context.Context, spaceID string, kind jobs.Kind, trigger jobs.Trigger) (run, error) {
 	if spaceID == "" {
 		return run{}, ErrSpaceNotFound
 	}
@@ -227,7 +233,7 @@ func (r *Runner) begin(ctx context.Context, spaceID string, trigger jobs.Trigger
 
 	job, err := r.deps.Jobs.Create(ctx, jobs.Job{
 		SpaceID: spaceID,
-		Kind:    jobs.KindBackup,
+		Kind:    kind,
 		State:   jobs.StateRunning,
 		Trigger: trigger,
 	})
@@ -290,42 +296,59 @@ func (r *Runner) runTimeout() time.Duration {
 // of the secrets. Keeping it in one function bounds the lifetime of both the
 // Data Key and the target credentials to a single call frame.
 func (r *Runner) snapshotSpace(ctx context.Context, space cs3.Space) (snapshot.Info, error) {
-	cfg, err := r.deps.Configs.Get(ctx, space.ID)
-	if err != nil {
-		var notFound spacecfg.ErrNotFound
-		if errors.As(err, &notFound) {
-			return snapshot.Info{}, ErrNotConfigured
-		}
-		return snapshot.Info{}, fmt.Errorf("backup: read space configuration: %w", err)
-	}
-
-	target, err := r.resolveTarget(ctx, cfg.TargetID)
-	if err != nil {
-		return snapshot.Info{}, err
-	}
-
-	dk, err := r.unwrapDataKey(space.ID)
+	repo, _, target, err := r.openRepo(ctx, space.ID)
 	if err != nil {
 		return snapshot.Info{}, err
 	}
 	// The plaintext Data Key exists only for this call (decisions.md #1).
-	defer keys.Zeroize(dk)
+	defer keys.Zeroize(repo.DK)
 
 	// Publish the envelopes before the data they protect: a snapshot the user
 	// cannot reach with their Recovery Key is worth less than no snapshot.
 	r.publishEnvelopes(ctx, space.ID, target)
 
-	info, err := r.deps.Engine.Snapshot(ctx, snapshot.Repo{
-		Location: target.location,
-		Space:    snapshot.SpaceRef{SpaceID: space.ID},
-		DK:       dk,
-	}, NewSpaceSource(r.deps.Spaces, space))
+	info, err := r.deps.Engine.Snapshot(ctx, repo, NewSpaceSource(r.deps.Spaces, space))
 	if err != nil {
 		// Log the detail (which contains no secrets) but return a sanitized error.
 		r.deps.Logger.Error("snapshot failed", "space", space.ID, "err", err)
 		return snapshot.Info{}, fmt.Errorf("%w: %w", ErrRunFailed, err)
 	}
 	return info, nil
+}
+
+// openRepo resolves everything a run needs to address a Space's repository: the
+// Space's configuration, its target's TW-unwrapped credentials, and its
+// SRW-unwrapped Data Key.
+//
+// The returned Repo holds the plaintext Data Key. The caller owns it and must
+// zeroize it — keys.Zeroize(repo.DK) — in the same frame it received it, which
+// is what bounds the key's lifetime to a single run (decisions.md #1, #14).
+func (r *Runner) openRepo(ctx context.Context, spaceID string) (snapshot.Repo, spacecfg.Config, resolvedTarget, error) {
+	cfg, err := r.deps.Configs.Get(ctx, spaceID)
+	if err != nil {
+		var notFound spacecfg.ErrNotFound
+		if errors.As(err, &notFound) {
+			return snapshot.Repo{}, spacecfg.Config{}, resolvedTarget{}, ErrNotConfigured
+		}
+		return snapshot.Repo{}, spacecfg.Config{}, resolvedTarget{},
+			fmt.Errorf("backup: read space configuration: %w", err)
+	}
+
+	target, err := r.resolveTarget(ctx, cfg.TargetID)
+	if err != nil {
+		return snapshot.Repo{}, spacecfg.Config{}, resolvedTarget{}, err
+	}
+
+	dk, err := r.unwrapDataKey(spaceID)
+	if err != nil {
+		return snapshot.Repo{}, spacecfg.Config{}, resolvedTarget{}, err
+	}
+
+	return snapshot.Repo{
+		Location: target.location,
+		Space:    snapshot.SpaceRef{SpaceID: spaceID},
+		DK:       dk,
+	}, cfg, target, nil
 }
 
 // resolveSpace finds the Space the worker credential may read.
@@ -482,8 +505,9 @@ func (r *Runner) fail(ctx context.Context, pending run, cause error) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		cause = fmt.Errorf("%w: %w", ErrRunTimedOut, cause)
 	}
-	r.settle(ctx, pending, jobs.Outcome{State: jobs.StateFailed, Error: userMessage(cause)})
-	r.deps.Logger.Error("backup run failed", "space", pending.space.ID, "job", pending.job.ID, "err", cause)
+	r.settle(ctx, pending, jobs.Outcome{State: jobs.StateFailed, Error: userMessage(pending.job.Kind, cause)})
+	r.deps.Logger.Error("run failed",
+		"kind", pending.job.Kind, "space", pending.space.ID, "job", pending.job.ID, "err", cause)
 }
 
 // settle records the run's terminal outcome and then, and only then, drops the
@@ -507,9 +531,17 @@ func (r *Runner) settle(ctx context.Context, pending run, out jobs.Outcome) {
 // userMessage maps an internal error onto text safe to store and show. Anything
 // unrecognised collapses to a generic message rather than leaking detail
 // (AGENTS.md error rules).
-func userMessage(err error) string {
+//
+// The kind decides the wording of the two outcomes both kinds of run share.
+// "The backup run failed" on a prune would be a lie in the direction that
+// matters: it would tell a user their data is not being backed up when in fact
+// only the cleanup afterwards did not happen.
+func userMessage(kind jobs.Kind, err error) string {
 	switch {
 	case errors.Is(err, ErrRunTimedOut):
+		if kind == jobs.KindPrune {
+			return "cleaning up expired backups timed out"
+		}
 		return "the backup run timed out"
 	case errors.Is(err, ErrNotConfigured):
 		return "backup is not configured for this space"
@@ -519,6 +551,8 @@ func userMessage(err error) string {
 		return "space not found"
 	case errors.Is(err, ErrRunInProgress):
 		return "a run is already in progress"
+	case errors.Is(err, ErrPruneFailed):
+		return "cleaning up expired backups failed"
 	default:
 		return "the backup run failed"
 	}

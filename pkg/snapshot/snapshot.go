@@ -9,7 +9,9 @@
 //     only, so keep-within is implemented above kopia: list snapshots, delete
 //     manifests older than the window, then run full maintenance GC
 //     (decisions.md #10; phase-0-findings.md Spike 2, "Pruning / retention").
-//   - Prune runs as a separate job from backup (decisions.md #9 Tier 1).
+//   - Prune runs as a separate job from backup, on its own cadence and never
+//     inline in a backup run (decisions.md #9 Tier 1). It is the same process
+//     and the same credentials for now; Phase 7's Tier 2 gives it its own.
 package snapshot
 
 import (
@@ -36,6 +38,18 @@ type Info struct {
 	// FileCount and TotalBytes are logical (pre-dedup) counts.
 	FileCount  int64
 	TotalBytes int64
+}
+
+// PruneStats is what one prune run did. It is metadata only — counts, no
+// identifiers — and exists so a prune's job record can say more than "it
+// worked": an operator watching a target fill up needs to see whether anything
+// is actually being expired.
+type PruneStats struct {
+	// Deleted counts the manifests the run removed: expired snapshots plus any
+	// incomplete manifest a killed run left behind.
+	Deleted int
+	// Kept counts the complete snapshots still in the repository afterwards.
+	Kept int
 }
 
 // Location addresses the S3 target holding a Space's repo. Credentials are
@@ -143,7 +157,7 @@ type Engine interface {
 	RestoreFile(ctx context.Context, repo Repo, id SnapshotID, relPath, outDir string) error
 	// Prune deletes snapshots older than now-window (time-based keep-within) and
 	// runs maintenance GC. Runs as a separate job (decisions.md #9 Tier 1).
-	Prune(ctx context.Context, repo Repo, window time.Duration) error
+	Prune(ctx context.Context, repo Repo, window time.Duration) (PruneStats, error)
 	// List returns the snapshots currently in the space's repo, newest first.
 	List(ctx context.Context, repo Repo) ([]Info, error)
 }

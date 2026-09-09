@@ -1,6 +1,6 @@
 // Package scheduler turns "back up my data" into "backed up while everyone
-// sleeps": it decides which Spaces are due, starts their unattended runs, and
-// keeps run history from growing forever.
+// sleeps": it decides which Spaces are due, starts their unattended runs,
+// applies their retention windows, and keeps run history from growing forever.
 //
 // Design notes worth knowing before changing anything here:
 //
@@ -18,9 +18,13 @@
 //     becomes the new baseline. No storm of missed runs.
 //   - Time is injected (Clock) and the tick body is exported (RunOnce), so the
 //     scheduling rules are tested deterministically rather than by sleeping.
-//
-// Prune/maintenance is deliberately *not* scheduled here: it runs as a separate
-// job with separate credentials (decisions.md #9 Tier 1, Phase 7).
+//   - Prune is scheduled here too, on its own slow cadence and as its own job
+//     kind — never inline in a backup run (decisions.md #9 Tier 1). It is the
+//     same process and the same credentials for now; Phase 7's Tier 2 splits
+//     the credentials, which is a wiring change rather than a scheduling one.
+//   - A Space is dispatched for one thing per tick. Backup wins: both take the
+//     same run lock, so dispatching a prune alongside would only produce a job
+//     that fails with "a run is already in progress".
 package scheduler
 
 import (
@@ -46,8 +50,16 @@ const (
 	DefaultMaxConcurrent = 2
 	// DefaultJitter staggers Spaces whose schedules coincide.
 	DefaultJitter = 5 * time.Minute
-	// DefaultPruneInterval is how often run history is trimmed.
-	DefaultPruneInterval = time.Hour
+	// DefaultHistoryInterval is how often run history is trimmed.
+	DefaultHistoryInterval = time.Hour
+	// DefaultPruneInterval is how often a Space's retention window is applied
+	// and its storage reclaimed. Daily: expiry is measured in days and full
+	// maintenance is the most expensive thing this service does to a target.
+	DefaultPruneInterval = 24 * time.Hour
+	// pruneJitterFraction spreads Spaces across a fraction of the prune
+	// interval, so a deployment that pruned everything in one wave once does
+	// not keep doing so forever after.
+	pruneJitterFraction = 8
 	// DefaultSweepInterval is how often the staleness sweep runs. Staleness is
 	// measured in days; checking it every minute only generates load.
 	DefaultSweepInterval = 15 * time.Minute
@@ -80,6 +92,18 @@ type RunnerFunc func(ctx context.Context, spaceID string) error
 // RunScheduled calls f.
 func (f RunnerFunc) RunScheduled(ctx context.Context, spaceID string) error { return f(ctx, spaceID) }
 
+// PruneRunner applies one Space's retention window and reclaims the storage
+// that frees. Satisfied by an adapter over *backup.Runner.
+type PruneRunner interface {
+	RunPrune(ctx context.Context, spaceID string) error
+}
+
+// PruneRunnerFunc adapts a function to PruneRunner.
+type PruneRunnerFunc func(ctx context.Context, spaceID string) error
+
+// RunPrune calls f.
+func (f PruneRunnerFunc) RunPrune(ctx context.Context, spaceID string) error { return f(ctx, spaceID) }
+
 // Recoverer closes out runs abandoned by a process that died holding a lock.
 // It is satisfied by *jobs.LeaseLocker.
 type Recoverer interface {
@@ -92,10 +116,14 @@ type RunGuard interface {
 	Busy(ctx context.Context, spaceID string) (bool, error)
 }
 
-// Pruner trims a durable collection to a retention window. Both the job store
-// and the notification store satisfy it; the scheduler owns the cadence because
-// it is the only component that ticks.
-type Pruner interface {
+// Trimmer drops a durable collection's records older than a cutoff. Both the
+// job store and the notification store satisfy it; the scheduler owns the
+// cadence because it is the only component that ticks.
+//
+// This is about the service's own bookkeeping — run history and notifications —
+// and has nothing to do with a Space's backup retention, which is what
+// PruneRunner applies.
+type Trimmer interface {
 	PruneBefore(ctx context.Context, cutoff time.Time) (int, error)
 }
 
@@ -112,8 +140,13 @@ type Options struct {
 	// HistoryWindow is how long finished runs are kept; zero uses
 	// jobs.DefaultHistoryWindow.
 	HistoryWindow time.Duration
-	// PruneInterval is how often history is trimmed; zero uses
-	// DefaultPruneInterval.
+	// HistoryInterval is how often run history and notifications are trimmed;
+	// zero uses DefaultHistoryInterval.
+	HistoryInterval time.Duration
+	// PruneInterval is how often a Space's retention window is applied and its
+	// storage reclaimed; zero uses DefaultPruneInterval. It is deployment-wide:
+	// the *window* is the user's setting, the cadence at which it is enforced
+	// is the operator's.
 	PruneInterval time.Duration
 	// SweepInterval is how often OnSweep is called; zero uses
 	// DefaultSweepInterval.
@@ -134,6 +167,11 @@ type Deps struct {
 	Jobs jobs.Store
 	// Runner performs the actual backup run.
 	Runner Runner
+	// Prunes is optional; when set, each Space's retention window is applied on
+	// PruneInterval. Left nil, nothing ever expires a snapshot or reclaims
+	// storage, so production always sets it — the option exists for tests and
+	// for the degraded modes that have no engine.
+	Prunes PruneRunner
 	// Recoverer is optional; when set, abandoned runs are closed out each tick.
 	Recoverer Recoverer
 	// Runs is optional; when set, "is this Space already running" is answered
@@ -142,7 +180,7 @@ type Deps struct {
 	// Events is optional; when set, the notification history is trimmed on the
 	// same cadence and to the same window as the run history. Everything the
 	// service keeps has to be trimmed by somebody.
-	Events Pruner
+	Events Trimmer
 	// Clock is injected for deterministic tests.
 	Clock Clock
 	// Logger receives operational detail; never key material.
@@ -166,10 +204,10 @@ type Scheduler struct {
 	slots chan struct{}
 	wg    sync.WaitGroup
 
-	mu        sync.Mutex
-	inflight  map[string]struct{}
-	lastPrune time.Time
-	lastSweep time.Time
+	mu          sync.Mutex
+	inflight    map[string]struct{}
+	lastHistory time.Time
+	lastSweep   time.Time
 }
 
 // New validates dependencies and constructs a Scheduler.
@@ -205,6 +243,9 @@ func New(deps Deps, opts Options) (*Scheduler, error) {
 	}
 	if opts.HistoryWindow <= 0 {
 		opts.HistoryWindow = jobs.DefaultHistoryWindow
+	}
+	if opts.HistoryInterval <= 0 {
+		opts.HistoryInterval = DefaultHistoryInterval
 	}
 	if opts.PruneInterval <= 0 {
 		opts.PruneInterval = DefaultPruneInterval
@@ -253,9 +294,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 }
 
-// RunOnce performs a single evaluation: recover abandoned runs, dispatch due
-// Spaces, trim history. It is exported so the scheduling rules can be tested
-// without waiting for wall-clock ticks.
+// RunOnce performs a single evaluation: recover abandoned runs, dispatch the
+// Spaces due for a backup or a prune, trim the service's own history. It is
+// exported so the scheduling rules can be tested without waiting for wall-clock
+// ticks.
 func (s *Scheduler) RunOnce(ctx context.Context) error {
 	now := s.now()
 
@@ -277,21 +319,12 @@ func (s *Scheduler) RunOnce(ctx context.Context) error {
 		if !s.eligible(cfg) {
 			continue
 		}
-		due, err := s.due(ctx, cfg, now)
-		if err != nil {
+		if err := s.evaluate(ctx, cfg, now); err != nil {
 			s.deps.Logger.Error("could not evaluate schedule", "space", cfg.SpaceID, "err", err)
-			continue
-		}
-		if !due {
-			continue
-		}
-		if !s.dispatch(ctx, cfg.SpaceID) {
-			// At capacity: the Space stays due and is picked up next tick.
-			s.deps.Logger.Info("scheduled run deferred; concurrency limit reached", "space", cfg.SpaceID)
 		}
 	}
 
-	s.pruneHistory(ctx, now)
+	s.trimHistory(ctx, now)
 	s.sweep(ctx, now)
 	return nil
 }
@@ -304,22 +337,51 @@ func (s *Scheduler) eligible(cfg spacecfg.Config) bool {
 	return cfg.Enabled && cfg.TargetID != ""
 }
 
-// due reports whether a Space's next occurrence has passed.
-func (s *Scheduler) due(ctx context.Context, cfg spacecfg.Config, now time.Time) (bool, error) {
+// evaluate decides what a Space is due for and dispatches it.
+//
+// The Space's last backup is read once and answers both questions: when the
+// next backup is due, and whether there is anything for a prune to work on.
+// Backup wins when both are due — they share the run lock, so starting a prune
+// as well would only record a job that immediately fails.
+func (s *Scheduler) evaluate(ctx context.Context, cfg spacecfg.Config, now time.Time) error {
 	busy, err := s.busy(ctx, cfg.SpaceID)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if busy {
-		return false, nil
+		return nil
 	}
 
-	history, err := s.baselineHistory(ctx, cfg.SpaceID)
+	lastBackup, hasBackup, err := s.lastRunOf(ctx, cfg.SpaceID, jobs.KindBackup)
 	if err != nil {
-		return false, err
+		return err
 	}
 
-	next, err := s.nextOccurrence(cfg, history, now)
+	due, err := s.backupDue(cfg, lastBackup, hasBackup, now)
+	if err != nil {
+		return err
+	}
+	if due {
+		if !s.dispatch(ctx, cfg.SpaceID, jobs.KindBackup) {
+			// At capacity: the Space stays due and is picked up next tick.
+			s.deps.Logger.Info("scheduled run deferred; concurrency limit reached", "space", cfg.SpaceID)
+		}
+		return nil
+	}
+
+	prune, err := s.pruneDue(ctx, cfg, lastBackup, hasBackup, now)
+	if err != nil {
+		return err
+	}
+	if prune && !s.dispatch(ctx, cfg.SpaceID, jobs.KindPrune) {
+		s.deps.Logger.Info("prune deferred; concurrency limit reached", "space", cfg.SpaceID)
+	}
+	return nil
+}
+
+// backupDue reports whether a Space's next occurrence has passed.
+func (s *Scheduler) backupDue(cfg spacecfg.Config, lastBackup jobs.Job, hasBackup bool, now time.Time) (bool, error) {
+	next, err := s.nextOccurrence(cfg, s.baseline(cfg, lastBackup, hasBackup, now))
 	if err != nil {
 		return false, err
 	}
@@ -327,6 +389,46 @@ func (s *Scheduler) due(ctx context.Context, cfg spacecfg.Config, now time.Time)
 		// A schedule that never fires again is not an error; it just never runs.
 		return false, nil
 	}
+	return !now.Before(next), nil
+}
+
+// pruneDue reports whether a Space's retention window should be applied now.
+//
+// A Space with no successful backup is skipped rather than reported as failing:
+// until one run has completed there is no repository to open, so a prune could
+// only fail, and it would do so every day. That also covers the Space whose
+// runs never get past a checkpoint — an incomplete run is not a success
+// (decisions.md R4 amendment), so it never makes a Space prunable.
+func (s *Scheduler) pruneDue(
+	ctx context.Context,
+	cfg spacecfg.Config,
+	lastBackup jobs.Job,
+	hasBackup bool,
+	now time.Time,
+) (bool, error) {
+	if s.deps.Prunes == nil {
+		return false, nil
+	}
+	if !hasBackup || lastBackup.State != jobs.StateSucceeded {
+		return false, nil
+	}
+
+	lastPrune, pruned, err := s.lastRunOf(ctx, cfg.SpaceID, jobs.KindPrune)
+	if err != nil {
+		return false, err
+	}
+	if !pruned {
+		// Never pruned, and now there is something to prune. Running once
+		// straight away also means an existing deployment starts reclaiming
+		// storage on the next tick rather than a day later.
+		return true, nil
+	}
+
+	// Due-ness is measured from the last *attempt*, like a backup's: a prune
+	// that keeps failing retries on its own cadence instead of every tick.
+	next := lastPrune.CreatedAt.
+		Add(s.opts.PruneInterval).
+		Add(s.jitterFor(cfg.SpaceID, s.opts.PruneInterval/pruneJitterFraction))
 	return !now.Before(next), nil
 }
 
@@ -359,24 +461,18 @@ func (s *Scheduler) busy(ctx context.Context, spaceID string) (bool, error) {
 	return false, nil
 }
 
-// baselineHistory reads the least history that can answer "when did the last
-// backup start": one record, widened only when the newest run turns out to be
-// something else. Reading ten records per Space per minute to find one number
-// is load an idle household deployment should not generate.
-func (s *Scheduler) baselineHistory(ctx context.Context, spaceID string) ([]jobs.Job, error) {
-	history, err := s.deps.Jobs.ListRecent(ctx, spaceID, 1)
+// lastRunOf reads the newest run of one kind, or reports that there is none.
+// It is one document read however much other history a Space has accumulated,
+// which is what keeps an idle deployment idle: this runs per Space, per tick.
+func (s *Scheduler) lastRunOf(ctx context.Context, spaceID string, kind jobs.Kind) (jobs.Job, bool, error) {
+	history, err := s.deps.Jobs.ListRecentOfKind(ctx, spaceID, kind, 1)
 	if err != nil {
-		return nil, fmt.Errorf("scheduler: read run history: %w", err)
+		return jobs.Job{}, false, fmt.Errorf("scheduler: read run history: %w", err)
 	}
-	if _, ok := jobs.LastOf(history, jobs.KindBackup, ""); ok || len(history) == 0 {
-		return history, nil
+	if len(history) == 0 {
+		return jobs.Job{}, false, nil
 	}
-
-	history, err = s.deps.Jobs.ListRecent(ctx, spaceID, historyLookback)
-	if err != nil {
-		return nil, fmt.Errorf("scheduler: read run history: %w", err)
-	}
-	return history, nil
+	return history[0], true, nil
 }
 
 // NextRun reports when a Space is next due, so the status board can say "next
@@ -396,17 +492,16 @@ func (s *Scheduler) NextRun(ctx context.Context, spaceID string) (time.Time, err
 		return time.Time{}, nil
 	}
 
-	history, err := s.deps.Jobs.ListRecent(ctx, spaceID, historyLookback)
+	last, ok, err := s.lastRunOf(ctx, spaceID, jobs.KindBackup)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("scheduler: read run history: %w", err)
+		return time.Time{}, err
 	}
-	return s.nextOccurrence(cfg, history, s.now())
+	return s.nextOccurrence(cfg, s.baseline(cfg, last, ok, s.now()))
 }
 
 // nextOccurrence is the single place the "when does this Space run next"
 // question is answered: schedule, baseline and jitter, in that order.
-func (s *Scheduler) nextOccurrence(cfg spacecfg.Config, history []jobs.Job, now time.Time) (time.Time, error) {
-	base := s.baseline(cfg, history, now)
+func (s *Scheduler) nextOccurrence(cfg spacecfg.Config, base time.Time) (time.Time, error) {
 	next, err := NextAfter(cfg.EffectiveSchedule(), base.In(s.opts.Location))
 	if err != nil {
 		return time.Time{}, err
@@ -414,15 +509,15 @@ func (s *Scheduler) nextOccurrence(cfg spacecfg.Config, history []jobs.Job, now 
 	if next.IsZero() {
 		return time.Time{}, nil
 	}
-	return next.Add(s.jitterFor(cfg.SpaceID)), nil
+	return next.Add(s.jitterFor(cfg.SpaceID, s.opts.Jitter)), nil
 }
 
 // baseline is the instant the next occurrence is computed from: the last
 // attempted backup, or — for a Space that has never run — the moment it was
 // configured.
-func (s *Scheduler) baseline(cfg spacecfg.Config, history []jobs.Job, now time.Time) time.Time {
-	if last, ok := jobs.LastOf(history, jobs.KindBackup, ""); ok {
-		return last.CreatedAt
+func (s *Scheduler) baseline(cfg spacecfg.Config, lastBackup jobs.Job, hasBackup bool, now time.Time) time.Time {
+	if hasBackup {
+		return lastBackup.CreatedAt
 	}
 	if !cfg.UpdatedAt.IsZero() {
 		return cfg.UpdatedAt
@@ -430,22 +525,25 @@ func (s *Scheduler) baseline(cfg spacecfg.Config, history []jobs.Job, now time.T
 	return now
 }
 
-// jitterFor is a stable per-Space offset inside the jitter window. It is
-// derived from the Space id rather than randomised so it survives restarts: a
-// Space keeps its slot instead of wandering, and Spaces sharing a schedule stay
-// spread out.
-func (s *Scheduler) jitterFor(spaceID string) time.Duration {
-	if s.opts.Jitter <= 0 {
+// jitterFor is a stable per-Space offset inside a window. It is derived from
+// the Space id rather than randomised so it survives restarts: a Space keeps
+// its slot instead of wandering, and Spaces sharing a schedule stay spread out.
+func (s *Scheduler) jitterFor(spaceID string, window time.Duration) time.Duration {
+	if window <= 0 {
 		return 0
 	}
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(spaceID))
-	return time.Duration(h.Sum64() % uint64(s.opts.Jitter))
+	return time.Duration(h.Sum64() % uint64(window))
 }
 
-// dispatch starts a run if a concurrency slot is free. It reports whether the
-// run was started.
-func (s *Scheduler) dispatch(ctx context.Context, spaceID string) bool {
+// dispatch starts a run of one kind if a concurrency slot is free. It reports
+// whether the run was started.
+//
+// Backups and prunes share the slots and the in-flight set: they compete for
+// the same upstream link and the same run lock, so counting them separately
+// would let a deployment run twice what it was configured for.
+func (s *Scheduler) dispatch(ctx context.Context, spaceID string, kind jobs.Kind) bool {
 	s.mu.Lock()
 	if _, running := s.inflight[spaceID]; running {
 		s.mu.Unlock()
@@ -469,18 +567,23 @@ func (s *Scheduler) dispatch(ctx context.Context, spaceID string) bool {
 			s.mu.Unlock()
 			<-s.slots
 		}()
-		s.execute(ctx, spaceID)
+		s.execute(ctx, spaceID, kind)
 	}()
 	return true
 }
 
 // execute performs one run and reports its outcome.
-func (s *Scheduler) execute(ctx context.Context, spaceID string) {
+func (s *Scheduler) execute(ctx context.Context, spaceID string, kind jobs.Kind) {
 	runCtx := ctx
 	if s.opts.RunTimeout > 0 {
 		var cancel context.CancelFunc
 		runCtx, cancel = context.WithTimeout(ctx, s.opts.RunTimeout)
 		defer cancel()
+	}
+
+	if kind == jobs.KindPrune {
+		s.executePrune(runCtx, spaceID)
+		return
 	}
 
 	s.deps.Logger.Info("starting scheduled backup", "space", spaceID)
@@ -499,6 +602,19 @@ func (s *Scheduler) execute(ctx context.Context, spaceID string) {
 	}
 }
 
+// executePrune applies one Space's retention window.
+//
+// It deliberately does not call OnRunFinished. That hook is how a member gets
+// told their backup failed; a prune failure means storage was not reclaimed,
+// which is an operator's problem and nothing the family can act on. It is
+// logged, and it is on the job record.
+func (s *Scheduler) executePrune(ctx context.Context, spaceID string) {
+	s.deps.Logger.Info("starting scheduled prune", "space", spaceID)
+	if err := s.deps.Prunes.RunPrune(ctx, spaceID); err != nil {
+		s.deps.Logger.Error("scheduled prune failed", "space", spaceID, "err", err)
+	}
+}
+
 // recoverAbandoned closes out runs whose process disappeared.
 func (s *Scheduler) recoverAbandoned(ctx context.Context) {
 	if s.deps.Recoverer == nil {
@@ -514,14 +630,14 @@ func (s *Scheduler) recoverAbandoned(ctx context.Context) {
 	}
 }
 
-// pruneHistory trims finished runs — and the notifications about them — older
+// trimHistory trims finished runs — and the notifications about them — older
 // than the history window, on its own slow cadence so it does not run on every
 // tick.
-func (s *Scheduler) pruneHistory(ctx context.Context, now time.Time) {
-	if !s.lastPrune.IsZero() && now.Sub(s.lastPrune) < s.opts.PruneInterval {
+func (s *Scheduler) trimHistory(ctx context.Context, now time.Time) {
+	if !s.lastHistory.IsZero() && now.Sub(s.lastHistory) < s.opts.HistoryInterval {
 		return
 	}
-	s.lastPrune = now
+	s.lastHistory = now
 	cutoff := now.Add(-s.opts.HistoryWindow)
 
 	removed, err := s.deps.Jobs.PruneBefore(ctx, cutoff)
