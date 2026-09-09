@@ -77,6 +77,11 @@ type jobResponse struct {
 	FileCount  int64  `json:"file_count,omitempty"`
 	TotalBytes int64  `json:"total_bytes,omitempty"`
 	SnapshotID string `json:"snapshot_id,omitempty"`
+	// SnapshotsDeleted and SnapshotsKept are what a prune run did: how many
+	// snapshots aged out of the Space's retention window and how many it still
+	// has. Absent for every other kind of run.
+	SnapshotsDeleted int `json:"snapshots_deleted,omitempty"`
+	SnapshotsKept    int `json:"snapshots_kept,omitempty"`
 	// Error is the sanitized message the runner recorded.
 	Error string `json:"error,omitempty"`
 }
@@ -234,17 +239,19 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 // only the sanitized error the runner recorded.
 func toJobResponse(j jobs.Job) jobResponse {
 	return jobResponse{
-		ID:         j.ID,
-		Kind:       string(j.Kind),
-		State:      string(j.State),
-		Trigger:    string(j.Trigger),
-		CreatedAt:  formatTime(j.CreatedAt),
-		UpdatedAt:  formatTime(j.UpdatedAt),
-		FinishedAt: formatTime(j.FinishedAt),
-		FileCount:  j.FileCount,
-		TotalBytes: j.TotalBytes,
-		SnapshotID: j.SnapshotID,
-		Error:      j.Error,
+		ID:               j.ID,
+		Kind:             string(j.Kind),
+		State:            string(j.State),
+		Trigger:          string(j.Trigger),
+		CreatedAt:        formatTime(j.CreatedAt),
+		UpdatedAt:        formatTime(j.UpdatedAt),
+		FinishedAt:       formatTime(j.FinishedAt),
+		FileCount:        j.FileCount,
+		TotalBytes:       j.TotalBytes,
+		SnapshotID:       j.SnapshotID,
+		SnapshotsDeleted: j.SnapshotsDeleted,
+		SnapshotsKept:    j.SnapshotsKept,
+		Error:            j.Error,
 	}
 }
 

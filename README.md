@@ -63,6 +63,12 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
   restart neither repeats a run nor loses one. If a Space stops backing up
   successfully, its members are told — a backup that quietly died is the failure
   this is most worried about.
+- **Retention that actually happens.** Each Space keeps its snapshots for a time
+  window it chooses. Applying that window — expiring what has aged out and
+  reclaiming the storage it frees, including what a failed run left behind — is
+  its own unattended job, daily by default. It never runs inside a backup run and
+  never while one is in flight, and it never gives up a Space's newest complete
+  snapshot, however old that snapshot is.
 - **No database.** The service keeps its own state (schedules, run history,
   wrapped key envelopes, target records) in a dedicated OpenCloud Space, so a
   deployment needs no second storage system. That Space must not be one an end

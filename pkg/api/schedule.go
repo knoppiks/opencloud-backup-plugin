@@ -197,7 +197,16 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
 		return
 	}
-	applyHistory(&out, history)
+	// Backups are read separately rather than picked out of the line above:
+	// restores and prunes share that history, and a Space that prunes daily
+	// would otherwise push its own last backup out of the window and report
+	// "never backed up".
+	backups, err := s.jobStore.ListRecentOfKind(r.Context(), spaceID, jobs.KindBackup, defaultHistoryLimit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
+		return
+	}
+	applyHistory(&out, history, backups)
 
 	if s.schedules != nil && out.Enabled {
 		next, err := s.schedules.NextRun(r.Context(), spaceID)
@@ -208,8 +217,11 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// applyHistory fills the run-derived parts of a status response.
-func applyHistory(out *statusResponse, history []jobs.Job) {
+// applyHistory fills the run-derived parts of a status response. history is the
+// Space's runs of every kind — a restore or a prune is a run the board should
+// show as in progress — while backups is the same history narrowed to backups,
+// which is what "last run" and "last successful run" mean here.
+func applyHistory(out *statusResponse, history, backups []jobs.Job) {
 	for _, j := range history {
 		if !j.State.Terminal() {
 			out.Running = true
@@ -218,14 +230,14 @@ func applyHistory(out *statusResponse, history []jobs.Job) {
 			break
 		}
 	}
-	if last, ok := jobs.LastOf(history, jobs.KindBackup, ""); ok {
+	if last, ok := jobs.LastOf(backups, jobs.KindBackup, ""); ok {
 		resp := toJobResponse(last)
 		out.LastRun = &resp
 		if last.State == jobs.StateFailed {
 			out.LastError = last.Error
 		}
 	}
-	if success, ok := jobs.LastOf(history, jobs.KindBackup, jobs.StateSucceeded); ok {
+	if success, ok := jobs.LastOf(backups, jobs.KindBackup, jobs.StateSucceeded); ok {
 		resp := toJobResponse(success)
 		out.LastSuccess = &resp
 	}

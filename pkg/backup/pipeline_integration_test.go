@@ -449,7 +449,7 @@ func TestIntegration_PruneKeepsWithinWindow(t *testing.T) {
 	}
 
 	time.Sleep(10 * time.Millisecond)
-	if err := p.engine.Prune(ctx, p.repo, time.Nanosecond); err != nil {
+	if _, err := p.engine.Prune(ctx, p.repo, time.Nanosecond); err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
 
@@ -471,6 +471,99 @@ func TestIntegration_PruneKeepsWithinWindow(t *testing.T) {
 	}
 	if string(got) != "top-secret plaintext marker ALPHA (v2)" {
 		t.Fatalf("restored = %q", got)
+	}
+}
+
+// The prune job is the only thing that ever gives storage back, and it runs
+// unattended against a real repository every day. What it must never do is cost
+// the Space something it still needs: after retention is applied and full
+// maintenance has run — twice, because kopia's safety margins mean the first
+// cycle defers work to the second — every snapshot inside the window is still
+// listed and still restores byte-identically.
+//
+// It also exercises the parts a filesystem-backed unit test cannot: maintenance
+// ownership claimed against a real S3 repository, and RunExclusive running with
+// the owner check switched on rather than forced.
+func TestIntegration_PruneRunKeepsEverythingInsideTheWindow(t *testing.T) {
+	ctx := context.Background()
+	p := newGaragePipeline(ctx, t)
+
+	if _, err := p.runner.RunBackup(ctx, testSpaceID); err != nil {
+		t.Fatalf("RunBackup 1: %v", err)
+	}
+	p.reader.put("readme.txt", []byte("top-secret plaintext marker ALPHA (v2)"), testMTime.Add(time.Hour))
+	second, err := p.runner.RunBackup(ctx, testSpaceID)
+	if err != nil {
+		t.Fatalf("RunBackup 2: %v", err)
+	}
+
+	// Two maintenance cycles: the second is where kopia does the work the first
+	// deferred, and it must be as harmless as the first.
+	for cycle := 1; cycle <= 2; cycle++ {
+		res, err := p.runner.RunPrune(ctx, testSpaceID)
+		if err != nil {
+			t.Fatalf("RunPrune cycle %d: %v", cycle, err)
+		}
+		// Nothing is a week old, and the floor on the retention window is a
+		// week, so a prune of a fresh repository must expire nothing at all.
+		if res.Deleted != 0 || res.Kept != 2 {
+			t.Fatalf("cycle %d: %+v, want both snapshots kept", cycle, res)
+		}
+
+		job, err := p.jobs.Get(ctx, res.JobID)
+		if err != nil {
+			t.Fatalf("Get prune job: %v", err)
+		}
+		if job.Kind != jobs.KindPrune || job.State != jobs.StateSucceeded || job.SnapshotsKept != 2 {
+			t.Fatalf("cycle %d: prune job = %+v", cycle, job)
+		}
+
+		list, err := p.engine.List(ctx, p.repo)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(list) != 2 {
+			t.Fatalf("cycle %d: %d snapshots survived, want 2", cycle, len(list))
+		}
+
+		out := t.TempDir()
+		if err := p.engine.RestoreAll(ctx, p.repo, second.SnapshotID, out); err != nil {
+			t.Fatalf("cycle %d: RestoreAll after prune: %v", cycle, err)
+		}
+		got, err := os.ReadFile(filepath.Join(out, "readme.txt"))
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if string(got) != "top-secret plaintext marker ALPHA (v2)" {
+			t.Fatalf("cycle %d: restored = %q", cycle, got)
+		}
+	}
+}
+
+// A prune must not run while a backup of the same Space is in flight: it
+// deletes manifests and rewrites indexes in the repository the backup is
+// writing to. The run lock is what stops it, against the real pipeline.
+func TestIntegration_PruneWaitsForARunningBackup(t *testing.T) {
+	ctx := context.Background()
+	p := newGaragePipeline(ctx, t)
+
+	if _, err := p.runner.RunBackup(ctx, testSpaceID); err != nil {
+		t.Fatalf("RunBackup: %v", err)
+	}
+
+	// Hold the Space's lock the way a run in another process would.
+	release, err := p.jobs.Acquire(ctx, testSpaceID)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if _, err := p.runner.RunPrune(ctx, testSpaceID); !errors.Is(err, ErrRunInProgress) {
+		release()
+		t.Fatalf("RunPrune = %v, want ErrRunInProgress", err)
+	}
+	release()
+
+	if _, err := p.runner.RunPrune(ctx, testSpaceID); err != nil {
+		t.Fatalf("RunPrune after the lock was given back: %v", err)
 	}
 }
 

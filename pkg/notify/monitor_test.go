@@ -127,6 +127,38 @@ func TestMonitor_ReportsAStaleBackup(t *testing.T) {
 	}
 }
 
+// A healthy Space also prunes, daily, into the same run history. If the
+// staleness check read a fixed window of mixed history it would stop being able
+// to see the last successful backup and start telling a family their backups
+// died — the one false alarm guaranteed to make them stop reading these.
+func TestMonitor_IsNotFooledByABankOfPrunes(t *testing.T) {
+	ctx := context.Background()
+	h := newMonitorHarness(t, MonitorOptions{})
+	h.configure("s1", "30 2 * * *", true)
+
+	// Long enough after configuration that a check which cannot find the backup
+	// would fall back to "configured but never run" and raise the alarm.
+	h.clock.Advance(72 * time.Hour)
+	h.succeed("s1")
+
+	for range historyLookback + 5 {
+		h.clock.Advance(time.Minute)
+		j, err := h.jobs.Create(ctx, jobs.Job{SpaceID: "s1", Kind: jobs.KindPrune, State: jobs.StateRunning})
+		if err != nil {
+			t.Fatalf("Create prune: %v", err)
+		}
+		if err := h.jobs.Finish(ctx, j.ID, jobs.Outcome{State: jobs.StateSucceeded}); err != nil {
+			t.Fatalf("Finish prune: %v", err)
+		}
+	}
+
+	h.clock.Advance(time.Hour)
+	h.sweep()
+	if got := h.staleEvents("s1"); len(got) != 0 {
+		t.Fatalf("a freshly backed-up space was reported stale: %+v", got)
+	}
+}
+
 // Weekly Spaces must not be nagged after two days.
 func TestMonitor_ThresholdFollowsTheSchedule(t *testing.T) {
 	h := newMonitorHarness(t, MonitorOptions{})

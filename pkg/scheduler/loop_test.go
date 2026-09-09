@@ -273,11 +273,11 @@ func TestJitterIsBoundedStableAndSpreads(t *testing.T) {
 
 	offsets := map[string]time.Duration{}
 	for _, id := range []string{"s1", "s2", "s3", "s4", "s5"} {
-		off := h.sched.jitterFor(id)
+		off := h.sched.jitterFor(id, h.sched.opts.Jitter)
 		if off < 0 || off >= 10*time.Minute {
 			t.Fatalf("jitter for %s = %v, outside the window", id, off)
 		}
-		if again := h.sched.jitterFor(id); again != off {
+		if again := h.sched.jitterFor(id, h.sched.opts.Jitter); again != off {
 			t.Fatalf("jitter for %s is not stable: %v then %v", id, off, again)
 		}
 		offsets[id] = off
@@ -294,7 +294,7 @@ func TestJitterIsBoundedStableAndSpreads(t *testing.T) {
 	// A fresh scheduler (a restart) must place the same Space in the same slot.
 	other := newHarness(t, Options{Jitter: 10 * time.Minute})
 	for id, off := range offsets {
-		if got := other.sched.jitterFor(id); got != off {
+		if got := other.sched.jitterFor(id, other.sched.opts.Jitter); got != off {
 			t.Fatalf("jitter for %s changed across restart: %v -> %v", id, off, got)
 		}
 	}
@@ -304,7 +304,7 @@ func TestJitterDelaysTheRun(t *testing.T) {
 	h := newHarness(t, Options{Jitter: time.Hour})
 	h.configure("s1", "30 2 * * *")
 
-	offset := h.sched.jitterFor("s1")
+	offset := h.sched.jitterFor("s1", h.sched.opts.Jitter)
 	if offset < time.Minute {
 		t.Skip("this space's jitter offset is too small to observe")
 	}
@@ -496,9 +496,9 @@ func (f *fakeRecoverer) Recover(context.Context, jobs.Store) (int, error) {
 
 func TestPruneHistory_RunsOnItsOwnCadence(t *testing.T) {
 	h := newHarness(t, Options{
-		Jitter:        -1,
-		HistoryWindow: 24 * time.Hour,
-		PruneInterval: time.Hour,
+		Jitter:          -1,
+		HistoryWindow:   24 * time.Hour,
+		HistoryInterval: time.Hour,
 	})
 	ctx := context.Background()
 
@@ -567,7 +567,7 @@ func TestNextRunIncludesJitter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NextRun: %v", err)
 	}
-	want := epoch.Add(2*time.Hour + 30*time.Minute).Add(h.sched.jitterFor("s1"))
+	want := epoch.Add(2*time.Hour + 30*time.Minute).Add(h.sched.jitterFor("s1", h.sched.opts.Jitter))
 	if !next.Equal(want) {
 		t.Fatalf("NextRun = %v, want %v", next, want)
 	}

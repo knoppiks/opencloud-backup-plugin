@@ -79,7 +79,7 @@ func (p *fakePruner) calls() []time.Time {
 func TestPruneHistory_TrimsNotificationsToo(t *testing.T) {
 	events := &fakePruner{}
 	window := 30 * 24 * time.Hour
-	h := newHarness(t, Options{Jitter: -1, HistoryWindow: window, PruneInterval: time.Hour}, func(d *Deps) {
+	h := newHarness(t, Options{Jitter: -1, HistoryWindow: window, HistoryInterval: time.Hour}, func(d *Deps) {
 		d.Events = events
 	})
 
@@ -229,49 +229,50 @@ func TestDue_FailsClosedWhenTheRunLockCannotBeRead(t *testing.T) {
 	}
 }
 
-// The baseline is the last *backup*. Reading one record answers that almost
-// always; the rare Space whose newest run was a restore must still get the
-// right answer, not a fallback that schedules an immediate extra run.
-func TestBaselineHistory_WidensPastANonBackupRun(t *testing.T) {
+// The baseline is the last *backup*. Restores and prunes share the same
+// history and are newer more often than not; treating one of those as the
+// baseline would schedule a spurious extra backup, and failing to find any
+// backup would fall back to the configuration timestamp and do the same.
+func TestBaseline_IgnoresRunsThatAreNotBackups(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, Options{Jitter: -1})
 
-	backup, err := h.jobs.Create(ctx, jobs.Job{SpaceID: "s1", Kind: jobs.KindBackup, State: jobs.StateRunning})
+	backup, err := h.jobs.Create(ctx, jobs.Job{SpaceID: "s1", Kind: jobs.KindBackup, State: jobs.StateSucceeded})
 	if err != nil {
 		t.Fatalf("seed backup: %v", err)
 	}
-	h.clock.Advance(time.Hour)
-	if _, err := h.jobs.Create(ctx, jobs.Job{SpaceID: "s1", Kind: jobs.KindRestore, State: jobs.StateSucceeded}); err != nil {
-		t.Fatalf("seed restore: %v", err)
+	for _, kind := range []jobs.Kind{jobs.KindRestore, jobs.KindPrune} {
+		h.clock.Advance(time.Hour)
+		if _, err := h.jobs.Create(ctx, jobs.Job{SpaceID: "s1", Kind: kind, State: jobs.StateSucceeded}); err != nil {
+			t.Fatalf("seed %s: %v", kind, err)
+		}
 	}
 
-	history, err := h.sched.baselineHistory(ctx, "s1")
+	cfg := spacecfg.Config{SpaceID: "s1", UpdatedAt: epoch.Add(-time.Hour)}
+	last, ok, err := h.sched.lastRunOf(ctx, "s1", jobs.KindBackup)
 	if err != nil {
-		t.Fatalf("baselineHistory: %v", err)
+		t.Fatalf("lastRunOf: %v", err)
 	}
-	last, ok := jobs.LastOf(history, jobs.KindBackup, "")
-	if !ok || last.ID != backup.ID {
-		t.Fatalf("history = %+v, want it widened until the last backup is in it", history)
+	base := h.sched.baseline(cfg, last, ok, h.clock.Now())
+	if !base.Equal(backup.CreatedAt) {
+		t.Fatalf("baseline = %s, want the last backup at %s", base, backup.CreatedAt)
 	}
 }
 
-// The common case reads one record and stops.
-func TestBaselineHistory_ReadsOneRecordWhenItCan(t *testing.T) {
+// A Space that has never been backed up is scheduled from the moment it was
+// configured, not from now — otherwise its first run is always one interval
+// away, however long ago it was set up.
+func TestBaseline_FallsBackToTheConfiguration(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, Options{Jitter: -1})
 
-	for i := 0; i < 3; i++ {
-		if _, err := h.jobs.Create(ctx, jobs.Job{SpaceID: "s1", Kind: jobs.KindBackup, State: jobs.StateSucceeded}); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
-		h.clock.Advance(time.Hour)
-	}
-
-	history, err := h.sched.baselineHistory(ctx, "s1")
+	configured := epoch.Add(-3 * time.Hour)
+	last, ok, err := h.sched.lastRunOf(ctx, "s1", jobs.KindBackup)
 	if err != nil {
-		t.Fatalf("baselineHistory: %v", err)
+		t.Fatalf("lastRunOf: %v", err)
 	}
-	if len(history) != 1 {
-		t.Fatalf("read %d records, want 1", len(history))
+	base := h.sched.baseline(spacecfg.Config{SpaceID: "s1", UpdatedAt: configured}, last, ok, h.clock.Now())
+	if !base.Equal(configured) {
+		t.Fatalf("baseline = %s, want the configuration time %s", base, configured)
 	}
 }

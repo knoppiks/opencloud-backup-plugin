@@ -694,6 +694,58 @@ with `SafetyFull` bytes are reclaimed (assert on manifest presence and
 restorability, not blob counts — per Spike 2 notes). Unit: prune never
 overlaps a running backup; prune skips a Space with only checkpoints.
 
+### Outcome (implemented, issue #24)
+
+Option A, all five tasks, with two owner decisions, one addition the plan did
+not scope, and one test the plan asked for that cannot be written as written.
+
+- **Owner decision — the cadence is deployment-wide, not per Space.** Task 1
+  reads "`PruneInterval` per Space (config default 24 h)". It is a
+  `scheduler.Options` value (`PRUNE_INTERVAL_HOURS`, default 24 h) applied to
+  every Space and staggered by a stable per-Space offset inside an eighth of the
+  interval. The *window* is the user's setting and already per Space; how often
+  it is enforced is the operator's, and making it per Space would have meant a
+  new `spacecfg` field, API validation and a UI knob nobody asked for.
+- **Owner decision — a prune failure does not notify members.** `OnRunFinished`
+  is not called for prune runs. It is the path that tells a family their backup
+  failed; a prune failure means storage was not reclaimed, which is true of
+  nothing they can act on. Job record and operator log only.
+- **Addition — the job's kind moved into its document key.** Not in the plan,
+  and the plan does not work without it. Prune records share the one history
+  stream per Space, so a daily prune halves the reach of every bounded scan that
+  looks for the last *backup* (schedule baseline, staleness check, status board)
+  and makes R6's "widen from 1 record to 10 when the newest run is not a backup"
+  fire on almost every tick — a roughly fivefold increase in the reads an idle
+  deployment makes. The layout is now `jobs/<space>/<nanos>-<kind>-<job-id>`
+  with a `Store.ListRecentOfKind`; pre-existing records are read and classified
+  as before, costing one read each until they age out. The widening workaround
+  is gone.
+- **Deviation — `Engine.Prune` returns `PruneStats{Deleted, Kept}` and
+  `jobs.Job`/`Outcome` carry them.** Task 2 says "record counts", which was not
+  expressible: the engine returned only an error. Without this a prune's history
+  entry says "it worked", which cannot distinguish a run that reclaimed a year
+  of snapshots from one that found nothing to do — the exact question an
+  operator watching a target fill up is asking.
+- **Task 3's "skips a Space with no complete snapshot" is enforced in the
+  scheduler, from run history**, not in the runner: a Space with no *successful*
+  backup has no repository to open, so the check costs nothing (the same history
+  read that answers the schedule baseline answers this) and never produces a job
+  at all. A Space whose runs only ever reach a checkpoint lands here too, since
+  R4 made an incomplete run a failure.
+- **Task 4 needed a second half the plan did not mention.** Dropping `force`
+  turns "owned by somebody else" from silently-ignored into an error, so the
+  error had to be given a sentinel and stripped of the other owner's
+  username-at-host before it reaches a job record a user can read.
+- **The plan's headline integration test cannot be written.** "Two backups,
+  second older than window after clock advance, prune job → one snapshot
+  remains" needs the *repository's* clock to move, and the retention floor is a
+  week (R5), so no runner-driven prune can expire a fresh snapshot. Expiry is
+  proven at the engine level with a nanosecond window (as it already was); the
+  runner-level Garage test proves what only a real target can — ownership
+  claimed against a real S3 repository, `RunExclusive` running with the check on,
+  two full maintenance cycles, and every snapshot still listed and still
+  restoring byte-identically afterwards.
+
 ---
 
 ## R8 — Docs-to-code truth pass (F7)

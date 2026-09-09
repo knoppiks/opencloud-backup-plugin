@@ -195,7 +195,9 @@ func (e *fakeEngine) Walk(ctx context.Context, r snapshot.Repo, id snapshot.Snap
 	return nil
 }
 
-func (e *fakeEngine) Prune(context.Context, snapshot.Repo, time.Duration) error { return nil }
+func (e *fakeEngine) Prune(context.Context, snapshot.Repo, time.Duration) (snapshot.PruneStats, error) {
+	return snapshot.PruneStats{}, nil
+}
 
 func (e *fakeEngine) List(_ context.Context, r snapshot.Repo) ([]snapshot.Info, error) {
 	e.record(r)

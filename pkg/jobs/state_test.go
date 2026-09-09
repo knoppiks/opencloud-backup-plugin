@@ -2,7 +2,9 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,6 +84,30 @@ func TestStoreContract(t *testing.T) {
 				t.Fatalf("ListRecent: %+v", recent)
 			}
 
+			// The newest run of the Space is a restore, so a kind-filtered
+			// listing has to look past it rather than report "no backup".
+			backups, err := store.ListRecentOfKind(ctx, "space$a!a", KindBackup, 1)
+			if err != nil {
+				t.Fatalf("ListRecentOfKind: %v", err)
+			}
+			if len(backups) != 1 || backups[0].ID != j.ID {
+				t.Fatalf("ListRecentOfKind(backup): %+v", backups)
+			}
+			restores, err := store.ListRecentOfKind(ctx, "space$a!a", KindRestore, 0)
+			if err != nil {
+				t.Fatalf("ListRecentOfKind: %v", err)
+			}
+			if len(restores) != 1 || restores[0].ID != newer.ID {
+				t.Fatalf("ListRecentOfKind(restore): %+v", restores)
+			}
+			prunes, err := store.ListRecentOfKind(ctx, "space$a!a", KindPrune, 0)
+			if err != nil {
+				t.Fatalf("ListRecentOfKind: %v", err)
+			}
+			if len(prunes) != 0 {
+				t.Fatalf("ListRecentOfKind(prune): %+v", prunes)
+			}
+
 			if err := store.Finish(ctx, j.ID, Outcome{
 				State:      StateSucceeded,
 				SnapshotID: "snap",
@@ -114,6 +140,43 @@ func TestStoreContract(t *testing.T) {
 			}
 			if _, err := store.Get(ctx, newer.ID); err != nil {
 				t.Fatalf("unfinished job was pruned: %v", err)
+			}
+		})
+	}
+}
+
+// What a prune run did has to survive the round trip, or its history entry says
+// only "it worked" — which cannot tell a run that reclaimed a year of snapshots
+// from one that found nothing to do.
+func TestStoreContract_PruneCountsRoundTrip(t *testing.T) {
+	implementations := map[string]func(Clock) Store{
+		"memory": func(c Clock) Store { return NewMemoryStoreWithClock(c) },
+		"state":  func(c Clock) Store { return NewStateStore(state.NewMemoryStore(), c) },
+	}
+
+	for name, newImpl := range implementations {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newImpl(testutil.NewFakeClock(epoch))
+
+			j, err := store.Create(ctx, Job{SpaceID: "s1", Kind: KindPrune, State: StateRunning})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if err := store.Finish(ctx, j.ID, Outcome{
+				State:            StateSucceeded,
+				SnapshotsDeleted: 4,
+				SnapshotsKept:    2,
+			}); err != nil {
+				t.Fatalf("Finish: %v", err)
+			}
+
+			got, err := store.Get(ctx, j.ID)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.SnapshotsDeleted != 4 || got.SnapshotsKept != 2 {
+				t.Fatalf("prune counts: %+v", got)
 			}
 		})
 	}
@@ -235,6 +298,86 @@ func TestStateStore_ListRunningReadsAFinishedJobOnlyOnce(t *testing.T) {
 	}
 	if got := backing.gets.Load(); got != after {
 		t.Fatalf("later sweeps re-read documents: %d reads, want %d", got, after)
+	}
+}
+
+// A kind-filtered listing must not pay for the runs it is not asking about:
+// the kind is in the key, so a Space that prunes daily costs a scheduler no
+// more reads than one that does not.
+func TestStateStore_ListRecentOfKindReadsOnlyItsOwnKind(t *testing.T) {
+	ctx := context.Background()
+	backing := &countingStore{Store: state.NewMemoryStore()}
+	clock := testutil.NewFakeClock(epoch)
+	store := NewStateStore(backing, clock)
+
+	backup, err := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for range 5 {
+		clock.Advance(time.Hour)
+		if _, err := store.Create(ctx, Job{SpaceID: "s1", Kind: KindPrune}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	backing.gets.Store(0)
+	got, err := store.ListRecentOfKind(ctx, "s1", KindBackup, 1)
+	if err != nil {
+		t.Fatalf("ListRecentOfKind: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != backup.ID {
+		t.Fatalf("ListRecentOfKind: %+v", got)
+	}
+	if reads := backing.gets.Load(); reads != 1 {
+		t.Fatalf("reads = %d, want 1: the five prune records must be skipped by key", reads)
+	}
+}
+
+// History written before the kind was part of the key is still history. It has
+// to be read to be classified, but it must not disappear.
+func TestStateStore_ListRecentOfKindFindsRecordsWrittenBeforeKindsWereInKeys(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	store := NewStateStore(backing, testutil.NewFakeClock(epoch))
+
+	legacy := Job{
+		ID:        "0123456789abcdef",
+		SpaceID:   "s1",
+		Kind:      KindBackup,
+		State:     StateSucceeded,
+		CreatedAt: epoch,
+		UpdatedAt: epoch,
+	}
+	body, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	key := state.Key("jobs", "s1", fmt.Sprintf("%019d-%s", epoch.UnixNano(), legacy.ID))
+	if err := backing.Create(ctx, key, body); err != nil {
+		t.Fatalf("seed legacy record: %v", err)
+	}
+
+	got, err := store.ListRecentOfKind(ctx, "s1", KindBackup, 1)
+	if err != nil {
+		t.Fatalf("ListRecentOfKind: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != legacy.ID {
+		t.Fatalf("ListRecentOfKind: %+v", got)
+	}
+
+	// It must not be mistaken for a different kind either.
+	prunes, err := store.ListRecentOfKind(ctx, "s1", KindPrune, 0)
+	if err != nil {
+		t.Fatalf("ListRecentOfKind: %v", err)
+	}
+	if len(prunes) != 0 {
+		t.Fatalf("legacy backup reported as a prune: %+v", prunes)
+	}
+
+	// And it stays reachable by id, which is parsed out of the same key.
+	if _, err := store.Get(ctx, legacy.ID); err != nil {
+		t.Fatalf("Get legacy record: %v", err)
 	}
 }
 

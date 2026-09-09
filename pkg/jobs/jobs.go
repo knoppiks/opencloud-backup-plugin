@@ -76,6 +76,13 @@ type Job struct {
 	Error string `json:"error,omitempty"`
 	// SnapshotID is the snapshot a successful backup produced. Empty otherwise.
 	SnapshotID string `json:"snapshot_id,omitempty"`
+	// SnapshotsDeleted is how many snapshots a prune run expired, and
+	// SnapshotsKept how many it left in place. Zero for every other kind of
+	// run. Without them a prune's history entry says only "it worked", which
+	// is not enough to tell a run that reclaimed a year of history from one
+	// that found nothing to do.
+	SnapshotsDeleted int `json:"snapshots_deleted,omitempty"`
+	SnapshotsKept    int `json:"snapshots_kept,omitempty"`
 }
 
 // Duration reports how long a finished job took. It is zero while running.
@@ -99,6 +106,9 @@ type Outcome struct {
 	SnapshotID string
 	FileCount  int64
 	TotalBytes int64
+	// SnapshotsDeleted and SnapshotsKept are what a prune run did.
+	SnapshotsDeleted int
+	SnapshotsKept    int
 }
 
 // Store persists jobs and their state transitions.
@@ -112,6 +122,16 @@ type Store interface {
 	// ListRecent returns at most limit of a Space's jobs, newest first. A limit
 	// of zero or less means "all".
 	ListRecent(ctx context.Context, spaceID string, limit int) ([]Job, error)
+	// ListRecentOfKind returns at most limit of a Space's jobs of one kind,
+	// newest first. A limit of zero or less means "all".
+	//
+	// It exists because almost every question asked of run history is about one
+	// kind — "when did the last backup start", "when was this Space last
+	// pruned" — and answering those by reading a fixed window of mixed history
+	// is wrong twice over: the window costs reads the answer does not need, and
+	// runs of other kinds crowd out the record being looked for. A Space that
+	// backs up and prunes daily halves the reach of every such window.
+	ListRecentOfKind(ctx context.Context, spaceID string, kind Kind, limit int) ([]Job, error)
 	// ListRunning returns every job, in any Space, that never reached a
 	// terminal state. Recovery uses it to find runs whose process is gone: a
 	// record left at "running" makes its Space look permanently busy, and

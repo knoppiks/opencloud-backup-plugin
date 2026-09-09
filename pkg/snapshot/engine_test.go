@@ -393,7 +393,7 @@ func TestPrune_DeletesOnlySnapshotsOlderThanWindow(t *testing.T) {
 	// which excludes neither. Use a window of 1ns after a short wait so the
 	// first snapshot is provably outside it.
 	time.Sleep(10 * time.Millisecond)
-	if err := e.Prune(ctx, r, time.Nanosecond); err != nil {
+	if _, err := e.Prune(ctx, r, time.Nanosecond); err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
 
@@ -430,7 +430,7 @@ func TestPrune_KeepsNewestEvenWhenExpired(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	if err := e.Prune(ctx, r, time.Nanosecond); err != nil {
+	if _, err := e.Prune(ctx, r, time.Nanosecond); err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
 
@@ -443,9 +443,92 @@ func TestPrune_KeepsNewestEvenWhenExpired(t *testing.T) {
 	}
 }
 
+// A prune's job record is the only place an operator can see whether retention
+// is doing anything, so the counts have to be the run's own arithmetic and not
+// an approximation.
+func TestPrune_ReportsWhatItDeletedAndKept(t *testing.T) {
+	ctx := context.Background()
+	e, _ := newTestEngine(t)
+	r := testRepo(t, "space-1")
+	src := treeSource(t)
+
+	for i, body := range []string{"one", "two", "three"} {
+		src.put("readme.txt", []byte(body), testMTime.Add(time.Duration(i)*time.Hour))
+		if _, err := e.Snapshot(ctx, r, src); err != nil {
+			t.Fatalf("Snapshot %d: %v", i, err)
+		}
+	}
+
+	// Nothing is old enough to expire yet: three kept, none deleted.
+	stats, err := e.Prune(ctx, r, time.Hour)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if stats.Deleted != 0 || stats.Kept != 3 {
+		t.Fatalf("stats = %+v, want nothing deleted and three kept", stats)
+	}
+
+	// Now expire everything the rules allow, which is all but the newest.
+	time.Sleep(10 * time.Millisecond)
+	stats, err = e.Prune(ctx, r, time.Nanosecond)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if stats.Deleted != 2 || stats.Kept != 1 {
+		t.Fatalf("stats = %+v, want two deleted and the newest kept", stats)
+	}
+
+	got, err := e.List(ctx, r)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != stats.Kept {
+		t.Fatalf("reported %d kept but the repository holds %d", stats.Kept, len(got))
+	}
+}
+
+// Maintenance ownership only means something if it is enforced. kopia will skip
+// the check when asked to; this service never asks, so a repository some other
+// client has claimed is an error rather than two processes rewriting the same
+// indexes.
+func TestPrune_RefusesARepositoryOwnedByAnotherClient(t *testing.T) {
+	ctx := context.Background()
+	e, _ := newTestEngine(t)
+	r := testRepo(t, "space-1")
+
+	if _, err := e.Snapshot(ctx, r, treeSource(t)); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	// Somebody else's kopia claims the repository first.
+	if err := e.withRepo(ctx, r, false, func(ctx context.Context, rep repo.Repository) error {
+		dr, ok := rep.(repo.DirectRepository)
+		if !ok {
+			t.Fatal("test repository is not direct")
+		}
+		return repo.DirectWriteSession(ctx, dr, repo.WriteSessionOptions{Purpose: "test-claim"},
+			func(ctx context.Context, dw repo.DirectRepositoryWriter) error {
+				p := maintenance.DefaultParams()
+				p.Owner = "someone@elsewhere"
+				return maintenance.SetParams(ctx, dw, &p)
+			})
+	}); err != nil {
+		t.Fatalf("seed foreign ownership: %v", err)
+	}
+
+	_, err := e.Prune(ctx, r, time.Nanosecond)
+	if !errors.Is(err, ErrMaintenanceNotOwned) {
+		t.Fatalf("Prune = %v, want ErrMaintenanceNotOwned", err)
+	}
+	// The other client's identity is not ours to repeat into a job record.
+	if strings.Contains(err.Error(), "someone@elsewhere") {
+		t.Fatalf("the error names the other owner: %v", err)
+	}
+}
+
 func TestPrune_RejectsNonPositiveWindow(t *testing.T) {
 	e, _ := newTestEngine(t)
-	if err := e.Prune(context.Background(), testRepo(t, "space-1"), 0); err == nil {
+	if _, err := e.Prune(context.Background(), testRepo(t, "space-1"), 0); err == nil {
 		t.Fatal("zero window must be rejected")
 	}
 }
@@ -860,7 +943,7 @@ func TestPrune_DeletesIncompleteManifests(t *testing.T) {
 	// incompleteness makes it expire.
 	seedIncomplete(t, e, r, time.Now().Add(time.Hour))
 
-	if err := e.Prune(ctx, r, 30*24*time.Hour); err != nil {
+	if _, err := e.Prune(ctx, r, 30*24*time.Hour); err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
 	assertNoIncompleteManifests(t, e, r)

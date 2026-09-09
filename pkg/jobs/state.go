@@ -4,14 +4,20 @@ package jobs
 //
 // Layout: one document per run, at
 //
-//	jobs/<space-id>/<created-unix-nanos>-<job-id>
+//	jobs/<space-id>/<created-unix-nanos>-<kind>-<job-id>
 //
-// Two properties fall out of that key and are what make this cheap enough for a
-// store with no queries: a Space's history is a prefix listing, and because the
+// Three properties fall out of that key and are what make this cheap enough for
+// a store with no queries: a Space's history is a prefix listing; because the
 // timestamp is fixed-width and leading, lexical key order *is* chronological
-// order. Serving "the last five runs" therefore reads five documents, not the
-// Space's whole history, and pruning decides what to delete from key names
-// alone.
+// order; and the kind is in the name, so "the last backup" can skip every
+// restore and prune without reading them. Serving "the last five runs"
+// therefore reads five documents, not the Space's whole history, and pruning
+// decides what to delete from key names alone.
+//
+// Keys written before the kind was part of the name (<nanos>-<job-id>) are
+// still read: their kind is simply unknown until the document is fetched, so a
+// kind-filtered listing reads them and filters afterwards. That cost fades on
+// its own as history rolls over.
 
 import (
 	"context"
@@ -68,7 +74,7 @@ func (s *StateStore) Create(ctx context.Context, j Job) (Job, error) {
 		return Job{}, err
 	}
 
-	key := s.docs.Key(j.SpaceID, documentName(j.CreatedAt, j.ID))
+	key := s.docs.Key(j.SpaceID, documentName(j.CreatedAt, j.Kind, j.ID))
 	if err := s.docs.CreateKey(ctx, key, j); err != nil {
 		return Job{}, fmt.Errorf("jobs: store job: %w", err)
 	}
@@ -104,25 +110,56 @@ func (s *StateStore) List(ctx context.Context, spaceID string) ([]Job, error) {
 // ListRecent returns at most limit of a Space's jobs, newest first. Only the
 // documents actually returned are read.
 func (s *StateStore) ListRecent(ctx context.Context, spaceID string, limit int) ([]Job, error) {
+	return s.listRecent(ctx, spaceID, "", limit)
+}
+
+// ListRecentOfKind returns at most limit of a Space's jobs of one kind, newest
+// first. Documents whose key already says they are of another kind are not
+// read, so asking for one backup costs one read however many restores and
+// prunes happened since.
+func (s *StateStore) ListRecentOfKind(ctx context.Context, spaceID string, kind Kind, limit int) ([]Job, error) {
+	if kind == "" {
+		return nil, fmt.Errorf("jobs: kind required")
+	}
+	return s.listRecent(ctx, spaceID, kind, limit)
+}
+
+// listRecent walks a Space's history newest-first, reading only the documents
+// it returns. An empty kind matches every kind.
+func (s *StateStore) listRecent(ctx context.Context, spaceID string, kind Kind, limit int) ([]Job, error) {
 	keys, err := s.docs.Keys(ctx, spaceID)
 	if err != nil {
 		return nil, fmt.Errorf("jobs: list history: %w", err)
 	}
-	// Keys are chronological; take the newest tail.
-	if limit > 0 && len(keys) > limit {
-		keys = keys[len(keys)-limit:]
+
+	capacity := len(keys)
+	if limit > 0 {
+		capacity = min(capacity, limit)
 	}
 
-	out := make([]Job, 0, len(keys))
-	for _, key := range keys {
+	out := make([]Job, 0, capacity)
+	// Keys are chronological, so walking backwards is newest-first.
+	for i := len(keys) - 1; i >= 0; i-- {
+		if limit > 0 && len(out) == limit {
+			break
+		}
+		key := keys[i]
+		// A key that names a kind answers the filter without a read. One that
+		// does not (written before the kind was in the name) has to be read.
+		if k, named := kindFromKey(key); kind != "" && named && k != kind {
+			continue
+		}
 		j, err := s.docs.GetKey(ctx, key)
 		if err != nil {
 			// A record deleted or corrupted underneath us must not break the
 			// whole listing.
 			continue
 		}
-		out = append(out, j)
 		s.remember(j.ID, key)
+		if kind != "" && j.Kind != kind {
+			continue
+		}
+		out = append(out, j)
 	}
 	sortNewestFirst(out)
 	return out, nil
@@ -288,29 +325,65 @@ func (s *StateStore) forget(id string, key ...string) {
 }
 
 // documentName is the per-job key segment: a fixed-width timestamp so lexical
-// order is chronological, then the id so the name is unique.
-func documentName(created time.Time, id string) string {
-	return fmt.Sprintf("%0*d-%s", keyTimeWidth, created.UTC().UnixNano(), id)
+// order is chronological, then the kind so a listing can filter without
+// reading, then the id so the name is unique.
+func documentName(created time.Time, kind Kind, id string) string {
+	return fmt.Sprintf("%0*d-%s-%s", keyTimeWidth, created.UTC().UnixNano(), kind, id)
 }
 
-// idFromKey extracts a job id from a document key.
+// idFromKey extracts a job id from a document key, in either layout.
 func idFromKey(key string) (string, bool) {
-	name := key[strings.LastIndex(key, "/")+1:]
-	sep := strings.Index(name, "-")
-	if sep < 0 || sep+1 >= len(name) {
+	_, rest, ok := strings.Cut(documentSegment(key), "-")
+	if !ok || rest == "" {
 		return "", false
 	}
-	return name[sep+1:], true
+	// A kind segment, when present, sits between the timestamp and the id. A
+	// job id is hex, so it can never be mistaken for a kind.
+	if kind, id, ok := strings.Cut(rest, "-"); ok && id != "" && isKind(kind) {
+		return id, true
+	}
+	return rest, true
+}
+
+// kindFromKey reports the kind named in a document key. A key written before
+// the kind was part of the name names none, which is not an error: the caller
+// falls back to reading the document.
+func kindFromKey(key string) (Kind, bool) {
+	_, rest, ok := strings.Cut(documentSegment(key), "-")
+	if !ok {
+		return "", false
+	}
+	kind, id, ok := strings.Cut(rest, "-")
+	if !ok || id == "" || !isKind(kind) {
+		return "", false
+	}
+	return Kind(kind), true
+}
+
+// documentSegment is the last path segment of a document key: the job's name.
+func documentSegment(key string) string {
+	return key[strings.LastIndex(key, "/")+1:]
+}
+
+// isKind reports whether s names a kind this build knows. An unknown segment is
+// treated as part of an id rather than as a kind, so a key written by a future
+// version is misread as legacy — which costs a document read, not correctness.
+func isKind(s string) bool {
+	switch Kind(s) {
+	case KindBackup, KindPrune, KindRestore:
+		return true
+	default:
+		return false
+	}
 }
 
 // createdFromKey extracts a job's creation time from a document key.
 func createdFromKey(key string) (time.Time, bool) {
-	name := key[strings.LastIndex(key, "/")+1:]
-	sep := strings.Index(name, "-")
-	if sep < 0 {
+	stamp, _, ok := strings.Cut(documentSegment(key), "-")
+	if !ok {
 		return time.Time{}, false
 	}
-	nanos, err := strconv.ParseInt(name[:sep], 10, 64)
+	nanos, err := strconv.ParseInt(stamp, 10, 64)
 	if err != nil {
 		return time.Time{}, false
 	}

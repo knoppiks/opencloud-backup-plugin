@@ -82,17 +82,33 @@ func (m *MemoryStore) List(ctx context.Context, spaceID string) ([]Job, error) {
 
 // ListRecent returns at most limit of a Space's jobs, newest first.
 func (m *MemoryStore) ListRecent(_ context.Context, spaceID string, limit int) ([]Job, error) {
+	return m.list(spaceID, "", limit), nil
+}
+
+// ListRecentOfKind returns at most limit of a Space's jobs of one kind, newest
+// first.
+func (m *MemoryStore) ListRecentOfKind(_ context.Context, spaceID string, kind Kind, limit int) ([]Job, error) {
+	return m.list(spaceID, kind, limit), nil
+}
+
+// list collects a Space's jobs, optionally of one kind. An empty kind matches
+// every kind.
+func (m *MemoryStore) list(spaceID string, kind Kind, limit int) []Job {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	out := make([]Job, 0, len(m.jobs))
 	for _, j := range m.jobs {
-		if j.SpaceID == spaceID {
-			out = append(out, j)
+		if j.SpaceID != spaceID {
+			continue
 		}
+		if kind != "" && j.Kind != kind {
+			continue
+		}
+		out = append(out, j)
 	}
 	sortNewestFirst(out)
-	return applyLimit(out, limit), nil
+	return applyLimit(out, limit)
 }
 
 // ListRunning returns every job that never reached a terminal state, newest
@@ -205,6 +221,12 @@ func applyOutcome(j Job, out Outcome, now time.Time) Job {
 	}
 	if out.TotalBytes > 0 {
 		j.TotalBytes = out.TotalBytes
+	}
+	if out.SnapshotsDeleted > 0 {
+		j.SnapshotsDeleted = out.SnapshotsDeleted
+	}
+	if out.SnapshotsKept > 0 {
+		j.SnapshotsKept = out.SnapshotsKept
 	}
 	j.UpdatedAt = now
 	j.FinishedAt = now
