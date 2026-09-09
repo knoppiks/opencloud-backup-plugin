@@ -5,6 +5,8 @@
 GO            ?= go
 DIST          ?= dist
 BINARIES      := backupd takeout decrypt
+IMAGE         ?= opencloud-backupd
+IMAGE_TAG     ?= dev
 OPENCLOUD_DIR := test/fixtures/opencloud
 DEV_COMPOSE   := docker-compose.dev.yml
 
@@ -57,6 +59,10 @@ vet: ## Run go vet.
 .PHONY: fmt
 fmt: ## Format code.
 	$(GO) fmt ./...
+
+.PHONY: image
+image: ## Build the service container image ($(IMAGE):$(IMAGE_TAG)).
+	docker build -t $(IMAGE):$(IMAGE_TAG) .
 
 .PHONY: k8s-validate
 k8s-validate: ## Validate K8s manifests offline (kubeconform).

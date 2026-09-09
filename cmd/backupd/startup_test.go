@@ -223,3 +223,31 @@ func TestShippedManifestPlaceholdersAreRefused(t *testing.T) {
 		}
 	}
 }
+
+// The image runs this binary with no arguments, because the first argument is
+// an operator subcommand. The manifest and the Dockerfile have to agree on that
+// or the pod starts, reads "/backupd" as a command it does not know, and exits.
+func TestImageEntrypointTakesNoArguments(t *testing.T) {
+	dockerfile, err := os.ReadFile("../../Dockerfile")
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(dockerfile), `ENTRYPOINT ["/backupd"]`) {
+		t.Error(`the image must start the service as ENTRYPOINT ["/backupd"], with no arguments`)
+	}
+	if strings.Contains(string(dockerfile), "\nCMD ") {
+		t.Error("a CMD would be appended to the entrypoint and read as an operator subcommand")
+	}
+	// The user's offline recovery tool has no business on the server.
+	if strings.Contains(string(dockerfile), "cmd/decrypt") {
+		t.Error("the service image must not ship the decrypt CLI (decisions.md #2, #15)")
+	}
+
+	manifest, err := os.ReadFile("../../deploy/deployment-backupd.yaml")
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if strings.Contains(string(manifest), "args:") {
+		t.Error("the deployment must set no args: anything there is read as an operator subcommand")
+	}
+}

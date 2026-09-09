@@ -1,0 +1,26 @@
+# Keep the build context to what the build actually needs: the module and the
+# Go sources. Everything else is either irrelevant, large, or must never be
+# copied into an image.
+
+# The fixture directories hold OpenCloud's generated config — SECRETS — plus its
+# data and loaded apps. They are gitignored; they must not reach a build context
+# either.
+test/fixtures/opencloud/config/
+test/fixtures/opencloud/data/
+test/fixtures/opencloud/apps/
+test/fixtures/opencloud/fixture.env
+
+# Build output and local state.
+dist/
+tmp/
+.git/
+.idea/
+
+# Not part of the service.
+node_modules/
+spikes/
+.agents/
+deploy/
+docker-compose.dev.yml
+Dockerfile
+.dockerignore

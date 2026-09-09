@@ -42,14 +42,15 @@ spec:
           type: RuntimeDefault
       containers:
       - name: backupd
-        # No image is published yet: CI builds and uploads the binaries, not a
-        # container. Build and push one yourself, and pin a tag here rather than
-        # tracking :latest — a single-instance service with Recreate is down
-        # while it rolls, so you want to choose when.
+        # Build it from the Dockerfile in the repository root (`make image`) and
+        # push it to your own registry: nothing is published yet. Pin a tag here
+        # rather than tracking :latest — a single-instance service with Recreate
+        # is down while it rolls, so you want to choose when.
         #
-        # The entrypoint must run the binary with NO arguments: an argument is
-        # read as an operator subcommand (rotate-srw, rotate-tw) and anything
-        # else exits 1.
+        # NO `args` HERE, on purpose. The image's entrypoint is the service with
+        # an empty argument list; the first argument is read as an operator
+        # subcommand (rotate-srw, rotate-tw), so anything set here would run a
+        # command instead of the service.
         image: ghcr.io/knoppiks/opencloud-backupd:latest
         imagePullPolicy: IfNotPresent
         ports:
