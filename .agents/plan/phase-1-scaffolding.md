@@ -15,19 +15,32 @@ layout does not depend on spike outcomes; the `/pkg/snapshot` internals do).
    /pkg/api/            # HTTP handlers, DTOs (chi or stdlib mux)
    /pkg/cs3/            # CS3 gateway client wrapper (interface + impl)
    /pkg/keys/           # DK/RK/SRW key service
+   /pkg/rotate/         # SRW/TW key rotation (driven by the backupd CLI)
    /pkg/targets/        # admin-managed S3 targets, grants, TW cred sealing
    /pkg/spacecfg/       # per-Space backup config (target binding, retention)
    /pkg/snapshot/       # kopia wrapper (repo-per-space lifecycle)
-   /pkg/backup/         # run orchestration (CS3 -> snapshot -> target)
-   /pkg/s3target/       # Garage/S3 config, capability probe
-   /pkg/scheduler/      # per-space cron scheduling
+   /pkg/objstore/       # object boundary for what sits beside a repository
+   /pkg/backup/         # run orchestration (CS3 -> snapshot -> target), prune
+   /pkg/restore/        # Path B: snapshot -> CS3, into Restore/<ts>/
+   /pkg/takeout/        # Path A: admin extract + verify
+   /pkg/takeout/decrypt/# Path A: the user-side offline decrypt (own package on
+                        # purpose — see its doc comment)
+   /pkg/s3target/       # Garage/S3 capability probe boundary (unimplemented)
+   /pkg/scheduler/      # per-space cron scheduling, prune cadence
    /pkg/jobs/           # job/state store + per-Space run lock
-   /internal/testutil/  # Garage fixture, fake CS3, clock
+   /pkg/state/          # durable document store (interface + memory impl)
+   /pkg/cs3state/       # state store backed by an OpenCloud Space
+   /pkg/instance/       # single-instance guard
+   /pkg/notify/         # member and operator notifications
+   /internal/testutil/  # Garage fixture, clock
    ```
 
    `/pkg/targets` was added in Phase 2 (decisions.md #12–#15); `/pkg/spacecfg`
-   and `/pkg/backup` in Phase 4. `/pkg/spacecfg` is deliberately separate from
-   `/pkg/targets`: targets are admin-owned, the binding is user-owned.
+   and `/pkg/backup` in Phase 4; `/pkg/restore` and `/pkg/takeout` in Phase 5;
+   `/pkg/state`, `/pkg/cs3state`, `/pkg/jobs` and `/pkg/notify` in Phase 6;
+   `/pkg/rotate` and `/pkg/instance` during the September 2026 remediation.
+   `/pkg/spacecfg` is deliberately separate from `/pkg/targets`: targets are
+   admin-owned, the binding is user-owned.
 
    `/cmd` binaries stay thin; all logic in packages, wired via constructor
    injection (testability rule).

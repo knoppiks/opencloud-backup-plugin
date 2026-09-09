@@ -71,11 +71,13 @@ func (k WrapKind) String() string {
 	}
 }
 
-// SpaceKeys is the per-Space key record persisted by a Store. It holds only
-// wrapped material: "{space_id, dk_wrapped_rk, dk_wrapped_srw, argon_params,
-// created_at, version}" (phase-3 spec). The Argon2id parameters live inside the
-// RK envelope itself, so the record stays simple and the envelope stays
-// self-contained.
+// SpaceKeys is the pre-versioned per-Space key record: both envelopes in one
+// document. Since the R1 remediation each envelope is stored on its own, under
+// keyenvelopes/<space-id>/{rk,srw}/<nanos>; this type remains because those
+// older documents are still read (and never rewritten).
+//
+// It holds only wrapped material. The Argon2id parameters live inside the RK
+// envelope itself, so the record stays simple and the envelope self-contained.
 type SpaceKeys struct {
 	SpaceID   string    `json:"space_id"`
 	RK        WrappedDK `json:"rk,omitzero"`

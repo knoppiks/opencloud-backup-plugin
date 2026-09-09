@@ -2,10 +2,13 @@
 // service stores next to — but not inside — a kopia repository.
 //
 // kopia owns everything under a Space's repo prefix; nothing here ever writes
-// there (see snapshot.RepoPrefix vs snapshot.EnvelopeKey). The two users are:
+// there (see snapshot.RepoPrefix vs snapshot.EnvelopeKey and
+// snapshot.ServerEnvelopeKey). The two users are:
 //
-//   - the backup worker, publishing a Space's RK-wrapped key envelope to the
-//     target so a Take-Out is self-contained (Phase 5, Path A), and
+//   - the backup worker, publishing a Space's two key envelopes to the target:
+//     the RK-wrapped one so a Take-Out is self-contained (Phase 5, Path A) and
+//     the SRW-wrapped one so the state Space is not the only copy of the
+//     service's own (R1 amendment), and
 //   - the Take-Out CLI, copying a Space's ciphertext objects out of S3 with no
 //     OpenCloud dependency and no key input at all.
 //

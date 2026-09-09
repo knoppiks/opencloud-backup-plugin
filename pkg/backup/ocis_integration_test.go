@@ -39,6 +39,7 @@ import (
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/spacecfg"
 	"opencloud-backup-plugin/pkg/takeout"
+	takeoutdecrypt "opencloud-backup-plugin/pkg/takeout/decrypt"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -263,7 +264,7 @@ func TestIntegration_OpenCloudPathAWithDeploymentStopped(t *testing.T) {
 
 	// --- user decrypt, offline -------------------------------------------
 	out := t.TempDir()
-	if _, err := takeout.Decrypt(ctx, takeout.DecryptOptions{
+	if _, err := takeoutdecrypt.Decrypt(ctx, takeoutdecrypt.Options{
 		Dir: takeoutDir, RecoveryKey: rk, OutDir: out, WorkDir: t.TempDir(),
 	}); err != nil {
 		t.Fatalf("Decrypt: %v", err)

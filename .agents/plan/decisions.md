@@ -52,6 +52,8 @@ than drifting.
    kopia's own Object-Lock ransomware feature is **not usable on Garage** (no
    Object Lock) → kopia used for snapshot/dedup/crypto only; immutability handled
    out-of-band (see threat model). Keep the Object-Lock path capability-flagged.
+   *Status:* a capability type and probe interface are reserved (`pkg/s3target`);
+   nothing implements or calls them, and no flag reaches the engine yet.
 
 6. **Key/snapshot scope: per Space.** One Data Key + one kopia repo + one snapshot
    chain per Space. A shared space is backed up **once**, not once per member.
@@ -74,12 +76,15 @@ than drifting.
 9. **Immutability is layered:**
    - **Tier 1** (covers the primary threat fully): server-side worker; write key
      never on the client; deep time-based retention; prune runs as a **separate
-     job** from backup.
+     job** from backup. **Implemented** (see the R7 amendment).
    - **Tier 2** (limits leaked-write-key blast radius): worker gets a
      **write-only** Garage key; prune/GC runs from a **separate trusted context**
-     with the owner key.
+     with the owner key. **Not implemented.** Today both job kinds resolve the
+     same single credential pair from the target record, so a leaked worker
+     credential can delete as well as write.
    - **Tier 3** (optional, real out-of-band WORM): ZFS/Btrfs snapshots of the
-     Garage `data_dir`/`meta_dir`.
+     Garage `data_dir`/`meta_dir`. **Not implemented**; it is an operator
+     practice this project documents rather than code it ships.
 
 10. **Retention: time-based (`keep-within`), never count-based.** A count-based
     policy can be weaponized — an attacker injecting many bogus recent snapshots
@@ -99,6 +104,10 @@ than drifting.
     Rationale: a family admin wants to point different people at different buddy
     stores without redeploying the cluster. **Enforcement is server-side** (a
     user sees/uses only granted targets); client input is never trusted.
+    *Status:* the target store, the grant model and the server-side enforcement
+    exist. The **admin API and UI do not** — `/api/v1/admin/` is a placeholder
+    that answers 404, and the only writer today is the optional first-start
+    seeding below. Both land in Phase 8.
 
 13. **The in-app admin identity is the OpenCloud admin role, reused — we do not
     build our own admin user store.** Admin status is derived from OpenCloud
@@ -112,7 +121,8 @@ than drifting.
     an alternative resolver. The client-side CASL gate is deferred to Phase 8.
 
 14. **Target S3 credentials are app-managed and encrypted at rest.** The admin
-    enters credentials in the UI; the app stores them **wrapped by a
+    enters credentials in the UI (Phase 8; today, first-start seeding); the app
+    stores them **wrapped by a
     cluster/KMS "Target-Wrap" (TW) key** — the same custody class as the SRW key
     (K8s secret / KMS, never in the admin UI, never logged). Credential fields
     are **write-only**: no API `GET` ever returns them, and they are decrypted
@@ -273,10 +283,19 @@ decision.
 - **A Take-Out is a standard kopia filesystem repository, not a raw object
   copy.** kopia's S3 driver stores flat blob ids while its filesystem driver
   shards and suffixes them, so objects synced verbatim out of a bucket would not
-  reopen locally. The copy therefore runs at kopia's *blob* level. The pleasant
-  consequence: a Take-Out is openable by our `decrypt` CLI **and** by a stock
-  kopia release — worth having for a last-resort artefact. Copying blobs needs no
-  Data Key, which is what keeps `takeout` structurally unable to decrypt.
+  reopen locally. The copy therefore runs at kopia's *blob* level, which is what
+  makes the artefact a well-formed kopia repository on disk rather than a private
+  format. Copying blobs needs no Data Key, which is what keeps `takeout`
+  structurally unable to decrypt.
+  **What this does *not* promise is that a stock kopia release can open it.**
+  The repository password is the Data Key — 32 raw random bytes — and kopia's own
+  tooling takes a password as terminal input, an environment variable or a config
+  file, none of which carries arbitrary binary. So the layout is standard and the
+  credential is not: `decrypt` remains the supported way in. (An earlier version
+  of this file claimed stock-kopia openability outright; it was never true and
+  never tested. Making it true would mean encoding the Data Key as text before
+  using it as a password, which re-keys every existing repository — not worth it
+  for a property nobody needs.)
 
 - **`takeout` has no key input at all, and this is enforced by test.** Not a
   convention: `cmd/takeout` is audited for key-accepting flags and for any
@@ -317,7 +336,10 @@ decision.
   infrastructure nobody asked for.
   **Validated against OpenCloud 7.3.0** (`pkg/cs3state` integration test): the
   service account can create folders, write, *overwrite*, list and delete, and
-  run history survives a new store instance.
+  run history survives a new store instance. Read "validated" throughout this
+  file as *"a test exists and has been run by hand against the OpenCloud
+  fixture"* — those tests skip themselves when the fixture is absent, and CI does
+  not start one (R9). Only the Garage tests are enforced automatically.
   *Constraints this imposes, which are binding:*
   - The state Space must be one **no end user is a member of**. A member could
     delete the service's memory, and it is not a user's document. Since the R1
@@ -356,17 +378,35 @@ decision.
 
 - **Notifications split by audience, and decision #15 wins over the phase plan.**
   The phase-6 plan said "notify space owner + admin" on failure. Space members
-  get per-space events (run failed, backup stale). The **operator gets
-  operational events only, carrying no space id and no user** (target unusable) —
-  enforced in `pkg/notify` by validation, not convention. Telling an admin that
-  *this* Space is failing would hand them exactly the visibility #15 denies them.
-  Delivery: events are always **recorded** (durable, served by the API) and
-  delivered best-effort. v1 sinks are structured logs and SMTP for operator
-  events. OpenCloud's own notification service was the plan's first choice but no
+  get per-space events (run failed, backup stale). The **operator's notification
+  records carry no space id and no user** (target unusable) — enforced in
+  `pkg/notify` by validation, not convention. Telling an admin *in a
+  notification* that this Space is failing would hand them exactly the visibility
+  #15 denies them.
+  Delivery: events are always **recorded** durably and delivered best-effort.
+  Member events are served by the API; operator events are recorded, logged and
+  mailed, and there is no read endpoint for them yet (the admin surface is
+  Phase 8). v1 sinks are structured logs and SMTP for operator events.
+  OpenCloud's own notification service was the plan's first choice but no
   Phase-0 spike established a usable API for an external plugin, so it is not
   implemented on speculation; it becomes another sink when verified. Member
   events have no email path yet (that needs the user directory) — they are
   recorded and served, not dropped.
+
+- **The service log is a different surface, and it does name Spaces** (R8). Every
+  runner, scheduler and monitor line carries `space=<id>`, and the always-wired
+  log sink logs member events too. #15 is about what the *product* shows an
+  administrator — the admin UI, the notifications they receive, the API they can
+  call — not about what a process writes to stdout. In this deployment the
+  operator is the person who owns the machine, has the service account, and can
+  read every Space in plaintext anyway; withholding space ids from the logs would
+  make failures undiagnosable to the only person who can fix them, in exchange
+  for a boundary that person is already on the wrong side of.
+  *So the honest statement of the property is:* the operator's notification
+  records, and the mail built from them, never identify a Space or a user; the
+  logs do. Anything that changes that — a hosted deployment where the operator is
+  not the household — has to revisit this, and the place to start is the log sink
+  and the space-id fields in the runner and scheduler.
 
 - **Live progress during a run is not tracked.** Job records carry the file and
   byte counts a run *processed*, written when it finishes. Streaming progress
@@ -579,6 +619,12 @@ decision.
   credentials exist in exactly two places — the TW-wrapped record in the state
   Space, and process memory for the duration of a run — on any filesystem, after
   any kind of crash.
+  *One exception, by the operator's own choice:* when first-start seeding is
+  enabled the same credentials are also in the deployment's environment
+  (`BOOTSTRAP_S3_*`), for the life of the process and readable to anything that
+  can read `/proc/<pid>/environ`. That is the ordinary custody of a Secret-backed
+  variable, no worse than `SRW_KEY` beside it, but it is not "two places" and is
+  worth knowing before enabling it.
   *Also true of kopia's per-run cache, by a different mechanism:* it holds
   repository content (ciphertext), so `BACKUP_WORK_DIR` must be memory-backed and
   the service refuses to start otherwise unless
@@ -728,6 +774,38 @@ decision.
   classify. This retires R6's "widen the read when the newest run was a restore"
   workaround, which prune would have made the common case.
 
+### Amendments from the September 2026 review — R8 (docs-to-code truth pass)
+
+R8 changed prose, not behaviour, with one exception noted below. What it corrected
+is listed here so the corrections are themselves on the record:
+
+- **Unbuilt things now say so.** Immutability Tiers 2 and 3, the Object-Lock
+  capability probe, and the admin/target UI were all written in the present
+  tense. Each now carries its status. The threat model no longer credits Tier 2
+  with bounding a blast radius it does not bound yet, and no longer mentions a
+  "prune key", which has never existed.
+- **"Openable by a stock kopia release" was never true** and is retracted, with
+  the reason (the repository password is 32 raw bytes) and the cost of making it
+  true (re-keying every repository) recorded so it is not re-proposed.
+- **"The operator is never told which Space is failing" was true of the wrong
+  half.** It holds for notification records and mail; the service log names
+  Spaces throughout, deliberately. The property is restated as what it is.
+- **"Validated against OpenCloud 7.3.0" means a test run by hand.** None of those
+  tests run in CI, because CI starts no OpenCloud (R9's job).
+- **The service-account secret joined the trust and threat models** as the
+  highest-value credential in the deployment. It was documented in the manifests
+  and absent from the model those manifests implement.
+- **One behavioural change:** the shipped manifest's `REPLACE_ME` placeholders for
+  the OIDC audience and the state Space id started up happily, contradicting R5's
+  "fails loudly". Startup now refuses a value that still says `REPLACE_ME`. A
+  deployment that came up and then rejected every token was worse than one that
+  did not come up.
+- **Structural, not conventional:** the offline decrypt code moved into a package
+  of its own (`pkg/takeout/decrypt`) so the admin's Take-Out binary is *built*
+  without it, asserted by a dependency-graph test. `pkg/keys` is still linked
+  there — extraction reads envelope headers — and that limit is stated rather
+  than glossed.
+
 ---
 
 ## Trust & key model
@@ -750,6 +828,13 @@ decision.
   published to the target** as `server.ocbke` (R1 amendment above), so the state
   Space is not a single point of failure for unattended runs. Retirable with
   `backupd rotate-srw` (R2 amendment below).
+- **Service-account secret (`OC_SERVICE_ACCOUNT_SECRET`):** not a key in this
+  scheme, and the most valuable secret in the deployment. It carries **owner
+  scope on every Space**, which is to say plaintext — it is how the worker reads
+  the data it backs up. SRW and TW only ever unlock *ciphertext*; this one does
+  not need to unlock anything. Whoever holds it does not need a Data Key, a
+  target, or this service. Same custody as SRW/TW (cluster Secret, never in the
+  admin UI, never logged), rotated in OpenCloud rather than here.
 - **TW (Target Wrap):** a cluster/KMS-held key that wraps **S3 target
   credentials** at rest (decision #14). Same custody class as SRW — lives in a
   K8s secret / KMS, never in the admin UI, never logged. Distinct key from SRW so
@@ -783,26 +868,39 @@ Why we are still protected:
 3. **The critical property is retention depth, not WORM.** Slow-burn ransomware is
    defeated by deep, time-based retention.
 
-**Secondary threat: server/cluster compromise** leaking S3 credentials (and
-possibly the prune key). Less likely in the family scenario; addressed by
-immutability Tiers 2/3.
+**Secondary threat: server/cluster compromise** leaking the S3 target
+credentials. Less likely in the family scenario; **Tier 2/3 are what would bound
+it, and neither is built** (decision #9), so today a leaked target credential can
+delete a repository as well as write to it. What still holds: the credential
+opens ciphertext only, and the deployment's snapshot practice (Tier 3) is the
+answer available to an operator right now.
+
+**The worst single secret to leak is not any of the keys.** It is
+`OC_SERVICE_ACCOUNT_SECRET`: owner scope on every Space, i.e. plaintext, with no
+Data Key, target or backup involved. An attacker holding it does not need to
+attack this service at all — they read OpenCloud directly. It is listed here
+because the key model's careful separation of SRW, TW and DK can otherwise read
+as if those were the crown jewels; they unlock ciphertext, and this one unlocks
+the data itself.
 
 **Secondary-threat delta from in-app target management (decisions #12/#14):**
 moving target credentials into an app-managed store widens this threat: one
-database compromise could expose *all* targets' credentials instead of custody
-being limited to K8s secrets. Mitigations that keep the delta acceptable:
+compromise of the service's state could expose *all* targets' credentials instead
+of custody being limited to K8s secrets. (That store is a dedicated OpenCloud
+Space, not a database — decision #16.) Mitigations that keep the delta
+acceptable:
 
-- The database stores **only ciphertext** (TW-wrapped credential blobs). The TW
-  key itself stays in the cluster secret / KMS, **not** in the database, so a
-  stolen database alone does not yield plaintext credentials.
+- The state Space holds **only ciphertext** (TW-wrapped credential blobs). The TW
+  key itself stays in the cluster secret / KMS, **not** in the state Space, so
+  stolen state alone does not yield plaintext credentials.
 - Credentials are **write-only** across the API and UI (decision #14): never
   returned by any read path, so an admin-session or API compromise cannot
   exfiltrate existing credentials, only overwrite them.
 - Plaintext credentials exist **only in worker memory at run time** and are
-  zeroized after use where Go allows; they are never logged.
-- The blast radius is still bounded by immutability Tiers 2/3 (a leaked S3
-  **write** credential cannot rewrite history when prune/GC runs from a separate
-  trusted context with the owner key).
+  zeroized after use where Go allows; they are never logged. (Plus the
+  deployment's environment, when first-start seeding is used — R5 amendment.)
+- The blast radius **will be** bounded by immutability Tiers 2/3, once they
+  exist. Until then it is bounded only by how quickly a leak is noticed.
 
 ---
 
@@ -812,8 +910,9 @@ being limited to K8s secrets. Mitigations that keep the delta acceptable:
   OpenCloud **fully down**: admin extracts an encrypted, self-contained blob from
   S3 (ciphertext only, no key input possible); user decrypts locally with the RK
   via the standalone `decrypt` CLI, independent of OpenCloud and the server.
-- **Path B — User restore into OpenCloud.** User-only, via GUI; full restore into
-  `Restore/<ts>/`; requires OpenCloud to be up.
+- **Path B — User restore into OpenCloud.** User-only, via GUI (Phase 8; the API
+  it will call exists today); full restore into `Restore/<ts>/`; requires
+  OpenCloud to be up.
 - **A backup path is not "done" until its restore path is tested.** Path A is the
   acceptance-critical path.
 

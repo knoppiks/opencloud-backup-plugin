@@ -2,10 +2,10 @@
 //
 //	[CS3 read] -> [kopia snapshot/encrypt/dedup] -> [S3 target]
 //
-// It is the only place that holds a Space's plaintext Data Key and a target's
-// plaintext S3 credentials at the same time, and it holds both only in memory
-// for the duration of the run (decisions.md #1, #14). Neither is ever logged,
-// returned, or persisted.
+// It and pkg/restore are the only server-side places that hold a Space's
+// plaintext Data Key and a target's plaintext S3 credentials at the same time,
+// and both hold them only in memory for the duration of the run (decisions.md
+// #1, #14). Neither is ever logged, returned, or persisted.
 //
 // The run sequence follows the phase-4 plan:
 //
@@ -14,8 +14,10 @@
 //  3. resolve the target and TW-unwrap its credentials
 //  4. SRW-unwrap the Data Key
 //  5. snapshot the Space into its per-Space kopia repo on the target
-//  6. record the outcome in the job store
-//  7. zeroize the Data Key
+//  6. zeroize the Data Key
+//  7. record the outcome in the job store, then release the lock — in that
+//     order, so a lost outcome write leaves the lease to recover from
+//     (decisions.md, R6 amendment)
 //
 // Retention is never applied inside a backup run. It is applied by a run of its
 // own — see prune.go — which the scheduler starts on its own slow cadence and

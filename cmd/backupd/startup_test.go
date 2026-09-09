@@ -162,3 +162,64 @@ func TestChainRunsEveryCleanupInOrder(t *testing.T) {
 		t.Fatalf("cleanup order = %v", order)
 	}
 }
+
+// A manifest deployed unedited must not come up and then reject every request.
+func TestCheckPlaceholders(t *testing.T) {
+	cases := map[string]struct {
+		environ []string
+		want    []string
+	}{
+		"edited": {
+			environ: []string{"OIDC_AUDIENCE=web", "STATE_SPACE_ID=storage$space", "PATH=/usr/bin"},
+		},
+		"unedited audience and state space": {
+			environ: []string{
+				"STATE_SPACE_ID=REPLACE_ME_WITH_THE_STATE_SPACE_ID",
+				"OIDC_AUDIENCE=REPLACE_ME_WITH_THE_OIDC_CLIENT_ID",
+			},
+			want: []string{"OIDC_AUDIENCE", "STATE_SPACE_ID"},
+		},
+		"unedited wrapping key": {
+			environ: []string{"SRW_KEY=REPLACE_ME_GENERATE_OUT_OF_BAND"},
+			want:    []string{"SRW_KEY"},
+		},
+		// Somebody else's placeholder is somebody else's problem: refusing to
+		// start over a variable this service never reads would be a surprise
+		// with no fix inside this deployment.
+		"foreign placeholder": {
+			environ: []string{"SOME_OTHER_CHART_TOKEN=REPLACE_ME"},
+		},
+	}
+
+	for name, tc := range cases {
+		got := unreplacedPlaceholders(tc.environ)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("%s: unreplacedPlaceholders = %v, want %v", name, got, tc.want)
+		}
+
+		err := checkPlaceholders(tc.environ)
+		if (err != nil) != (len(tc.want) > 0) {
+			t.Errorf("%s: checkPlaceholders = %v", name, err)
+			continue
+		}
+		for _, want := range tc.want {
+			if err != nil && !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error %q does not name %s", name, err, want)
+			}
+		}
+	}
+}
+
+// The shipped manifests must be caught by the check that exists for them.
+func TestShippedManifestPlaceholdersAreRefused(t *testing.T) {
+	for _, path := range []string{"../../deploy/deployment-backupd.yaml", "../../deploy/secret-wrap-keys.yaml"} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if !strings.Contains(string(body), placeholderMarker) {
+			t.Errorf("%s no longer marks the values a deployer must fill in with %s; "+
+				"the startup check has nothing to catch", path, placeholderMarker)
+		}
+	}
+}

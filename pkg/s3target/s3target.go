@@ -7,8 +7,10 @@
 // WhenRequired; the SDK default (WhenSupported) breaks multipart GET on Garage
 // (phase-0-findings.md Spike 1, gotcha 4).
 //
-// Implemented in Phase 4/7. This file defines config, capabilities, and the
-// probe boundary only.
+// NOTHING IMPLEMENTS ANY OF THIS YET, and no package outside this one imports
+// it. The live S3 configuration types are snapshot.Location and
+// objstore.S3Config; what is reserved here is the capability/probe boundary for
+// the immutability work (decisions.md #9, Tier 2/3), which is unbuilt.
 package s3target
 
 import "context"

@@ -207,11 +207,11 @@ func Verify(ctx context.Context, dir string) error {
 		return err
 	}
 
-	if err := snapshot.VerifyRepoDir(ctx, repoPath(dir, m), m.Blobs); err != nil {
+	if err := snapshot.VerifyRepoDir(ctx, m.RepoPath(dir), m.Blobs); err != nil {
 		return fmt.Errorf("%w: %s", ErrCorrupt, err.Error())
 	}
 	if m.EnvelopeRef != "" {
-		if _, err := os.Stat(envelopePath(dir, m)); err != nil {
+		if _, err := os.Stat(m.EnvelopePath(dir)); err != nil {
 			return fmt.Errorf("%w: key envelope is missing", ErrCorrupt)
 		}
 	}

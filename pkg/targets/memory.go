@@ -1,6 +1,6 @@
-// In-memory Store + Authorizer for the target/grant model. This backs Phase 2's
-// GET /targets end-to-end and is the reference implementation the API and tests
-// wire against; a persistent store lands with the admin target-management phase.
+// In-memory Store + Authorizer for the target/grant model. The service runs the
+// state-backed store (state.go); this stays as the test double and the behaviour
+// reference the contract tests hold both implementations to.
 //
 // It upholds the least-disclosure rule: VisibleTargets returns only PublicView
 // projections ({id,name}); credentials never leave the store (decisions.md

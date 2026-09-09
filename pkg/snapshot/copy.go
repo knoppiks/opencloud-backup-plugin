@@ -9,9 +9,11 @@ package snapshot
 // blob id — and lets each driver own its own layout.
 //
 // The pleasant consequence is that a Take-Out is a plain, standard kopia
-// filesystem repository: our own decrypt CLI opens it, and so would a stock
-// kopia release. For a last-resort recovery artefact that independence is worth
-// more than saving a few lines here.
+// filesystem repository on disk rather than a private format — worth more, for a
+// last-resort recovery artefact, than saving a few lines here. It does not
+// follow that a stock kopia release can open one: the repository password is the
+// Data Key, 32 raw random bytes, and kopia's tooling takes a password as text.
+// Our decrypt CLI is the way in (decisions.md, Phase-5 amendment).
 //
 // Everything moved here is ciphertext. No Data Key is involved: opening a
 // repository is not required to copy its blobs, which is exactly why the admin

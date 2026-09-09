@@ -788,6 +788,72 @@ with "planned" markers)
    Recommendation: split `pkg/takeout` into `pkg/takeout` (extract, verify)
    and `pkg/takeout/decrypt` so the linker guarantee is structural.
 
+### Outcome (implemented, issue #26)
+
+All four tasks, both owner decisions taken as recommended, plus a set of false
+claims the plan did not know about — the pass was run as an audit of every
+published claim rather than as the checklist above, and the checklist turned out
+to be about half of it.
+
+- **Owner decision — space ids in operator logs are accepted and documented.**
+  The claim was true of notification records and mail and false of the log. It is
+  now stated as what it is, with the reason (the self-hoster *is* the operator,
+  and holds the service account that reads every Space in plaintext) and the
+  trigger for revisiting it (an operator who is not the household).
+- **Owner decision — `pkg/takeout/decrypt` is a package of its own**, and
+  `cmd/takeout`'s dependency graph is asserted (`go list -deps`) rather than only
+  its source text. `pkg/keys` deliberately stays linked — extraction reads
+  envelope headers — so the guarantee is stated precisely: the admin's binary
+  contains no code that turns an envelope into a Data Key or a repository into
+  files. The test carries a **control**: it fails if `cmd/decrypt` ever stops
+  linking the package, because a forbidden-dependency list that names a package
+  nobody has any more passes while checking nothing.
+- **The plan's task 1 was already three-quarters done** — R1 through R7 each
+  amended `decisions.md` as they landed, which is why what remained was mostly
+  claims about things that were never built rather than about things that
+  changed. Tier 2 (the credential split), Tier 3, the Object-Lock capability
+  probe and the admin/target UI were all written in the present tense; the threat
+  model credited Tier 2 with bounding a blast radius, and named a "prune key"
+  that has never existed in any form.
+- **Addition — one behavioural change, because the alternative was to weaken a
+  claim R5 had made deliberately.** The shipped manifest's `REPLACE_ME`
+  placeholders for `OIDC_AUDIENCE` and `STATE_SPACE_ID` are non-empty, so they
+  passed every emptiness check: the service came up and then rejected every
+  token, or wrote state to a Space id that does not exist. Startup now refuses a
+  configuration variable that still holds the marker, scoped by prefix to the
+  variables this service reads so another component's placeholder is not this
+  service's business. "Comes up and does not work" is the worst outcome
+  available, because it looks like a bug in the software rather than an
+  unfinished deployment.
+- **"Openable by a stock kopia release" is retracted, not qualified into
+  survival.** The plan offered "drop or qualify"; the claim was false in the way
+  that matters (the repository password is 32 raw bytes, which kopia's tooling
+  cannot carry), was never tested, and appeared in three places. Each now records
+  what is true — the artefact *is* a standard kopia filesystem repository — and
+  what making the rest true would cost (re-keying every existing repository), so
+  it is not proposed again.
+- **`OC_SERVICE_ACCOUNT_SECRET` joined the trust and threat models** as task 1
+  asked, and the framing went further than "a first-class secret": it is stated
+  as *the* worst secret to leak, strictly above SRW and TW, which only ever
+  unlock ciphertext. It was already described that way in the manifests — the
+  model those manifests implement was the only place it was missing.
+- **Deviation — task 3's list was stale in both directions.** `roleLabel` and the
+  `spacecfg` timezone comment had already been fixed by R3 and R6; the real
+  drift was elsewhere, and larger: two in-memory stores documented as what
+  production runs, a durable lease documented as deliberately *not* attempting
+  cross-process exclusion when R2/R6 made it attempt exactly that, a store
+  interface described by an operation (`Put`) that R1 split in two, a key record
+  described by a field list it does not have, and the phase-1 package layout —
+  which `AGENTS.md` calls canonical and binding — missing nine packages.
+- **Deviation — the README's stalest claim was not in the plan.** It said
+  scheduling was still to come (it landed in Phase 6), while describing the web
+  UI as the way a user restores a backup or replaces a Recovery Key. The status
+  is now the other way round, which is also the honest answer to "what can I
+  actually do with this today": every user-facing flow is an HTTP API, and the
+  key ceremony in particular needs a browser client that does not exist yet.
+  Two runbook commands did not run as printed, which for a recovery runbook is
+  the same class of defect as a wrong claim.
+
 ---
 
 ## R9 — Real-OpenCloud CI and test-gap closure

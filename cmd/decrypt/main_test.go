@@ -14,6 +14,7 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/takeout"
+	takeoutdecrypt "opencloud-backup-plugin/pkg/takeout/decrypt"
 )
 
 // pipeStdin feeds text to readRecoveryKey as a non-terminal stdin.
@@ -126,12 +127,12 @@ func TestVerifyOnNonTakeOutDirectory(t *testing.T) {
 
 func TestExplainSpeaksPlainly(t *testing.T) {
 	cases := map[error]string{
-		takeout.ErrWrongRecoveryKey:    "key does not match",
-		takeout.ErrNoTakeOut:           "not a take-out",
-		takeout.ErrNoEnvelope:          "cannot be decrypted",
-		takeout.ErrUnsupportedEnvelope: "newer",
-		takeout.ErrCorrupt:             "damaged",
-		snapshot.ErrSnapshotNotFound:   "-list",
+		takeoutdecrypt.ErrWrongRecoveryKey:    "key does not match",
+		takeout.ErrNoTakeOut:                  "not a take-out",
+		takeout.ErrNoEnvelope:                 "cannot be decrypted",
+		takeoutdecrypt.ErrUnsupportedEnvelope: "newer",
+		takeout.ErrCorrupt:                    "damaged",
+		snapshot.ErrSnapshotNotFound:          "-list",
 	}
 	for in, want := range cases {
 		got := explain(in)

@@ -4,9 +4,16 @@
 // added the backup pipeline (CS3 -> kopia -> S3 target); Phase 6 makes it run
 // unattended: durable state, a scheduler, and notifications.
 //
+// With an argument it is the operator CLI instead (rotate.go: rotate-srw,
+// rotate-tw). The maintenance commands ship in the same binary because they need
+// the same configuration, the same state Space and the same custody keys.
+//
 // Secrets arrive only through Secret-backed environment variables and are never
-// logged: SRW_KEY (Data-Key custody), TW_KEY (target-credential custody),
-// SMTP_PASSWORD, and the OpenCloud service-account credentials.
+// logged: SRW_KEY / SRW_KEY_OLD (Data-Key custody), TW_KEY / TW_KEY_OLD
+// (target-credential custody), SMTP_PASSWORD, BOOTSTRAP_S3_SECRET_ACCESS_KEY
+// (optional first-start seeding), and the OpenCloud service-account
+// credentials — of which the secret is the most valuable of the lot, because it
+// reaches plaintext (decisions.md, threat model).
 package main
 
 import (
@@ -176,6 +183,13 @@ func waitFor(wg *sync.WaitGroup, d time.Duration) bool {
 func buildService(ctx context.Context, logger *slog.Logger) (service, func(), error) {
 	var opts []api.Option
 	cleanup := func() {}
+
+	// --- unedited manifest -------------------------------------------------
+	// First, because it is the cheapest check there is and because every
+	// diagnosis after it would be of a symptom.
+	if err := checkPlaceholders(os.Environ()); err != nil {
+		return service{}, cleanup, err
+	}
 
 	// --- work directory ---------------------------------------------------
 	// Checked before anything else: it is pure configuration, and a service

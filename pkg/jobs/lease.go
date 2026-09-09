@@ -12,10 +12,12 @@ package jobs
 //     carries an expiry, it is renewed while the run is alive, and Recover
 //     reaps expired ones and marks the abandoned run failed.
 //
-// The durable half deliberately does not attempt mutual exclusion between
-// *concurrent* processes: the backend (OpenCloud's storage over CS3) has no
-// compare-and-set, so a lease written after a read cannot be made atomic, and
-// pretending otherwise would be the subtle bug rather than a fix for it. The
+// The durable half attempts mutual exclusion between *concurrent* processes but
+// cannot guarantee it: Acquire refuses a Space whose lease is live in the store,
+// which is a check and not a lock. The backend (OpenCloud's storage over CS3)
+// has no compare-and-set, so a lease written after a read cannot be made atomic,
+// and treating that check as a lock would be the subtle bug rather than a fix
+// for it. The
 // deployment target is a single instance (decisions.md, phase-6 plan); running
 // two instances against one state store is unsupported, and the lease's owner
 // field is there to make that visible in diagnostics rather than to make it safe.

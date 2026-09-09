@@ -4,16 +4,19 @@
 // Why this exists (Phase 6): scheduling only means something if it survives a
 // restart. Job history, schedules, key envelopes and target records must all
 // outlive the process, and the deployment target is a single instance, so the
-// store is deliberately tiny — get, put, delete, list-by-prefix.
+// store is deliberately tiny — get, create, replace, delete, list-by-prefix.
+// Create and Replace are separate on purpose: see Store.
 //
 // What it deliberately does NOT offer:
 //
 //   - Transactions or compare-and-set. The production backend is OpenCloud's own
 //     storage, reached over CS3, which provides neither. Mutual exclusion between
-//     concurrent runs is therefore process-local (see pkg/jobs), and durability
-//     is used only to recover state after a crash. This is sound for the locked
-//     single-instance deployment and unsound for a scaled-out one; anything that
-//     changes that assumption needs a backend with real transactions.
+//     concurrent runs is therefore process-local (see pkg/jobs); the durable
+//     lease and instance records are checked too, but a read-then-write is not
+//     atomic, so they catch mistakes rather than prevent races. This is sound for
+//     the locked single-instance deployment and unsound for a scaled-out one;
+//     anything that changes that assumption needs a backend with real
+//     transactions.
 //   - Queries. Callers list a prefix and filter in memory. Family scale.
 //
 // Everything written here is either non-secret metadata or already-wrapped

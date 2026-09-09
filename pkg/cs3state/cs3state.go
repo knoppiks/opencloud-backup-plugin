@@ -10,10 +10,13 @@
 //
 //   - **What it costs.** A CS3 Space is a filesystem, not a database: no
 //     transactions, no compare-and-set. Nothing in this package pretends
-//     otherwise. Mutual exclusion between runs is process-local (pkg/jobs), and
-//     the durable lease exists only so a *crashed* process can be cleaned up
-//     after. That is sound for the locked single-instance deployment and unsound
-//     for a scaled-out one. Running two instances against one state Space is
+//     otherwise. Mutual exclusion between runs is process-local (pkg/jobs); the
+//     durable lease is read as well — by the next acquire, by the scheduler's
+//     busy check, and by the rotation commands — but a read-then-write cannot be
+//     made atomic here, so it catches the mistake that happens rather than every
+//     possible race, and it is what lets a *crashed* process be cleaned up after.
+//     That is sound for the locked single-instance deployment and unsound for a
+//     scaled-out one. Running two instances against one state Space is
 //     unsupported.
 //
 //   - **Where.** A dedicated Space, configured by the operator, that no end user
@@ -164,9 +167,9 @@ func (s *Store) Create(ctx context.Context, key string, value []byte) error {
 // The upload path may refuse to clobber (restores must never overwrite), so a
 // replacement can degrade to delete-then-write. That is not atomic: a crash
 // between the two loses the record. Only records the service can re-derive
-// after a restart may be written this way — leases, which expire, and job
-// records, which the next run rewrites. Everything whose loss is permanent is
-// append-only instead (see state.Versions).
+// after a restart may be written this way — leases and instance records, which
+// expire, and job records, which the next run rewrites. Everything whose loss is
+// permanent is append-only instead (see state.Versions).
 func (s *Store) Replace(ctx context.Context, key string, value []byte) error {
 	space, full, err := s.prepareWrite(ctx, key, value)
 	if err != nil {
