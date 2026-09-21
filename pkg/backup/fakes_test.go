@@ -22,6 +22,11 @@ import (
 const (
 	testSpaceID  = "storage-1$space-1"
 	testTargetID = "target-1"
+
+	// The two access key ids the seeded target holds. They differ so a test can
+	// tell which role a run resolved, which is the whole point of the split.
+	testBackupAccessKeyID      = "GK-test-access-key"
+	testMaintenanceAccessKeyID = "GK-test-maintenance-key"
 )
 
 var testMTime = time.Date(2021, 3, 14, 15, 9, 26, 0, time.UTC)
@@ -244,9 +249,15 @@ func (e *fakeEngine) callCount() int {
 // seedTarget stores a target whose credentials are sealed with the given sealer.
 func seedTarget(t *testing.T, store *targets.MemoryStore, sealer targets.CredSealer) targets.Target {
 	t.Helper()
-	wrapped, version, err := sealer.Seal(targets.PlainCreds{
-		AccessKeyID:     "GK-test-access-key",
-		SecretAccessKey: "test-secret-access-key-0000000000000000",
+	wrapped, version, err := sealer.Seal(targets.CredentialSet{
+		Backup: targets.PlainCreds{
+			AccessKeyID:     testBackupAccessKeyID,
+			SecretAccessKey: "test-secret-access-key-0000000000000000",
+		},
+		Maintenance: targets.PlainCreds{
+			AccessKeyID:     testMaintenanceAccessKeyID,
+			SecretAccessKey: "test-maintenance-secret-000000000000000",
+		},
 	})
 	if err != nil {
 		t.Fatalf("Seal: %v", err)

@@ -243,9 +243,11 @@ func (f *scheduledFixture) tick(ctx context.Context) {
 // seedStateTarget stores the Garage instance as a TW-sealed target.
 func seedStateTarget(t *testing.T, store targets.Store, sealer targets.CredSealer, g *testutil.Garage) {
 	t.Helper()
-	wrapped, version, err := sealer.Seal(targets.PlainCreds{
-		AccessKeyID:     g.AccessKeyID,
-		SecretAccessKey: g.SecretAccessKey,
+	wrapped, version, err := sealer.Seal(targets.CredentialSet{
+		Backup: targets.PlainCreds{
+			AccessKeyID:     g.AccessKeyID,
+			SecretAccessKey: g.SecretAccessKey,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Seal: %v", err)

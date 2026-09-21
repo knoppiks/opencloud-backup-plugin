@@ -11,15 +11,25 @@ import (
 )
 
 // S3Client returns an AWS SDK v2 S3 client configured for this Garage instance:
-// static credentials, the Garage region, the container endpoint, and path-style
-// addressing (Garage does not support virtual-host style by default).
+// the seeded owner credentials, the Garage region, the container endpoint, and
+// path-style addressing (Garage does not support virtual-host style by default).
 func (g *Garage) S3Client(ctx context.Context, t *testing.T) *s3.Client {
+	t.Helper()
+	return g.S3ClientFor(ctx, t, Key{
+		AccessKeyID:     g.AccessKeyID,
+		SecretAccessKey: g.SecretAccessKey,
+	})
+}
+
+// S3ClientFor is S3Client for an arbitrary key, so a test can exercise what a
+// specific set of Garage grants actually permits.
+func (g *Garage) S3ClientFor(ctx context.Context, t *testing.T, key Key) *s3.Client {
 	t.Helper()
 
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion(g.Region),
 		awsconfig.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(g.AccessKeyID, g.SecretAccessKey, ""),
+			credentials.NewStaticCredentialsProvider(key.AccessKeyID, key.SecretAccessKey, ""),
 		),
 		// Garage does not implement the newer default S3 checksum behaviour the
 		// AWS SDK v2 enables by default (WhenSupported). In particular it does

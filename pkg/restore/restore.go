@@ -399,6 +399,11 @@ func (r *Runner) resolveSpace(ctx context.Context, spaceID string) (cs3.Space, e
 }
 
 // resolveTarget loads the configured target and TW-unwraps its credentials.
+//
+// A restore uses the target's backup role, not its maintenance one: it only
+// reads, and the backup role is the credential that serves a user's request.
+// Nothing outside a prune run ever holds the maintenance credential
+// (decisions.md #9, Tier 2).
 func (r *Runner) resolveTarget(ctx context.Context, targetID string) (snapshot.Location, error) {
 	if targetID == "" {
 		return snapshot.Location{}, ErrNotConfigured
@@ -413,11 +418,12 @@ func (r *Runner) resolveTarget(ctx context.Context, targetID string) (snapshot.L
 		return snapshot.Location{}, fmt.Errorf("restore: read target: %w", err)
 	}
 
-	creds, err := r.deps.Sealer.Open(target.WrappedCreds)
+	set, err := r.deps.Sealer.Open(target.WrappedCreds)
 	if err != nil {
 		r.deps.Logger.Error("could not open target credentials", "target", targetID)
 		return snapshot.Location{}, ErrTargetUnavailable
 	}
+	creds := set.For(targets.RoleBackup)
 
 	return snapshot.Location{
 		Endpoint:        target.Endpoint,

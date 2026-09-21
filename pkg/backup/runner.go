@@ -78,6 +78,11 @@ type Deps struct {
 	// OpenCloud down. Optional: when nil, publication is skipped and Path A
 	// depends on the envelope being exported some other way.
 	Envelopes takeout.Publisher
+	// Immutability observes what a target can actually enforce, so the answer is
+	// something this deployment saw rather than something a planning document
+	// assumed (decisions.md #8). It is read on prune runs only. Optional: when
+	// nil, nothing is observed and nothing is claimed.
+	Immutability objstore.Prober
 	// Logger receives operational detail. It must never be handed key material;
 	// the Runner only logs identifiers, counts and sanitized error text.
 	Logger *slog.Logger
@@ -298,7 +303,7 @@ func (r *Runner) runTimeout() time.Duration {
 // of the secrets. Keeping it in one function bounds the lifetime of both the
 // Data Key and the target credentials to a single call frame.
 func (r *Runner) snapshotSpace(ctx context.Context, space cs3.Space) (snapshot.Info, error) {
-	repo, _, target, err := r.openRepo(ctx, space.ID)
+	repo, _, target, err := r.openRepo(ctx, space.ID, targets.RoleBackup)
 	if err != nil {
 		return snapshot.Info{}, err
 	}
@@ -319,13 +324,21 @@ func (r *Runner) snapshotSpace(ctx context.Context, space cs3.Space) (snapshot.I
 }
 
 // openRepo resolves everything a run needs to address a Space's repository: the
-// Space's configuration, its target's TW-unwrapped credentials, and its
-// SRW-unwrapped Data Key.
+// Space's configuration, its target's TW-unwrapped credentials for the role the
+// run acts in, and its SRW-unwrapped Data Key.
+//
+// The role is a parameter and not a property of the runner because one runner
+// serves both job kinds; passing it explicitly is what keeps a backup run from
+// ever holding the maintenance credential (decisions.md #9, Tier 2).
 //
 // The returned Repo holds the plaintext Data Key. The caller owns it and must
 // zeroize it — keys.Zeroize(repo.DK) — in the same frame it received it, which
 // is what bounds the key's lifetime to a single run (decisions.md #1, #14).
-func (r *Runner) openRepo(ctx context.Context, spaceID string) (snapshot.Repo, spacecfg.Config, resolvedTarget, error) {
+func (r *Runner) openRepo(
+	ctx context.Context,
+	spaceID string,
+	role targets.Role,
+) (snapshot.Repo, spacecfg.Config, resolvedTarget, error) {
 	cfg, err := r.deps.Configs.Get(ctx, spaceID)
 	if err != nil {
 		var notFound spacecfg.ErrNotFound
@@ -336,7 +349,7 @@ func (r *Runner) openRepo(ctx context.Context, spaceID string) (snapshot.Repo, s
 			fmt.Errorf("backup: read space configuration: %w", err)
 	}
 
-	target, err := r.resolveTarget(ctx, cfg.TargetID)
+	target, err := r.resolveTarget(ctx, cfg.TargetID, role)
 	if err != nil {
 		return snapshot.Repo{}, spacecfg.Config{}, resolvedTarget{}, err
 	}
@@ -367,19 +380,25 @@ func (r *Runner) resolveSpace(ctx context.Context, spaceID string) (cs3.Space, e
 	return cs3.Space{}, ErrSpaceNotFound
 }
 
-// resolvedTarget is a target with its credentials opened for this run, in the
-// two shapes the run needs: kopia's repository location and a plain object-store
-// configuration for the key envelope. Both hold plaintext credentials and must
-// never be logged.
+// resolvedTarget is a target with the credentials for one role opened for this
+// run, in the two shapes the run needs: kopia's repository location and a plain
+// object-store configuration for the key envelope. Both hold plaintext
+// credentials and must never be logged.
 type resolvedTarget struct {
 	location snapshot.Location
 	s3       objstore.S3Config
 	prefix   string
 }
 
-// resolveTarget loads the configured target and TW-unwraps its credentials.
-// Use snapshot.Location.Redacted() for diagnostics.
-func (r *Runner) resolveTarget(ctx context.Context, targetID string) (resolvedTarget, error) {
+// resolveTarget loads the configured target and TW-unwraps the credentials for
+// the given role. Only that role's pair is copied out of the credential set, so
+// the other one does not outlive this frame. Use snapshot.Location.Redacted()
+// for diagnostics.
+func (r *Runner) resolveTarget(
+	ctx context.Context,
+	targetID string,
+	role targets.Role,
+) (resolvedTarget, error) {
 	if targetID == "" {
 		return resolvedTarget{}, ErrNotConfigured
 	}
@@ -393,12 +412,13 @@ func (r *Runner) resolveTarget(ctx context.Context, targetID string) (resolvedTa
 		return resolvedTarget{}, fmt.Errorf("backup: read target: %w", err)
 	}
 
-	creds, err := r.deps.Sealer.Open(target.WrappedCreds)
+	set, err := r.deps.Sealer.Open(target.WrappedCreds)
 	if err != nil {
 		// Never distinguish wrong-key from tampered, never echo the blob.
 		r.deps.Logger.Error("could not open target credentials", "target", targetID)
 		return resolvedTarget{}, ErrTargetUnavailable
 	}
+	creds := set.For(role)
 
 	return resolvedTarget{
 		location: snapshot.Location{

@@ -70,8 +70,12 @@ func TestBootstrap_SeedsTargetAndGrantsAllUsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if opened != validBootstrap().Creds {
+	if opened.Backup != validBootstrap().Creds {
 		t.Fatal("sealed credentials did not round-trip")
+	}
+	// Seeding one key is the single-credential deployment: both roles use it.
+	if !opened.Maintenance.Empty() {
+		t.Fatalf("no maintenance credential was configured, got %+v", opened.Maintenance)
 	}
 
 	// A single seeded target is visible to any user, keeping setup one click.
@@ -128,6 +132,9 @@ func TestBootstrap_Validation(t *testing.T) {
 		"missing bucket":     func(c *BootstrapConfig) { c.Bucket = "" },
 		"missing access key": func(c *BootstrapConfig) { c.Creds.AccessKeyID = "" },
 		"missing secret key": func(c *BootstrapConfig) { c.Creds.SecretAccessKey = "" },
+		"half a maintenance credential": func(c *BootstrapConfig) {
+			c.MaintenanceCreds = PlainCreds{AccessKeyID: "GK-maintenance"}
+		},
 	}
 	for name, mutate := range cases {
 		cfg := validBootstrap()
@@ -142,6 +149,47 @@ func TestBootstrap_Validation(t *testing.T) {
 	}
 	if _, err := Bootstrap(ctx, NewMemoryStore(), nil, validBootstrap()); err == nil {
 		t.Fatal("nil sealer must be rejected")
+	}
+}
+
+// Seeding both roles is how a deployment starts out separated, without an admin
+// UI that does not exist yet.
+func TestBootstrap_SeedsBothRoles(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	sealer := testSealer(t)
+
+	cfg := validBootstrap()
+	cfg.MaintenanceCreds = PlainCreds{
+		AccessKeyID:     "GK-maintenance",
+		SecretAccessKey: "maintenance-secret-000000000000000000",
+	}
+	if _, err := Bootstrap(ctx, store, sealer, cfg); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	target, err := store.GetTarget(ctx, DefaultBootstrapID)
+	if err != nil {
+		t.Fatalf("GetTarget: %v", err)
+	}
+	for _, secret := range []string{cfg.MaintenanceCreds.AccessKeyID, cfg.MaintenanceCreds.SecretAccessKey} {
+		if containsBytes(target.WrappedCreds, secret) {
+			t.Fatalf("plaintext maintenance credential %q found in the stored blob", secret)
+		}
+	}
+
+	opened, err := sealer.Open(target.WrappedCreds)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if opened.For(RoleBackup) != cfg.Creds {
+		t.Fatalf("backup role = %+v", opened.For(RoleBackup))
+	}
+	if opened.For(RoleMaintenance) != cfg.MaintenanceCreds {
+		t.Fatalf("maintenance role = %+v", opened.For(RoleMaintenance))
+	}
+	if !opened.Separated() {
+		t.Fatal("a target seeded with two keys must report as separated")
 	}
 }
 

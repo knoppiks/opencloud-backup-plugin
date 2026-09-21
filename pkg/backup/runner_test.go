@@ -32,6 +32,7 @@ type harness struct {
 	dk        []byte
 	rk        []byte
 	envelopes *fakePublisher
+	sealer    targets.CredSealer
 	logs      *bytes.Buffer
 }
 
@@ -63,6 +64,7 @@ func newHarness(t *testing.T, tweaks ...func(*Deps)) *harness {
 		keys:      keys.NewMemoryStore(),
 		clock:     testutil.NewFakeClock(epoch),
 		envelopes: &fakePublisher{},
+		sealer:    sealer,
 		logs:      &bytes.Buffer{},
 	}
 	h.jobs = jobs.NewMemoryStoreWithClock(h.clock)
@@ -278,7 +280,7 @@ func TestRunBackup_TargetUnavailable(t *testing.T) {
 		h := newHarness(t)
 		// Re-seal with a different TW key: the run must fail closed.
 		other := newSealer(t)
-		wrapped, version, err := other.Seal(targets.PlainCreds{AccessKeyID: "a", SecretAccessKey: "b"})
+		wrapped, version, err := other.Seal(targets.CredentialSet{Backup: targets.PlainCreds{AccessKeyID: "a", SecretAccessKey: "b"}})
 		if err != nil {
 			t.Fatalf("Seal: %v", err)
 		}

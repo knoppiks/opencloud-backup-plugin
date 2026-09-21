@@ -65,14 +65,24 @@ type roleTestEnv struct {
 	reader *countingSpaceReader
 	groups *countingGroupResolver
 	now    time.Time
+	// sealedCreds is the target's stored credential blob, so a test can assert
+	// that no response contains it either (TestNoRouteEverReturnsATargetCredential).
+	sealedCreds []byte
 }
 
 const (
-	roleSpace     = "space-team"
-	roleGroupID   = "group-family"
-	roleTargetID  = "t-granted"
-	roleSnapshot  = "snap-1"
-	roleTestToken = "tok-"
+	roleSpace    = "space-team"
+	roleGroupID  = "group-family"
+	roleTargetID = "t-granted"
+
+	// Plaintext markers for the credentials the seeded target holds. No API
+	// response may ever contain either of them.
+	roleTargetAccessKeyID     = "GK-ROLE-TARGET-ACCESS-KEY"
+	roleTargetSecretAccessKey = "role-target-secret-access-key-0000000"
+	roleTargetMaintenanceID   = "GK-ROLE-TARGET-MAINTENANCE-KEY"
+	roleTargetMaintenanceKey  = "role-target-maintenance-secret-000000"
+	roleSnapshot              = "snap-1"
+	roleTestToken             = "tok-"
 )
 
 // roleTestSubjects maps each test caller to the authority they hold on
@@ -105,8 +115,15 @@ func newRoleTestEnv(t *testing.T, opts ...Option) *roleTestEnv {
 		"grouped": {roleGroupID},
 	}}
 
+	sealedCreds := sealedRoleTargetCreds(t)
 	targetStore := targets.NewMemoryStore()
-	if _, err := targetStore.CreateTarget(ctx, targets.Target{ID: roleTargetID, Name: "Buddy S3"}); err != nil {
+	if _, err := targetStore.CreateTarget(ctx, targets.Target{
+		ID: roleTargetID, Name: "Buddy S3",
+		Endpoint: "garage.internal:3900", Bucket: "household-backups",
+		// Real sealed credentials, so a route that leaked one would have
+		// something to leak. See TestNoRouteEverReturnsATargetCredential.
+		WrappedCreds: sealedCreds,
+	}); err != nil {
 		t.Fatalf("CreateTarget: %v", err)
 	}
 	if err := targetStore.PutGrant(ctx, targets.Grant{
@@ -148,10 +165,11 @@ func newRoleTestEnv(t *testing.T, opts ...Option) *roleTestEnv {
 		WithClock(func() time.Time { return now }),
 	}
 	return &roleTestEnv{
-		srv:    NewServer(append(base, opts...)...),
-		reader: reader,
-		groups: groups,
-		now:    now,
+		srv:         NewServer(append(base, opts...)...),
+		reader:      reader,
+		groups:      groups,
+		now:         now,
+		sealedCreds: sealedCreds,
 	}
 }
 

@@ -19,13 +19,18 @@ data:
   # with the TW key on first start — never placed here. Leave BOOTSTRAP_ENABLE
   # "false" to skip seeding and require the admin to add targets in the UI.
   #
-  # Garage as of the pinned version has no Object Lock / versioning
-  # (decisions.md #8); immutability is handled out-of-band (Phase 7).
+  # Garage as of the pinned version has no Object Lock and no versioning
+  # (decisions.md #8), and its grants cannot express "may write, may not
+  # delete". Immutability against a stolen credential is therefore out-of-band:
+  # see the "Protecting backups from the credential that writes them" runbook in
+  # README.md.
+  #
   # Seeding runs only when BOOTSTRAP_ENABLE is true AND the target store is
   # empty, so it can never overwrite what an admin configured. The seeded target
   # is granted to all users, which keeps setup "one click" (decisions.md #12).
   # Credentials come from a Secret (BOOTSTRAP_S3_ACCESS_KEY_ID /
-  # BOOTSTRAP_S3_SECRET_ACCESS_KEY), never from this ConfigMap.
+  # BOOTSTRAP_S3_SECRET_ACCESS_KEY, and optionally the MAINTENANCE pair), never
+  # from this ConfigMap.
   #
   # BOOTSTRAP_S3_PREFIX namespaces this deployment inside the bucket; each Space
   # then gets its own kopia repository at <prefix>spaces/<space-id>/.

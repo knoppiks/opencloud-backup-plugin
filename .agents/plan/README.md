@@ -27,10 +27,15 @@ Per-phase planning documents.
 
 **Post-Phase-6 review (September 2026):**
 [review-2026-09.md](review-2026-09.md) records what was found;
-[remediation-plans.md](remediation-plans.md) holds the candidate fixes (R1–R9)
-and the decisions still to be taken. These are to be merged into the phase
-docs before Phase 7 starts; until then the remediation file is a draft, not a
-binding plan.
+[remediation-plans.md](remediation-plans.md) holds the fixes. R1–R9 are
+implemented, each with an outcome section recording how it differed from its
+plan. **R10** (unbounded revision growth in the state Space) is not on the
+critical path and still needs a spike before it can be costed.
+
+The review also changed Phase 7's scope: Tier 1 moved forward into R7, so the
+phase covered the credential split, the capability probe and the operator
+documentation. See that phase's outcome section for what the backend allowed of
+it.
 
 **Target management (decisions.md #12–#15):** backup targets are managed in-app
 by an OpenCloud admin, who grants each target to all or specific users. The

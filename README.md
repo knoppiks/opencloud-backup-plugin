@@ -158,6 +158,98 @@ The service **refuses to start** without `STATE_SPACE_ID`. Setting
 and key envelopes then die with the process, which is a smoke-test mode and
 nothing else.
 
+## Protecting backups from the credential that writes them
+
+This is the part where the honest answer is longer than the reassuring one.
+
+**What already works, and is what the threat model is actually about.** A family
+member's laptop gets ransomware-encrypted, the OpenCloud client dutifully syncs
+the encrypted files up, and the next run backs them up. The backup store is
+untouched by this, because the credential that reaches it lives in the cluster
+and has never been on anybody's laptop. The bad backup is simply one more
+snapshot; yesterday's is still there and still restores. That defence is
+retention **depth**, it is the reason retention cannot be set below a week, and
+it is tested end to end (`TestIntegration_RansomwareDoesNotEvictGoodHistory`).
+
+**What does not work, and cannot be made to work on Garage.** If somebody gets
+the target's S3 credentials out of the cluster, nothing in S3 stops them
+destroying every backup in the bucket. Garage has exactly three grants, and the
+pinned version's behaviour is pinned by test (`TestGarageGrantMatrix`):
+
+| grant | put | get | list | **delete** | administer the bucket |
+|---|---|---|---|---|---|
+| `--read` | — | yes | yes | — | — |
+| `--write` | yes | — | — | **yes** | — |
+| `--owner` | — | — | — | — | yes |
+
+Two things follow, and both contradict what an earlier version of this project's
+plan assumed. `--write` includes deleting, so there is no "append-only" key.
+`--owner` grants no object access at all — it is bucket administration — so it
+is not a "more powerful" key that could be reserved for maintenance. And since a
+key without `--read` cannot open an encrypted repository, every role this
+service has needs `--read --write`, which is the same capability.
+
+**What the credential split gives you.** A target can hold two credentials: one
+that backup and restore runs use, and one that only the retention/reclamation
+job uses. That separation is real inside this service — a backup run never holds
+the maintenance key and vice versa — and it means the two can be revoked and
+rotated independently, and that the storage logs tell you which actor did what.
+On Garage it is **not** a limit on what either key can do. Do not write it down
+anywhere as a blast-radius bound. If you ever point this service at a backend
+with real IAM policies, the separation is what lets you make it one.
+
+Set it up by putting both key pairs in the Secret
+(`bootstrap-s3-maintenance-access-key-id` and its secret, alongside the ordinary
+pair) — or leave it out, in which case one key does both jobs, which is a
+perfectly reasonable deployment and the default.
+
+The service asks each target, on every retention run, whether it supports S3
+Object Lock. Garage answers no, and that is logged at debug. If a target ever
+answers yes, it is logged at info — that line is the signal that this section
+can be revisited.
+
+### The real answer today: snapshot the storage host
+
+Out-of-band filesystem snapshots are the only thing that makes a backup
+undeletable by the credentials that wrote it. They live on the machine that runs
+Garage, not here, and this project does not ship them — it tells you to set them
+up.
+
+Put Garage's `metadata_dir` and `data_dir` on ZFS or Btrfs and snapshot them on
+a schedule:
+
+```sh
+# ZFS. -r over a parent dataset holding both directories, so metadata and data
+# are captured at the same instant — Garage's metadata is a live SQLite
+# database, and a torn pair is worse than no snapshot.
+zfs snapshot -r tank/garage@$(date -u +%Y%m%dT%H%M%SZ)
+
+# Btrfs has no cross-subvolume atomicity. Either keep both directories in one
+# subvolume, or stop Garage for the second it takes.
+btrfs subvolume snapshot -r /srv/garage /srv/.snapshots/garage-$(date -u +%Y%m%dT%H%M%SZ)
+```
+
+Four things decide whether this is protection or theatre:
+
+1. **Keep them at least as long as the deepest Space's retention window.** A
+   snapshot layer shallower than the thing it protects has not protected it.
+2. **The snapshots must not be destroyable with the credentials that run
+   Garage.** That is the entire point. The schedule runs as root on the storage
+   host; the backup service has an S3 key and no shell there. If Garage runs as
+   root on that host, this buys much less than it looks like.
+3. **Send them somewhere else.** `zfs send | ssh` to a second machine, or
+   `sanoid`/`syncoid`. A root compromise on the storage host destroys local
+   snapshots, and a fire destroys the host.
+4. **Test a restore.** Stop Garage, roll back or clone the dataset, start it,
+   and run an actual restore of an actual Space through this service. A backup
+   path nobody has walked is a guess; that rule applies to this layer too.
+
+What this defends against: leaked or abused S3 credentials, a compromise of this
+service, Garage bugs that lose data. What it does not: losing the storage host
+itself — which is what item 3 is for — and it is not a substitute for the
+household's Recovery Keys, which are the only thing that makes any of this
+readable.
+
 ## Who may do what
 
 Access follows the Space's own OpenCloud roles — the service never invents its
@@ -292,6 +384,9 @@ Users are unaffected and need do nothing.
 - **History has a floor.** Retention can be shortened but not switched off: at
   least a week is always kept. Depth is what makes ransomware survivable, and it
   is not something a browser session should be able to give away.
+- **Nothing in S3 stops a stolen target credential deleting backups.** Garage
+  cannot express a key that writes without deleting. Snapshot the storage host —
+  see the section above; it is the only real answer available today.
 - Every backup run republishes the encrypted key envelopes to the target: the
   user's recovery envelope, so a Take-Out is always self-contained, and the
   service's own envelope, so losing the state Space costs a re-configuration

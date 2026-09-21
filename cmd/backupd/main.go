@@ -49,6 +49,7 @@ import (
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/notify"
+	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/restore"
 	"opencloud-backup-plugin/pkg/scheduler"
 	"opencloud-backup-plugin/pkg/snapshot"
@@ -424,7 +425,11 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 			// admin Take-Out self-contained, so Path A works with OpenCloud
 			// down. It is ciphertext the server cannot open (Phase 5).
 			Envelopes: takeout.S3Publisher{},
-			Logger:    logger,
+			// Asked on prune runs only: what this target can actually enforce,
+			// observed rather than assumed from the version it claims to be
+			// (decisions.md #8).
+			Immutability: objstore.S3Prober{},
+			Logger:       logger,
 		})
 		if err != nil {
 			return service{}, cleanup, err
@@ -694,6 +699,13 @@ func bootstrapConfig() targets.BootstrapConfig {
 		Creds: targets.PlainCreds{
 			AccessKeyID:     os.Getenv("BOOTSTRAP_S3_ACCESS_KEY_ID"),
 			SecretAccessKey: os.Getenv("BOOTSTRAP_S3_SECRET_ACCESS_KEY"),
+		},
+		// Optional second credential, used only by prune runs (decisions.md #9,
+		// Tier 2). Unset means the deployment has one key and both roles use
+		// it; half-set is refused rather than silently falling back.
+		MaintenanceCreds: targets.PlainCreds{
+			AccessKeyID:     os.Getenv("BOOTSTRAP_S3_MAINTENANCE_ACCESS_KEY_ID"),
+			SecretAccessKey: os.Getenv("BOOTSTRAP_S3_MAINTENANCE_SECRET_ACCESS_KEY"),
 		},
 	}
 }

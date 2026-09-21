@@ -56,12 +56,14 @@ var nameMarkers = []string{"große-datei", "notes.txt", "readme.txt", "café", "
 const testPrefix = "oc/"
 
 type garagePipeline struct {
-	runner *Runner
-	engine *snapshot.KopiaEngine
-	reader *fakeReader
-	jobs   *jobs.MemoryStore
-	garage *testutil.Garage
-	repo   snapshot.Repo
+	runner  *Runner
+	engine  *snapshot.KopiaEngine
+	reader  *fakeReader
+	jobs    *jobs.MemoryStore
+	garage  *testutil.Garage
+	targets *targets.MemoryStore
+	sealer  targets.CredSealer
+	repo    snapshot.Repo
 	// rk is the Space's raw Recovery Key, as the user would hold it.
 	rk []byte
 	// bigFile is the >multipart-threshold payload seeded into the Space.
@@ -136,6 +138,8 @@ func newGaragePipeline(ctx context.Context, t *testing.T) *garagePipeline {
 		reader:  reader,
 		jobs:    jobStore,
 		garage:  garage,
+		targets: targetStore,
+		sealer:  sealer,
 		rk:      rk,
 		bigFile: big,
 		repo: snapshot.Repo{
@@ -158,12 +162,34 @@ func garageLocation(g *testutil.Garage) snapshot.Location {
 	}
 }
 
+// useCredentials re-seals the pipeline's target with a different credential
+// set, so a test can give each role a key of its own and see which one a run
+// actually reaches for.
+func (p *garagePipeline) useCredentials(t *testing.T, set targets.CredentialSet) {
+	t.Helper()
+
+	wrapped, version, err := p.sealer.Seal(set)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	target, err := p.targets.GetTarget(context.Background(), testTargetID)
+	if err != nil {
+		t.Fatalf("GetTarget: %v", err)
+	}
+	target.WrappedCreds, target.Version = wrapped, version
+	if _, err := p.targets.UpdateTarget(context.Background(), target); err != nil {
+		t.Fatalf("UpdateTarget: %v", err)
+	}
+}
+
 // seedGarageTarget stores the Garage instance as a TW-sealed target.
 func seedGarageTarget(t *testing.T, store *targets.MemoryStore, sealer targets.CredSealer, g *testutil.Garage) {
 	t.Helper()
-	wrapped, version, err := sealer.Seal(targets.PlainCreds{
-		AccessKeyID:     g.AccessKeyID,
-		SecretAccessKey: g.SecretAccessKey,
+	wrapped, version, err := sealer.Seal(targets.CredentialSet{
+		Backup: targets.PlainCreds{
+			AccessKeyID:     g.AccessKeyID,
+			SecretAccessKey: g.SecretAccessKey,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Seal: %v", err)

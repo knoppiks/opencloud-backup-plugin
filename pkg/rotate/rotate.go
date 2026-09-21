@@ -131,6 +131,10 @@ type TargetStore interface {
 
 // TW re-seals every target's S3 credentials from oldKey to newKey.
 //
+// A target's credentials are one sealed record covering every role, so this
+// moves all of them together and cannot leave a target with its backup
+// credential rotated and its maintenance credential stranded.
+//
 // The plaintext credentials exist in memory for the duration of one re-seal,
 // which is the same exposure a backup run already has (decisions.md #14). They
 // are never logged and never leave this function.
