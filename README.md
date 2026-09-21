@@ -14,11 +14,13 @@ backups **without ever seeing the plaintext content** of a user's data.
 > offline with their Recovery Key (verified with OpenCloud stopped), and a
 > user-triggered restore back into their Space. Unattended scheduling, retention
 > and key rotation have landed since. **There is no user interface yet**: every
-> flow below that mentions one is an HTTP API today, including the key ceremony,
-> which needs a client that generates the Recovery Key in the browser. Admin
-> management of backup targets is likewise API-less — targets come from
-> first-start seeding. Both are the next phase. The design and phased roadmap
-> live in [`.agents/plan/`](.agents/plan/).
+> flow below that mentions one is an HTTP API today. The browser half of the key
+> ceremony now exists under [`web/`](web/) — Recovery Key generation, the
+> envelope format and the self-verification step, tested byte-for-byte against
+> the Go implementation in both directions — but the views that would let a
+> person use it do not. Admin management of backup targets is likewise API-less:
+> targets come from first-start seeding. Both are the current phase. The design
+> and phased roadmap live in [`.agents/plan/`](.agents/plan/).
 
 ## What it does
 

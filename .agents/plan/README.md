@@ -37,6 +37,12 @@ phase covered the credential split, the capability probe and the operator
 documentation. See that phase's outcome section for what the backend allowed of
 it.
 
+**Phase 8 is split into sub-phases** (8a crypto interop, 8b admin API, 8c
+skeleton, 8d user flows, 8e admin view, 8f E2E); see that phase's doc for the
+split, the decisions behind it, and what has landed. **8a is implemented**: the
+browser crypto lives in `/web/src/crypto` and is pinned against `pkg/keys` in
+both directions.
+
 **Target management (decisions.md #12–#15):** backup targets are managed in-app
 by an OpenCloud admin, who grants each target to all or specific users. The
 target store, access grants, and at-rest credential encryption (TW key) live in

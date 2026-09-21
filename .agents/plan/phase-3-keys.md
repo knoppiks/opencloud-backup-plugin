@@ -126,7 +126,9 @@ document for the Phase-5 decrypt CLI.
 Decisions taken while implementing (previously left open in this doc):
 
 - **RK encoding: Crockford base32 + checksum**, `ocbk1-` prefixed, 160 bits of
-  entropy in 7 groups of 5 characters. Chosen over a BIP39-style word list
+  entropy and an 8-bit checksum in 34 characters, grouped 5-5-5-5-5-5-4
+  (the group sizes were documented as seven groups of five until Phase 8 pinned
+  them in a test). Chosen over a BIP39-style word list
   because it needs no 2048-word list shipped to both the browser and the CLI, is
   case-insensitive, excludes ambiguous characters, and is trivial to generate
   with WebCrypto alone.

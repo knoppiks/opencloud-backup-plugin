@@ -8,11 +8,14 @@ package keys
 //
 // Format:
 //
-//	ocbk1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX
+//	ocbk1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXX
 //
 //   - "ocbk1" is a versioned prefix; a future format bumps it to ocbk2.
 //   - The payload is 160 bits of entropy + an 8-bit checksum = 168 bits,
-//     encoded as 35 Crockford base32 characters in 7 groups of 5.
+//     encoded as 34 Crockford base32 characters: six groups of five and a
+//     final group of four. 168 bits is not a multiple of five, so the last
+//     character carries two padding bits, which are always zero and are
+//     checked on decode.
 //   - Crockford base32 excludes I, L, O, and U, so it survives transcription;
 //     decoding is case-insensitive and maps the look-alikes I/L->1 and O->0.
 //   - The checksum catches typos before an expensive Argon2id derivation and

@@ -24,6 +24,8 @@ concurrency:
 env:
   # Keep in sync with go.mod's toolchain pin.
   GO_VERSION: "1.26.0"
+  # The web extension's floor is Node 20.19 (vite 8); CI runs the current LTS.
+  NODE_VERSION: "24.17.0"
   # Pinned tool versions (AGENTS.md: pin external versions).
   GOLANGCI_LINT_VERSION: "v2.12.2"
   GITLEAKS_VERSION: "8.30.1"
@@ -54,6 +56,47 @@ jobs:
 
     - name: go test (race)
       run: go test -race ./...
+
+  web:
+    name: web extension (typecheck / test / build)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-node@v6
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    # pnpm comes from Corepack, at the version pinned in web/package.json's
+    # packageManager field, so CI and a developer machine resolve the same one.
+    - name: enable corepack
+      run: corepack enable
+
+    - name: install
+      working-directory: web
+      run: pnpm install --frozen-lockfile
+
+    - name: typecheck
+      working-directory: web
+      run: pnpm typecheck
+
+    # The crypto suite reads pkg/keys/testdata/vectors.json directly: it fails
+    # when the browser stops agreeing with Go about a byte. The other direction
+    # (Go opening browser-produced envelopes) is a Go test and runs in
+    # build-test, so neither half can be forgotten.
+    - name: test
+      working-directory: web
+      run: pnpm test
+
+    - name: build
+      working-directory: web
+      run: pnpm build
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: backup-vault-web
+        path: web/dist
+        if-no-files-found: error
 
   integration:
     name: integration (Garage fixture)

@@ -9,6 +9,10 @@ IMAGE         ?= opencloud-backupd
 IMAGE_TAG     ?= dev
 OPENCLOUD_DIR := test/fixtures/opencloud
 DEV_COMPOSE   := docker-compose.dev.yml
+WEB_DIR       := web
+# Corepack reads the pnpm version from web/package.json, so the toolchain is
+# pinned by the same file CI uses rather than by whatever is on $PATH.
+PNPM          ?= corepack pnpm
 
 # Platforms the offline recovery CLI must build for. It is the family's last
 # resort, so it ships for every desktop OS (phase-5 exit criteria).
@@ -55,6 +59,27 @@ test-opencloud: ## Run the OpenCloud-fixture tests (run dev-up first; failures, 
 	set -a; . $(OPENCLOUD_DIR)/fixture.env; set +a; \
 	OPENCLOUD_FIXTURE_REQUIRED=1 $(GO) test -tags integration -count=1 \
 		./pkg/cs3/... ./pkg/cs3state/... ./pkg/api/... ./pkg/restore/... ./pkg/backup/...
+
+.PHONY: web-install
+web-install: ## Install the web extension's dependencies (frozen lockfile).
+	cd $(WEB_DIR) && $(PNPM) install --frozen-lockfile
+
+.PHONY: web-test
+web-test: ## Run the web extension's unit tests (includes the Go interop vectors).
+	cd $(WEB_DIR) && $(PNPM) test
+
+.PHONY: web-typecheck
+web-typecheck: ## Typecheck the web extension.
+	cd $(WEB_DIR) && $(PNPM) typecheck
+
+.PHONY: web-build
+web-build: ## Build the web extension bundle into $(WEB_DIR)/dist.
+	cd $(WEB_DIR) && $(PNPM) build
+
+.PHONY: web-vectors
+web-vectors: ## Regenerate the browser-produced interop vectors, then verify Go opens them.
+	cd $(WEB_DIR) && $(PNPM) vectors
+	$(GO) test ./pkg/keys -run TestBrowserVectors -count=1
 
 .PHONY: lint
 lint: ## Run golangci-lint.
