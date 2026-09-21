@@ -175,7 +175,14 @@ func TestSRWRejectsBadKeyPairs(t *testing.T) {
 	}
 }
 
-func seedTarget(t *testing.T, store targets.Store, sealer targets.CredSealer, id string, creds targets.PlainCreds) {
+// oneKey is a target with a single credential, which is both roles at once.
+func oneKey(accessKeyID, secret string) targets.CredentialSet {
+	return targets.CredentialSet{
+		Backup: targets.PlainCreds{AccessKeyID: accessKeyID, SecretAccessKey: secret},
+	}
+}
+
+func seedTarget(t *testing.T, store targets.Store, sealer targets.CredSealer, id string, creds targets.CredentialSet) {
 	t.Helper()
 	wrapped, version, err := sealer.Seal(creds)
 	if err != nil {
@@ -202,9 +209,17 @@ func TestTWKeepsEveryCredential(t *testing.T) {
 	}
 
 	store := targets.NewMemoryStore()
-	want := targets.PlainCreds{AccessKeyID: "AKIA-1", SecretAccessKey: "s3cr3t-1"}
+	// Both roles, so the test can catch a rotation that quietly drops one of
+	// them: a target whose maintenance credential vanished would fall back to
+	// the backup key and look like it still worked.
+	want := targets.CredentialSet{
+		Backup:      targets.PlainCreds{AccessKeyID: "AKIA-1", SecretAccessKey: "s3cr3t-1"},
+		Maintenance: targets.PlainCreds{AccessKeyID: "AKIA-1-MAINT", SecretAccessKey: "s3cr3t-1-maint"},
+	}
 	seedTarget(t, store, oldSealer, "target-a", want)
-	seedTarget(t, store, oldSealer, "target-b", targets.PlainCreds{AccessKeyID: "AKIA-2", SecretAccessKey: "s3cr3t-2"})
+	seedTarget(t, store, oldSealer, "target-b", targets.CredentialSet{
+		Backup: targets.PlainCreds{AccessKeyID: "AKIA-2", SecretAccessKey: "s3cr3t-2"},
+	})
 
 	got, err := rotate.TW(ctx, store, oldKey, newKey)
 	if err != nil {
@@ -225,6 +240,9 @@ func TestTWKeepsEveryCredential(t *testing.T) {
 	if opened != want {
 		t.Fatal("rotation changed the stored credentials")
 	}
+	if !opened.Separated() {
+		t.Fatal("rotation lost the maintenance credential")
+	}
 	if _, err := oldSealer.Open(rotated.WrappedCreds); err == nil {
 		t.Fatal("the credentials still open with the retired key")
 	}
@@ -243,9 +261,9 @@ func TestTWIsResumable(t *testing.T) {
 	}
 
 	store := targets.NewMemoryStore()
-	seedTarget(t, store, oldSealer, "target-old", targets.PlainCreds{AccessKeyID: "A", SecretAccessKey: "b"})
+	seedTarget(t, store, oldSealer, "target-old", oneKey("A", "b"))
 	// As if the process died after re-sealing this one.
-	seedTarget(t, store, newSealer, "target-ahead", targets.PlainCreds{AccessKeyID: "C", SecretAccessKey: "d"})
+	seedTarget(t, store, newSealer, "target-ahead", oneKey("C", "d"))
 
 	got, err := rotate.TW(ctx, store, oldKey, newKey)
 	if err != nil {
@@ -275,7 +293,7 @@ func TestTWRefusesCredentialsThatOpenWithNeitherKey(t *testing.T) {
 	}
 
 	store := targets.NewMemoryStore()
-	seedTarget(t, store, otherSealer, "target-foreign", targets.PlainCreds{AccessKeyID: "A", SecretAccessKey: "b"})
+	seedTarget(t, store, otherSealer, "target-foreign", oneKey("A", "b"))
 
 	if _, err := rotate.TW(ctx, store, oldKey, newKey); !errors.Is(err, rotate.ErrKeyMismatch) {
 		t.Fatalf("err = %v, want ErrKeyMismatch", err)

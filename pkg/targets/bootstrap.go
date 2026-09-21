@@ -33,9 +33,12 @@ type BootstrapConfig struct {
 	UsePathStyle bool
 	DisableTLS   bool
 
-	// Creds are the S3 credentials. They are sealed immediately and never
-	// retained in this struct beyond the call.
+	// Creds are the S3 credentials a backup run uses. They are sealed
+	// immediately and never retained in this struct beyond the call.
 	Creds PlainCreds
+	// MaintenanceCreds are the credentials a prune run uses. Optional: left
+	// empty, both roles use Creds, which is the single-key deployment.
+	MaintenanceCreds PlainCreds
 }
 
 // DefaultBootstrapID is used when BootstrapConfig.ID is empty.
@@ -54,8 +57,14 @@ func Bootstrap(ctx context.Context, store Store, sealer CredSealer, cfg Bootstra
 	if cfg.Bucket == "" || cfg.Endpoint == "" {
 		return false, fmt.Errorf("targets: bootstrap requires an endpoint and a bucket")
 	}
-	if cfg.Creds.AccessKeyID == "" || cfg.Creds.SecretAccessKey == "" {
+	if !cfg.Creds.Complete() {
 		return false, fmt.Errorf("targets: bootstrap requires S3 credentials")
+	}
+	// Refused rather than ignored: half a maintenance credential would seed a
+	// target that silently uses the backup key for both roles.
+	if !cfg.MaintenanceCreds.Empty() && !cfg.MaintenanceCreds.Complete() {
+		return false, fmt.Errorf(
+			"targets: bootstrap needs both halves of the maintenance credential, or neither")
 	}
 
 	existing, err := store.ListTargets(ctx)
@@ -67,7 +76,10 @@ func Bootstrap(ctx context.Context, store Store, sealer CredSealer, cfg Bootstra
 		return false, nil
 	}
 
-	wrapped, version, err := sealer.Seal(cfg.Creds)
+	wrapped, version, err := sealer.Seal(CredentialSet{
+		Backup:      cfg.Creds,
+		Maintenance: cfg.MaintenanceCreds,
+	})
 	if err != nil {
 		// Deliberately generic: never echo credential content.
 		return false, fmt.Errorf("targets: bootstrap: cannot seal credentials")

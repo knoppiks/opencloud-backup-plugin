@@ -41,6 +41,9 @@ type Target struct {
 	DisableTLS   bool   `json:"disable_tls,omitempty"`
 	// WrappedCreds is the TW-wrapped S3 credential blob (never plaintext, never
 	// logged, never returned by any read API). Versioned like the key envelope.
+	// It holds the target's whole CredentialSet — every Role — as one sealed
+	// record, so a rotation re-seals one blob rather than keeping several in
+	// step.
 	WrappedCreds []byte    `json:"wrapped_creds,omitempty"`
 	CreatedAt    time.Time `json:"created_at,omitzero"`
 	UpdatedAt    time.Time `json:"updated_at,omitzero"`
@@ -94,6 +97,78 @@ type PlainCreds struct {
 	SecretAccessKey string
 }
 
+// Complete reports whether both halves of the pair are present. A half-filled
+// pair is a configuration mistake, never a way of saying "not configured".
+func (c PlainCreds) Complete() bool {
+	return c.AccessKeyID != "" && c.SecretAccessKey != ""
+}
+
+// Empty reports whether the pair is unset.
+func (c PlainCreds) Empty() bool {
+	return c.AccessKeyID == "" && c.SecretAccessKey == ""
+}
+
+// Role names what a run intends to do to a target, so the two can be given
+// different credentials (decisions.md #9, Tier 2).
+//
+// The split is real in this service: a backup run never holds the maintenance
+// credential and a maintenance run never holds the backup one. Whether it is
+// also a *bound* depends entirely on the storage backend, and on the one this
+// project ships against it is not — see the CredentialSet doc comment.
+type Role string
+
+const (
+	// RoleBackup writes snapshots and reads them back. Backup and restore runs
+	// use it.
+	RoleBackup Role = "backup"
+	// RoleMaintenance expires snapshots and reclaims their storage. Only prune
+	// runs use it.
+	RoleMaintenance Role = "maintenance"
+)
+
+// CredentialSet is a target's credentials, one pair per Role.
+//
+// Maintenance is optional: a target configured with a single credential leaves
+// it empty and both roles resolve to Backup. That is the shape every target
+// written before roles existed has, and it stays valid — a deployment with one
+// key is not misconfigured, it is just not separated.
+//
+// # What separating them does and does not buy
+//
+// On a backend that can express "may write, may not delete" the separation is a
+// bound: a leaked backup credential cannot destroy history. Garage — the target
+// this project ships against — cannot express it. Its grants are read, write and
+// owner; write includes DeleteObject, owner covers administering the bucket and
+// grants no object access at all, and a key without read cannot open an
+// encrypted repository. Both roles therefore end up holding read+write, which is
+// the same capability. TestGarageGrantMatrix pins this rather than asserting it
+// from documentation.
+//
+// So on Garage the separation is organisational: two keys that can be rotated
+// and revoked independently, and an audit trail that distinguishes the actor
+// that wrote a backup from the actor that deleted one. It is not a blast-radius
+// bound, and the operations runbook says so in those words.
+type CredentialSet struct {
+	Backup      PlainCreds
+	Maintenance PlainCreds
+}
+
+// For returns the credentials a run in the given role must use. An unconfigured
+// maintenance pair falls back to the backup pair, which is the single-credential
+// deployment.
+func (c CredentialSet) For(role Role) PlainCreds {
+	if role == RoleMaintenance && c.Maintenance.Complete() {
+		return c.Maintenance
+	}
+	return c.Backup
+}
+
+// Separated reports whether the roles actually resolve to different keys. Used
+// for diagnostics; it never decides anything.
+func (c CredentialSet) Separated() bool {
+	return c.Maintenance.Complete() && c.Maintenance.AccessKeyID != c.Backup.AccessKeyID
+}
+
 // Store persists targets and grants. It stores credentials only as the sealed
 // blob on Target.WrappedCreds and never exposes plaintext.
 type Store interface {
@@ -123,10 +198,10 @@ type Store interface {
 // worker memory at run time. The implementation reuses the maintained
 // AEAD-envelope primitive from pkg/keys — no hand-rolled crypto.
 type CredSealer interface {
-	// Seal wraps plaintext credentials for storage.
-	Seal(c PlainCreds) (wrapped []byte, version int, err error)
+	// Seal wraps a target's credentials for storage.
+	Seal(c CredentialSet) (wrapped []byte, version int, err error)
 	// Open unwraps stored credentials for immediate, in-memory use.
-	Open(wrapped []byte) (PlainCreds, error)
+	Open(wrapped []byte) (CredentialSet, error)
 }
 
 // Authorizer answers what a given user may see and use. All grant checks are

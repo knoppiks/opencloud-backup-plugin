@@ -8,10 +8,14 @@ package backup
 // the same per-Space run lock, never inline in a backup (decisions.md #9
 // Tier 1).
 //
-// It shares this package with the backup runner because it needs exactly the
-// same two secrets, resolved the same way — the target's credentials and the
-// Space's Data Key — and duplicating that resolution somewhere else would mean
-// two places where a plaintext Data Key can be mishandled.
+// It shares this package with the backup runner because it needs the same two
+// secrets resolved the same way — the target's credentials and the Space's Data
+// Key — and duplicating that resolution somewhere else would mean two places
+// where a plaintext Data Key can be mishandled. It does not resolve the *same*
+// credentials: a prune asks for the target's maintenance role, so this is the
+// only file in the service that ever holds that key (decisions.md #9, Tier 2).
+// What that key may *do* is the backend's business, and on Garage it is no more
+// than the backup key may do.
 
 import (
 	"context"
@@ -21,7 +25,9 @@ import (
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
+	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/targets"
 )
 
 // PruneResult summarises a completed prune run. Like Result it carries no key
@@ -97,11 +103,13 @@ func (r *Runner) finishPrune(ctx context.Context, pending run) (PruneResult, err
 // Keeping it in one function bounds the lifetime of both the Data Key and the
 // target credentials to a single call frame, exactly as snapshotSpace does.
 func (r *Runner) pruneSpace(ctx context.Context, space cs3.Space) (snapshot.PruneStats, error) {
-	repo, cfg, _, err := r.openRepo(ctx, space.ID)
+	repo, cfg, target, err := r.openRepo(ctx, space.ID, targets.RoleMaintenance)
 	if err != nil {
 		return snapshot.PruneStats{}, err
 	}
 	defer keys.Zeroize(repo.DK)
+
+	r.observeImmutability(ctx, space.ID, target)
 
 	// EffectiveRetentionWindow, not the raw field: a window stored before the
 	// floor existed — or absent altogether — must not make this delete history
@@ -114,4 +122,41 @@ func (r *Runner) pruneSpace(ctx context.Context, space cs3.Space) (snapshot.Prun
 		return snapshot.PruneStats{}, fmt.Errorf("%w: %w", ErrPruneFailed, err)
 	}
 	return stats, nil
+}
+
+// observeImmutability asks the target whether it can make objects undeletable,
+// and says so when the answer changes what this deployment could do.
+//
+// It runs here, on the prune, for two reasons: this is the run that would use
+// Object Lock if there were anything to use, and the prune's slow cadence means
+// the question is re-asked forever rather than answered once at a deployment's
+// first start and never again. A backend that grows the feature therefore shows
+// up in the log by itself.
+//
+// Supported is logged at info because an operator can act on it. Anything else
+// is logged at debug: the expected answer is "unsupported", and a daily line
+// per Space saying the expected thing is noise that teaches people to ignore
+// the log. Nothing here can fail a prune — the observation is a diagnostic, not
+// a precondition.
+func (r *Runner) observeImmutability(ctx context.Context, spaceID string, target resolvedTarget) {
+	if r.deps.Immutability == nil {
+		return
+	}
+
+	caps, err := r.deps.Immutability.Probe(ctx, target.s3)
+	if err != nil {
+		r.deps.Logger.Debug("could not probe target immutability", "space", spaceID, "err", err)
+		return
+	}
+
+	level := r.deps.Logger.Debug
+	if caps.ObjectLock == objstore.ObjectLockSupported {
+		level = r.deps.Logger.Info
+	}
+	level("target immutability observed",
+		"space", spaceID,
+		"object_lock", caps.ObjectLock.String(),
+		"object_lock_enabled", caps.ObjectLockEnabled,
+		"versioning_enabled", caps.VersioningEnabled,
+	)
 }

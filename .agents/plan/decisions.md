@@ -52,10 +52,13 @@ than drifting.
    kopia's own Object-Lock ransomware feature is **not usable on Garage** (no
    Object Lock) → kopia used for snapshot/dedup/crypto only; immutability handled
    out-of-band (see threat model). Keep the Object-Lock path capability-flagged.
-   *Status:* not built. A placeholder package held a capability type and a probe
-   interface that nothing implemented, called or imported; it was deleted in R9
-   rather than left to imply a feature exists. The probe belongs with the
-   immutability work that needs it.
+   *Status:* the **probe** is built (Phase 7): the service asks each target what
+   it supports on every maintenance run, and logs the answer. The **enabled
+   path** is not, and deliberately so — no backend in this project's test
+   environment implements Object Lock, so code written for it would be untested
+   from the day it landed. Issue #33 tracks closing that gap. There is no
+   feature flag, because a flag no backend can exercise is the placeholder R9
+   deleted, wearing a different hat.
 
 6. **Key/snapshot scope: per Space.** One Data Key + one kopia repo + one snapshot
    chain per Space. A shared space is backed up **once**, not once per member.
@@ -72,21 +75,28 @@ than drifting.
 8. **Target: Garage** (self-hosted buddy S3). As of v2.3.0 it has **no S3 Object
    Lock and no versioning** (upstream Garage #166 versioning, #1127 Object Lock;
    no ETA). Only read/write/owner grants, and `write` implies overwrite/delete →
-   **no API-enforced append-only**. Immutability handled out-of-band and
-   capability-flagged for when Garage gains support.
+   **no API-enforced append-only**. Immutability handled out-of-band. The
+   grant table is now measured rather than asserted (see the Phase-7 amendment
+   and `phase-0-findings.md`), and one part of it was measured to be the
+   opposite of what this entry implied: `owner` is bucket administration and
+   grants **no object access**, so it is not the "more powerful" grant a
+   maintenance role could be built on.
 
 9. **Immutability is layered:**
    - **Tier 1** (covers the primary threat fully): server-side worker; write key
      never on the client; deep time-based retention; prune runs as a **separate
-     job** from backup. **Implemented** (see the R7 amendment).
-   - **Tier 2** (limits leaked-write-key blast radius): worker gets a
-     **write-only** Garage key; prune/GC runs from a **separate trusted context**
-     with the owner key. **Not implemented.** Today both job kinds resolve the
-     same single credential pair from the target record, so a leaked worker
-     credential can delete as well as write.
-   - **Tier 3** (optional, real out-of-band WORM): ZFS/Btrfs snapshots of the
-     Garage `data_dir`/`meta_dir`. **Not implemented**; it is an operator
-     practice this project documents rather than code it ships.
+     job** from backup. **Implemented** (see the R7 amendment), and since
+     Phase 7 both of its claims are tested rather than argued.
+   - **Tier 2** (credential separation): backup and maintenance runs resolve
+     **separate credentials** from the target record, and neither run ever holds
+     the other's. **Implemented as a separation, not as a bound** — on Garage
+     both credentials must hold `read+write`, so a leaked backup credential can
+     still delete. See the Phase-7 amendment for why the original design (a
+     write-only worker key, an owner key for prune) cannot work on this backend.
+   - **Tier 3** (the only real out-of-band WORM available today): ZFS/Btrfs
+     snapshots of the Garage `data_dir`/`meta_dir`. **Not code this project
+     ships**; it is an operator practice, and since Phase 7 it is written down —
+     README, "Protecting backups from the credential that writes them".
 
 10. **Retention: time-based (`keep-within`), never count-based.** A count-based
     policy can be weaponized — an attacker injecting many bogus recent snapshots
@@ -842,6 +852,75 @@ is listed here so the corrections are themselves on the record:
   production path called, plus the six test fakes that implemented it. Both were
   described in this file as if they existed for a reason.
 
+### Amendments from Phase 7 (immutability hardening, issue #32)
+
+- **Tier 2 shipped as a separation of actors, not as a limit on either actor,
+  because Garage cannot express the limit.** The plan was a write-only key for
+  the worker ("a stolen writer key cannot exfiltrate existing backups") and the
+  owner key for prune. Measuring the backend first — which the plan asked for and
+  which nobody had done — showed both halves fail:
+  - `--write` includes `DeleteObject`, so a "writer" key destroys as easily as it
+    writes. #8 already said this; now a test says it.
+  - `--owner` is *bucket administration* and grants no object access at all. A
+    prune key holding only the owner grant could not have deleted one snapshot.
+    This was not a weak assumption, it was an inverted one.
+  - A key without `--read` cannot open a kopia repository — the format blob and
+    the indexes are reads, before any deduplication decision is made. So the
+    write-only worker is not a worker with less reach; it is a worker that fails
+    on its first run.
+
+  Both roles therefore hold `read+write`: the same capability. What was built is
+  still worth building — a target carries one credential per role, a backup run
+  never holds the maintenance one and a prune run never holds the backup one, and
+  the two rotate and revoke independently — but **it is not a blast-radius bound
+  and this file will not call it one.** The value is realised the day a backend
+  with real IAM policies is in scope; the seam is what makes that a configuration
+  change rather than a rewrite.
+
+- **A target with one credential stays correct, and is the default.** The sealed
+  credential record gained an optional second pair rather than a second record:
+  old blobs are flat JSON and keep opening, an absent maintenance pair means both
+  roles use the one key, and nothing has to be migrated or re-sealed. A
+  *half-configured* maintenance pair is refused at seal time instead of falling
+  back, because silently falling back produces a deployment that looks separated
+  and is not.
+
+- **Capabilities are observed, not assumed, and only what is observable is
+  reported.** The service asks each target on every maintenance run — the run
+  that would use Object Lock if there were anything to use, and slow enough that
+  the question keeps being asked for the life of the deployment rather than once
+  at first start. "Supported" is logged at info because an operator can act on
+  it; everything else at debug, because a daily line per Space restating the
+  expected answer is how a log becomes unread.
+  The probe reports Object Lock as a *capability* (Garage answers
+  `NotImplemented`, a real S3 answers with a configuration or
+  `ObjectLockConfigurationNotFoundError` — three distinguishable states) and
+  versioning only as a *status*. It cannot be a capability: Garage answers
+  `GetBucketVersioning` successfully with an empty status, identical to a real
+  bucket that never enabled it, and the only call that tells them apart is a
+  write this service will not make against a backup bucket.
+
+- **Tier 1's two claims are now tests rather than arguments.** That a ransomware
+  snapshot does not evict good history was the sentence the whole project rests
+  on and nothing checked it: a Space is backed up, every file is replaced with
+  random bytes and a ransom note, it is backed up again, retention runs, and the
+  pre-attack snapshot still restores byte-identically. That target credentials
+  never reach a client is asserted over the whole route table, against a target
+  holding real sealed credentials, for the *most* privileged caller — credentials
+  are write-only for everyone, not just for viewers. Both were true; neither
+  would have stayed true by accident.
+
+- **The retention floor is what stops the attack that the depth defence invites.**
+  Tested with the shortest window a stored record can hold: without the floor
+  that prune deletes the pre-attack snapshot and leaves the household with the
+  ransomware snapshot as its only copy. The floor is why it does not.
+
+- **Deployment defect found while documenting it:** the shipped manifest's
+  commented-out bootstrap credentials sat under `envFrom:`, where an entry with
+  `name`/`valueFrom` is not valid. An operator following the comment got a
+  rejected Deployment. They are in `env:` now, and `kubeconform` is run over the
+  uncommented form as well as the shipped one.
+
 ---
 
 ## Trust & key model
@@ -905,11 +984,15 @@ Why we are still protected:
    defeated by deep, time-based retention.
 
 **Secondary threat: server/cluster compromise** leaking the S3 target
-credentials. Less likely in the family scenario; **Tier 2/3 are what would bound
-it, and neither is built** (decision #9), so today a leaked target credential can
-delete a repository as well as write to it. What still holds: the credential
-opens ciphertext only, and the deployment's snapshot practice (Tier 3) is the
-answer available to an operator right now.
+credentials. Less likely in the family scenario, and **still not bounded by
+anything in S3**: a leaked target credential can delete a repository as well as
+write to it, because Garage has no grant that writes without deleting
+(decision #8, measured). Tier 2 shipped, and what it changed is *which* actor
+holds which key, not what a key can do — so it narrows who to suspect and what to
+revoke, and it does not narrow the damage. What still holds: the credential opens
+ciphertext only. What actually bounds the damage is Tier 3, the operator's own
+filesystem snapshots of the storage host, which is documented in the README and
+is not something this project can ship.
 
 **The worst single secret to leak is not any of the keys.** It is
 `OC_SERVICE_ACCOUNT_SECRET`: owner scope on every Space, i.e. plaintext, with no
@@ -935,8 +1018,10 @@ acceptable:
 - Plaintext credentials exist **only in worker memory at run time** and are
   zeroized after use where Go allows; they are never logged. (Plus the
   deployment's environment, when first-start seeding is used — R5 amendment.)
-- The blast radius **will be** bounded by immutability Tiers 2/3, once they
-  exist. Until then it is bounded only by how quickly a leak is noticed.
+- The blast radius is bounded by **Tier 3 only** — the operator's out-of-band
+  filesystem snapshots. Tier 2 exists and separates the actors, but on Garage
+  both credentials hold the same grants, so it bounds nothing by itself. Absent
+  Tier 3, the radius is bounded only by how quickly a leak is noticed.
 
 ---
 

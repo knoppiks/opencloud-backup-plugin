@@ -285,9 +285,11 @@ func newFixture(ctx context.Context, t *testing.T) *fixture {
 
 func seedTarget(t *testing.T, store *targets.MemoryStore, sealer targets.CredSealer, loc snapshot.Location) {
 	t.Helper()
-	wrapped, version, err := sealer.Seal(targets.PlainCreds{
-		AccessKeyID:     loc.AccessKeyID,
-		SecretAccessKey: loc.SecretAccessKey,
+	wrapped, version, err := sealer.Seal(targets.CredentialSet{
+		Backup: targets.PlainCreds{
+			AccessKeyID:     loc.AccessKeyID,
+			SecretAccessKey: loc.SecretAccessKey,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Seal: %v", err)

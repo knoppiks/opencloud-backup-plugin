@@ -53,7 +53,56 @@ kept; spike drivers under `/spikes/` are throwaway.
    `WhenSupported` makes `GetObject` fail with a CRC32 mismatch on multipart
    objects (Garage returns a composite checksum the SDK can't verify). Fix:
    set both to **`WhenRequired`** on the client (done in `s3client.go`). Any real
-   S3 client we build in `/pkg/s3target` must apply the same setting.
+   S3 client must apply the same setting.
+
+### Garage's grant model, measured (Phase 7, issue #32)
+
+Established when Phase 7's Tier 2 was implemented, because the tier was planned
+around two assumptions about this table and both were wrong. Pinned by
+`TestGarageGrantMatrix` and `TestGarageWriteImpliesDelete`; the fixture grew
+`(*Garage).CreateKey` to make it testable.
+
+`garage bucket allow` offers exactly `--read`, `--write` and `--owner`:
+
+| grant | PutObject | GetObject | ListObjectsV2 | DeleteObject | PutBucketWebsite |
+|---|---|---|---|---|---|
+| none | — | — | — | — | — |
+| `--read` | — | yes | yes | — | — |
+| `--write` | yes | — | — | **yes** | — |
+| `--read --write` | yes | yes | yes | yes | — |
+| `--owner` | — | — | — | — | yes |
+| `--read --write --owner` | yes | yes | yes | yes | yes |
+
+Denials are `AccessDenied` throughout.
+
+- **`--write` implies delete.** There is no append-only key. Confirms
+  decisions.md #8, which said so without a test behind it.
+- **`--owner` is bucket administration and confers no object access at all.**
+  The plan's "prune-owner key with the full grant" could not have deleted a
+  single snapshot. This is the assumption that was not merely weak but backwards.
+- **kopia needs read as well as write**
+  (`TestIntegration_BackupNeedsReadAsWellAsWrite`): a repository cannot be
+  opened without reading its format blob and indexes, so the plan's write-only
+  worker key does not produce a worker with less reach, it produces a worker
+  that fails. Both roles therefore require `--read --write` — the same
+  capability — which is why Phase 7's credential split is documented as
+  organisational rather than as a bound.
+
+### Capability signals: what a probe can and cannot learn
+
+Pinned by `TestGarageCapabilitySignals`. The asymmetry matters and was not
+obvious:
+
+- `GetObjectLockConfiguration` → **`NotImplemented`**. A usable support signal.
+  A backend that implements Object Lock answers either with a configuration or
+  with `ObjectLockConfigurationNotFoundError`, and the probe distinguishes all
+  three.
+- `GetBucketVersioning` → **succeeds, with an empty status.** That is byte for
+  byte what a real S3 bucket that never had versioning enabled returns, so this
+  call cannot tell "unsupported" from "not enabled". Only attempting to *enable*
+  it distinguishes them (`PutBucketVersioning` → `NotImplemented`), and that is a
+  write the service will not make against somebody's backup bucket. The probe
+  therefore reports versioning as a status, never as a capability.
 
 ---
 

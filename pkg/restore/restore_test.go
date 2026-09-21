@@ -29,7 +29,10 @@ import (
 const (
 	testSpaceID  = "storage-1$space-1"
 	testTargetID = "target-1"
-	testSnapshot = snapshot.SnapshotID("snap-1")
+
+	testBackupAccessKeyID      = "GK-test-access-key"
+	testMaintenanceAccessKeyID = "GK-test-maintenance-key"
+	testSnapshot               = snapshot.SnapshotID("snap-1")
 )
 
 var (
@@ -306,9 +309,16 @@ func newHarness(t *testing.T) *harness {
 
 func seedTarget(t *testing.T, store *targets.MemoryStore, sealer targets.CredSealer) {
 	t.Helper()
-	wrapped, version, err := sealer.Seal(targets.PlainCreds{
-		AccessKeyID:     "GK-test-access-key",
-		SecretAccessKey: "test-secret-access-key-0000000000000000",
+	wrapped, version, err := sealer.Seal(targets.CredentialSet{
+		Backup: targets.PlainCreds{
+			AccessKeyID:     testBackupAccessKeyID,
+			SecretAccessKey: "test-secret-access-key-0000000000000000",
+		},
+		// A restore must never reach for this one.
+		Maintenance: targets.PlainCreds{
+			AccessKeyID:     testMaintenanceAccessKeyID,
+			SecretAccessKey: "test-maintenance-secret-000000000000000",
+		},
 	})
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
