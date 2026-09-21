@@ -3,8 +3,13 @@
 package cs3_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"fmt"
+	"net/http"
 	"os"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +18,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"opencloud-backup-plugin/internal/testutil"
 	"opencloud-backup-plugin/pkg/cs3"
 )
 
@@ -20,12 +26,9 @@ import (
 // account, skipping the test when the fixture env is not sourced.
 func fixtureClient(t *testing.T) (*cs3.Client, context.Context) {
 	t.Helper()
-	addr := os.Getenv("CS3_GATEWAY_ADDR")
-	saID := os.Getenv("CS3_SERVICE_ACCOUNT_ID")
-	saSecret := os.Getenv("CS3_SERVICE_ACCOUNT_SECRET")
-	if addr == "" || saID == "" || saSecret == "" {
-		t.Skip("CS3 fixture env not set; source test/fixtures/opencloud/fixture.env")
-	}
+	env := testutil.OpenCloudEnv(t,
+		"CS3_GATEWAY_ADDR", "CS3_SERVICE_ACCOUNT_ID", "CS3_SERVICE_ACCOUNT_SECRET")
+	addr, saID, saSecret := env[0], env[1], env[2]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
@@ -37,11 +40,13 @@ func fixtureClient(t *testing.T) (*cs3.Client, context.Context) {
 	t.Cleanup(func() { _ = conn.Close() })
 
 	gw := gateway.NewGatewayAPIClient(conn)
-	return cs3.NewClient(gw, cs3.ServiceAccountAuth{
-		Gateway:  gw,
-		ClientID: saID,
-		Secret:   saSecret,
-	}), ctx
+	return cs3.NewClient(gw,
+		cs3.ServiceAccountAuth{Gateway: gw, ClientID: saID, Secret: saSecret},
+		// The fixture's data gateway serves a self-signed certificate.
+		cs3.WithHTTPClient(&http.Client{
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		}),
+	), ctx
 }
 
 // TestListSpacesIntegration runs the Phase-2 CS3 read slice against the live
@@ -91,10 +96,7 @@ func TestListSpacesIntegration(t *testing.T) {
 //
 // The Space and its grants come from test/fixtures/opencloud/seed.sh.
 func TestIntegration_SpaceGrantsShape(t *testing.T) {
-	sharedID := os.Getenv("OC_SHARED_SPACE_ID")
-	if sharedID == "" {
-		t.Skip("OC_SHARED_SPACE_ID not set; re-run test/fixtures/opencloud/seed.sh")
-	}
+	sharedID := testutil.OpenCloudEnv(t, "OC_SHARED_SPACE_ID")[0]
 	var (
 		viewer  = os.Getenv("OC_SHARED_VIEWER_ID")
 		editor  = os.Getenv("OC_SHARED_EDITOR_ID")
@@ -175,4 +177,80 @@ func TestIntegration_SpaceGrantsShape(t *testing.T) {
 	if got := shared.RoleFor("no-such-user", nil, now); got != cs3.RoleNone {
 		t.Errorf("RoleFor(stranger) = %v, want none", got)
 	}
+}
+
+// TestIntegration_ZeroByteUploadCompletesAtInitiation pins the one upload
+// behaviour that cost a bug: reva finishes a zero-length upload inside
+// InitiateFileUpload — the file exists, with the mtime that was asked for,
+// before any body is sent — and then answers the PUT that would follow with
+// 500 "upload not found".
+//
+// The client therefore sends no body for an empty file (writer.go). If a future
+// OpenCloud starts expecting one, this test says so; without it, the symptom
+// would be every restore failing on the first empty file it meets, which is a
+// thing real Spaces are full of.
+func TestIntegration_ZeroByteUpload(t *testing.T) {
+	client, ctx := fixtureClient(t)
+	space := writableFixtureSpace(ctx, t, client)
+
+	dir := fmt.Sprintf("zero-byte-%d", time.Now().UnixNano())
+	if err := client.MakeDir(ctx, space, dir); err != nil {
+		t.Fatalf("MakeDir: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := client.Delete(cleanupCtx, space, dir); err != nil {
+			t.Logf("could not remove %s: %v", dir, err)
+		}
+	})
+
+	mtime := time.Date(2019, 11, 3, 14, 27, 53, 0, time.UTC)
+	rel := path.Join(dir, "empty.txt")
+	if err := client.Upload(ctx, space, rel, 0, mtime, bytes.NewReader(nil)); err != nil {
+		t.Fatalf("Upload(size=0): %v", err)
+	}
+
+	entries, err := client.ListDir(ctx, space, dir)
+	if err != nil {
+		t.Fatalf("ListDir: %v", err)
+	}
+	var found *cs3.Entry
+	for i := range entries {
+		if path.Base(entries[i].Path) == "empty.txt" {
+			found = &entries[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("the empty file was not created; entries = %+v", entries)
+	}
+	if found.Size != 0 || found.IsDir {
+		t.Fatalf("empty file = %+v, want a zero-byte file", *found)
+	}
+	if got := time.Unix(found.MTimeUnix, 0).UTC(); !got.Equal(mtime) {
+		t.Errorf("mtime = %s, want %s: the requested mtime survived initiation before, "+
+			"so losing it here is a change in reva worth noticing", got, mtime)
+	}
+}
+
+// writableFixtureSpace picks a Space the service account may write to,
+// preferring the seeded project Space.
+func writableFixtureSpace(ctx context.Context, t *testing.T, client *cs3.Client) cs3.Space {
+	t.Helper()
+
+	spaces, err := client.ListSpaces(ctx)
+	if err != nil {
+		t.Fatalf("ListSpaces: %v", err)
+	}
+	if len(spaces) == 0 {
+		testutil.FixtureGap(t, "no space visible to the service account")
+	}
+	if shared := strings.TrimSpace(os.Getenv("OC_SHARED_SPACE_ID")); shared != "" {
+		for _, s := range spaces {
+			if strings.HasPrefix(s.ID, shared) {
+				return s
+			}
+		}
+	}
+	return spaces[0]
 }

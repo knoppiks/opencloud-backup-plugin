@@ -125,28 +125,6 @@ func (f *fakeReader) ListDir(_ context.Context, _ cs3.Space, dir string) ([]cs3.
 	return entries, nil
 }
 
-func (f *fakeReader) Walk(ctx context.Context, space cs3.Space, fn func(cs3.Entry) error) error {
-	var walk func(string) error
-	walk = func(dir string) error {
-		entries, err := f.ListDir(ctx, space, dir)
-		if err != nil {
-			return err
-		}
-		for _, e := range entries {
-			if err := fn(e); err != nil {
-				return err
-			}
-			if e.IsDir {
-				if err := walk(e.Path); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	return walk("")
-}
-
 func (f *fakeReader) OpenFile(_ context.Context, _ cs3.Space, p string, offset int64) (io.ReadCloser, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -20,11 +20,10 @@ var apiTestArgon = keys.MinArgonParams
 
 // keyTestEnv bundles a server wired with a key store and a fake space reader.
 type keyTestEnv struct {
-	srv      *Server
-	store    *keys.MemoryStore
-	srwKey   []byte
-	wrapper  *keys.SRWWrapper
-	spaceIDs []string
+	srv     *Server
+	store   *keys.MemoryStore
+	srwKey  []byte
+	wrapper *keys.SRWWrapper
 }
 
 func newKeyTestEnv(t *testing.T) *keyTestEnv {

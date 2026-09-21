@@ -4,6 +4,12 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  # Nightly, because the things this repository pins move underneath it: the
+  # OpenCloud image the integration tests run against, the Garage image, the
+  # base images in the Dockerfile. A scheduled run is how that is noticed here
+  # rather than by a deployer.
+  schedule:
+  - cron: "17 3 * * *"
 
 permissions:
   contents: read
@@ -116,6 +122,78 @@ jobs:
         name: decrypt-cli
         path: dist/decrypt-*
         if-no-files-found: error
+
+  integration-opencloud:
+    name: integration (OpenCloud fixture)
+    runs-on: ubuntu-latest
+    # Image pull, one-time init, boot, seed, then the tests themselves — plus
+    # Garage containers for the ones that need a target as well.
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    # The pinned OpenCloud (test/fixtures/opencloud/docker-compose.yml). up.sh
+    # generates the instance's secrets, starts it, waits for readiness and
+    # writes fixture.env; seed.sh adds the users, files, Space and grants the
+    # tests assert against.
+    - name: start the OpenCloud fixture
+      run: |
+        cd test/fixtures/opencloud
+        ./up.sh
+        ./seed.sh
+
+    # OPENCLOUD_FIXTURE_REQUIRED turns "no fixture, skip" into "no fixture,
+    # fail". Without it this job could pass having run nothing at all, which is
+    # precisely what used to happen (review-2026-09.md F7).
+    - name: state store, CS3 read path, admin role
+      env:
+        OPENCLOUD_FIXTURE_REQUIRED: "1"
+      run: |
+        set -a; . test/fixtures/opencloud/fixture.env; set +a
+        go test -tags integration -count=1 ./pkg/cs3/... ./pkg/cs3state/... ./pkg/api/...
+
+    - name: restore Path B against real reva
+      env:
+        OPENCLOUD_FIXTURE_REQUIRED: "1"
+      run: |
+        set -a; . test/fixtures/opencloud/fixture.env; set +a
+        go test -tags integration -count=1 -run OpenCloud ./pkg/restore/...
+
+    # The Phase-6 exit criteria, over both durable stores (each is a subtest:
+    # memory, opencloud). Named explicitly rather than by package: the rest of
+    # pkg/backup's integration tests are Garage-only and already run in the
+    # `integration` job.
+    - name: phase-6 criteria over the real state store
+      env:
+        OPENCLOUD_FIXTURE_REQUIRED: "1"
+      run: |
+        set -a; . test/fixtures/opencloud/fixture.env; set +a
+        go test -tags integration -count=1 \
+          -run 'TestIntegration_Scheduled|TestIntegration_Crashed|TestIntegration_Stale' \
+          ./pkg/backup/...
+
+    # Last, deliberately: OC_FIXTURE_DOWN_CMD makes the Path A acceptance test
+    # stop OpenCloud for real, which is the criterion ("with OpenCloud down") and
+    # also the end of the fixture's usefulness in this job. Within pkg/backup the
+    # end-to-end test is defined above it in the same file, so it runs first.
+    - name: backup and Path A, with OpenCloud stopped
+      env:
+        OPENCLOUD_FIXTURE_REQUIRED: "1"
+        # Absolute: the test shells out from its own package directory, not from
+        # the repository root.
+        OC_FIXTURE_DOWN_CMD: ${{ github.workspace }}/test/fixtures/opencloud/down.sh
+      run: |
+        set -a; . test/fixtures/opencloud/fixture.env; set +a
+        go test -tags integration -count=1 -run TestIntegration_OpenCloud ./pkg/backup/...
+
+    - name: fixture logs on failure
+      if: failure()
+      run: docker logs opencloud-fixture --tail 200 || true
 
   image:
     name: container image (build only)

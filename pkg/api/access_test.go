@@ -36,9 +36,6 @@ func (c *countingSpaceReader) ListSpaces(context.Context) ([]cs3.Space, error) {
 func (c *countingSpaceReader) ListDir(context.Context, cs3.Space, string) ([]cs3.Entry, error) {
 	return nil, nil
 }
-func (c *countingSpaceReader) Walk(context.Context, cs3.Space, func(cs3.Entry) error) error {
-	return nil
-}
 func (c *countingSpaceReader) OpenFile(context.Context, cs3.Space, string, int64) (io.ReadCloser, error) {
 	return nil, errors.New("not used")
 }

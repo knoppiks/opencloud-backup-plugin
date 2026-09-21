@@ -215,34 +215,6 @@ func (c *Client) listDir(ctx context.Context, space Space, relDir string) ([]Ent
 	return entries, nil
 }
 
-// Walk visits every entry under the space root depth-first, calling fn for each.
-// A directory is reported before its children.
-func (c *Client) Walk(ctx context.Context, space Space, fn func(Entry) error) error {
-	authCtx, _, err := c.authContext(ctx)
-	if err != nil {
-		return err
-	}
-	return c.walk(authCtx, space, "", fn)
-}
-
-func (c *Client) walk(ctx context.Context, space Space, relDir string, fn func(Entry) error) error {
-	entries, err := c.listDir(ctx, space, relDir)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if err := fn(e); err != nil {
-			return err
-		}
-		if e.IsDir {
-			if err := c.walk(ctx, space, e.Path, fn); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 // OpenFile streams one space-relative file starting at offset. The CS3 reference
 // is built from the space root plus relative path — a bare file id fails
 // (phase-0-findings.md Spike 3, "Critical gotcha").

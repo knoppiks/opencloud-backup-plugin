@@ -235,6 +235,30 @@ reference** — `{ResourceId: space.Root, Path: "./name"}` — *not* a bare
 storage-users data server and fails with `invalid reference path:"/". resource_id
 must be set` (HTTP 500). Build references from the space root + relative path.
 
+### The write path: a zero-length upload is finished before it starts
+
+Found in R9, when Path B was first run against real reva rather than an
+in-memory Space. On OpenCloud 7.3.0:
+
+- `InitiateFileUpload` with `Upload-Length: 0` **creates the file there and
+  then**, with the `X-OC-Mtime` that was asked for. It still returns a `simple`
+  upload endpoint and a transfer token.
+- PUTting an empty body to that endpoint then fails with **HTTP 500**, logged by
+  storage-users as `Decomposedfs: error retrieving upload: ERR_UPLOAD_NOT_FOUND`
+  — decomposedfs completed and dropped the upload session during initiation, so
+  there is nothing left to write to.
+
+So an empty file is created by *not* uploading it. `cs3.Client.Upload` therefore
+stops after initiation when the size is zero, and confirms with a `Stat` rather
+than assuming — a server that does nothing at initiation must produce an error,
+not a success that left no file. Pinned by
+`TestIntegration_ZeroByteUpload` (pkg/cs3) and exercised end to end by
+`TestIntegration_PathB_OpenCloudRoundTrip` (pkg/restore).
+
+**`X-OC-Mtime` is honoured** on both paths — the seeded mtime survives upload,
+snapshot and restore, to the second. mtime is the only file metadata in backup
+scope (decisions.md #4), so this is asserted rather than hoped for.
+
 ### Shared-space membership (decisions.md #7 — RESOLVED)
 
 Membership/roles are exposed on the **space's `Opaque` map** returned by

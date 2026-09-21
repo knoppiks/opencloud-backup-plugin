@@ -283,248 +283,252 @@ func newScheduledSpace() *fakeReader {
 
 // The headline exit criterion: a backup happens with nobody logged in.
 func TestIntegration_ScheduledRunNeedsNoUserSession(t *testing.T) {
-	ctx := context.Background()
-	garage := testutil.StartGarage(ctx, t)
-	clock := testutil.NewFakeClock(scheduleEpoch)
-	backing := state.NewMemoryStore()
+	forEachStateBackend(t, func(t *testing.T, backing state.Store) {
+		ctx := context.Background()
+		garage := testutil.StartGarage(ctx, t)
+		clock := testutil.NewFakeClock(scheduleEpoch)
 
-	f := startProcess(ctx, t, backing, clock, garage, newScheduledSpace(), newClusterSecrets(t), true, 10*time.Minute)
+		f := startProcess(ctx, t, backing, clock, garage, newScheduledSpace(), newClusterSecrets(t), true, 10*time.Minute)
 
-	// Before the scheduled time nothing happens...
-	f.tick(ctx)
-	history, err := f.jobs.List(ctx, testSpaceID)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(history) != 0 {
-		t.Fatalf("a run happened before its time: %+v", history)
-	}
+		// Before the scheduled time nothing happens...
+		f.tick(ctx)
+		history, err := f.jobs.List(ctx, testSpaceID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(history) != 0 {
+			t.Fatalf("a run happened before its time: %+v", history)
+		}
 
-	// ...and after it, a full snapshot lands on the target.
-	clock.Set(scheduleEpoch.Add(2*time.Hour + 31*time.Minute))
-	f.tick(ctx)
+		// ...and after it, a full snapshot lands on the target.
+		clock.Set(scheduleEpoch.Add(2*time.Hour + 31*time.Minute))
+		f.tick(ctx)
 
-	history, err = f.jobs.List(ctx, testSpaceID)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(history) != 1 {
-		t.Fatalf("runs = %d, want exactly one scheduled run", len(history))
-	}
-	run := history[0]
-	if run.State != jobs.StateSucceeded {
-		t.Fatalf("run = %+v", run)
-	}
-	if run.Trigger != jobs.TriggerSchedule {
-		t.Fatalf("trigger = %q, want the run to be recorded as scheduled", run.Trigger)
-	}
-	if run.SnapshotID == "" || run.FileCount == 0 || run.TotalBytes == 0 {
-		t.Fatalf("run did not record its outcome: %+v", run)
-	}
+		history, err = f.jobs.List(ctx, testSpaceID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(history) != 1 {
+			t.Fatalf("runs = %d, want exactly one scheduled run", len(history))
+		}
+		run := history[0]
+		if run.State != jobs.StateSucceeded {
+			t.Fatalf("run = %+v", run)
+		}
+		if run.Trigger != jobs.TriggerSchedule {
+			t.Fatalf("trigger = %q, want the run to be recorded as scheduled", run.Trigger)
+		}
+		if run.SnapshotID == "" || run.FileCount == 0 || run.TotalBytes == 0 {
+			t.Fatalf("run did not record its outcome: %+v", run)
+		}
 
-	snapshots, err := f.engine.List(ctx, f.repo)
-	if err != nil {
-		t.Fatalf("List snapshots: %v", err)
-	}
-	if len(snapshots) != 1 || string(snapshots[0].ID) != run.SnapshotID {
-		t.Fatalf("snapshots = %+v, want the one the scheduled run produced", snapshots)
-	}
+		snapshots, err := f.engine.List(ctx, f.repo)
+		if err != nil {
+			t.Fatalf("List snapshots: %v", err)
+		}
+		if len(snapshots) != 1 || string(snapshots[0].ID) != run.SnapshotID {
+			t.Fatalf("snapshots = %+v, want the one the scheduled run produced", snapshots)
+		}
 
-	// The run lock is released, so the Space is usable again.
-	release, err := f.locker.Acquire(ctx, testSpaceID)
-	if err != nil {
-		t.Fatalf("Acquire after the run: %v", err)
-	}
-	release()
+		// The run lock is released, so the Space is usable again.
+		release, err := f.locker.Acquire(ctx, testSpaceID)
+		if err != nil {
+			t.Fatalf("Acquire after the run: %v", err)
+		}
+		release()
+	})
 }
 
 // Restart safety: state outlives the process, and a restart neither loses a run
 // nor repeats one.
 func TestIntegration_ScheduledRunSurvivesARestart(t *testing.T) {
-	ctx := context.Background()
-	garage := testutil.StartGarage(ctx, t)
-	clock := testutil.NewFakeClock(scheduleEpoch)
-	backing := state.NewMemoryStore()
-	reader := newScheduledSpace()
+	forEachStateBackend(t, func(t *testing.T, backing state.Store) {
+		ctx := context.Background()
+		garage := testutil.StartGarage(ctx, t)
+		clock := testutil.NewFakeClock(scheduleEpoch)
+		reader := newScheduledSpace()
 
-	secrets := newClusterSecrets(t)
-	first := startProcess(ctx, t, backing, clock, garage, reader, secrets, true, 10*time.Minute)
-	clock.Set(scheduleEpoch.Add(2*time.Hour + 31*time.Minute))
-	first.tick(ctx)
+		secrets := newClusterSecrets(t)
+		first := startProcess(ctx, t, backing, clock, garage, reader, secrets, true, 10*time.Minute)
+		clock.Set(scheduleEpoch.Add(2*time.Hour + 31*time.Minute))
+		first.tick(ctx)
 
-	before, err := first.jobs.List(ctx, testSpaceID)
-	if err != nil || len(before) != 1 {
-		t.Fatalf("history = %+v (%v)", before, err)
-	}
+		before, err := first.jobs.List(ctx, testSpaceID)
+		if err != nil || len(before) != 1 {
+			t.Fatalf("history = %+v (%v)", before, err)
+		}
 
-	// A new process over the same durable state.
-	second := startProcess(ctx, t, backing, clock, garage, reader, secrets, false, 10*time.Minute)
+		// A new process over the same durable state.
+		second := startProcess(ctx, t, backing, clock, garage, reader, secrets, false, 10*time.Minute)
 
-	after, err := second.jobs.List(ctx, testSpaceID)
-	if err != nil {
-		t.Fatalf("List after restart: %v", err)
-	}
-	if len(after) != 1 || after[0].ID != before[0].ID || after[0].SnapshotID != before[0].SnapshotID {
-		t.Fatalf("history after restart = %+v, want the first process's run", after)
-	}
+		after, err := second.jobs.List(ctx, testSpaceID)
+		if err != nil {
+			t.Fatalf("List after restart: %v", err)
+		}
+		if len(after) != 1 || after[0].ID != before[0].ID || after[0].SnapshotID != before[0].SnapshotID {
+			t.Fatalf("history after restart = %+v, want the first process's run", after)
+		}
 
-	// The schedule survived too, and the restart does not re-run what already
-	// ran in this window.
-	cfg, err := second.configs.Get(ctx, testSpaceID)
-	if err != nil {
-		t.Fatalf("Get config after restart: %v", err)
-	}
-	if cfg.Schedule != nightly || !cfg.Enabled {
-		t.Fatalf("configuration after restart = %+v", cfg)
-	}
+		// The schedule survived too, and the restart does not re-run what already
+		// ran in this window.
+		cfg, err := second.configs.Get(ctx, testSpaceID)
+		if err != nil {
+			t.Fatalf("Get config after restart: %v", err)
+		}
+		if cfg.Schedule != nightly || !cfg.Enabled {
+			t.Fatalf("configuration after restart = %+v", cfg)
+		}
 
-	clock.Advance(time.Minute)
-	second.tick(ctx)
-	final, err := second.jobs.List(ctx, testSpaceID)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(final) != 1 {
-		t.Fatalf("runs after restart = %d, want no duplicate", len(final))
-	}
+		clock.Advance(time.Minute)
+		second.tick(ctx)
+		final, err := second.jobs.List(ctx, testSpaceID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(final) != 1 {
+			t.Fatalf("runs after restart = %d, want no duplicate", len(final))
+		}
+	})
 }
 
 // A process that dies mid-run leaves a job "running" and a lease held. The next
 // process must close the job out and take the Space back — once the lease has
 // expired, and not before.
 func TestIntegration_CrashedRunIsRecovered(t *testing.T) {
-	ctx := context.Background()
-	garage := testutil.StartGarage(ctx, t)
-	clock := testutil.NewFakeClock(scheduleEpoch)
-	backing := state.NewMemoryStore()
-	reader := newScheduledSpace()
+	forEachStateBackend(t, func(t *testing.T, backing state.Store) {
+		ctx := context.Background()
+		garage := testutil.StartGarage(ctx, t)
+		clock := testutil.NewFakeClock(scheduleEpoch)
+		reader := newScheduledSpace()
 
-	secrets := newClusterSecrets(t)
-	crashed := startProcess(ctx, t, backing, clock, garage, reader, secrets, true, 10*time.Minute)
+		secrets := newClusterSecrets(t)
+		crashed := startProcess(ctx, t, backing, clock, garage, reader, secrets, true, 10*time.Minute)
 
-	// Simulate a run that started and whose process then disappeared.
-	if _, err := crashed.locker.Acquire(ctx, testSpaceID); err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-	abandoned, err := crashed.jobs.Create(ctx, jobs.Job{
-		SpaceID: testSpaceID,
-		Kind:    jobs.KindBackup,
-		State:   jobs.StateRunning,
-		Trigger: jobs.TriggerSchedule,
+		// Simulate a run that started and whose process then disappeared.
+		if _, err := crashed.locker.Acquire(ctx, testSpaceID); err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		abandoned, err := crashed.jobs.Create(ctx, jobs.Job{
+			SpaceID: testSpaceID,
+			Kind:    jobs.KindBackup,
+			State:   jobs.StateRunning,
+			Trigger: jobs.TriggerSchedule,
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		restarted := startProcess(ctx, t, backing, clock, garage, reader, secrets, false, 10*time.Minute)
+
+		// While the lease is live, the abandoned run is left alone and the Space is
+		// not started again: a slow run must not be killed by a restart.
+		clock.Advance(5 * time.Minute)
+		restarted.tick(ctx)
+		still, err := restarted.jobs.Get(ctx, abandoned.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if still.State != jobs.StateRunning {
+			t.Fatalf("a live lease was reaped: %+v", still)
+		}
+		history, err := restarted.jobs.List(ctx, testSpaceID)
+		if err != nil || len(history) != 1 {
+			t.Fatalf("history = %+v (%v), want no second run while one is in flight", history, err)
+		}
+
+		// Once the lease has expired and the schedule comes due, the abandoned run
+		// is closed out and the Space runs again.
+		clock.Set(scheduleEpoch.Add(2*time.Hour + 31*time.Minute))
+		restarted.tick(ctx)
+
+		recovered, err := restarted.jobs.Get(ctx, abandoned.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if recovered.State != jobs.StateFailed || recovered.Error != jobs.MessageInterrupted {
+			t.Fatalf("abandoned run = %+v, want it closed out as interrupted", recovered)
+		}
+
+		history, err = restarted.jobs.List(ctx, testSpaceID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(history) != 2 {
+			t.Fatalf("history = %+v, want the recovered run plus a fresh one", history)
+		}
+		if newest := history[0]; newest.State != jobs.StateSucceeded {
+			t.Fatalf("the run after recovery = %+v", newest)
+		}
 	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	restarted := startProcess(ctx, t, backing, clock, garage, reader, secrets, false, 10*time.Minute)
-
-	// While the lease is live, the abandoned run is left alone and the Space is
-	// not started again: a slow run must not be killed by a restart.
-	clock.Advance(5 * time.Minute)
-	restarted.tick(ctx)
-	still, err := restarted.jobs.Get(ctx, abandoned.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if still.State != jobs.StateRunning {
-		t.Fatalf("a live lease was reaped: %+v", still)
-	}
-	history, err := restarted.jobs.List(ctx, testSpaceID)
-	if err != nil || len(history) != 1 {
-		t.Fatalf("history = %+v (%v), want no second run while one is in flight", history, err)
-	}
-
-	// Once the lease has expired and the schedule comes due, the abandoned run
-	// is closed out and the Space runs again.
-	clock.Set(scheduleEpoch.Add(2*time.Hour + 31*time.Minute))
-	restarted.tick(ctx)
-
-	recovered, err := restarted.jobs.Get(ctx, abandoned.ID)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if recovered.State != jobs.StateFailed || recovered.Error != jobs.MessageInterrupted {
-		t.Fatalf("abandoned run = %+v, want it closed out as interrupted", recovered)
-	}
-
-	history, err = restarted.jobs.List(ctx, testSpaceID)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(history) != 2 {
-		t.Fatalf("history = %+v, want the recovered run plus a fresh one", history)
-	}
-	if newest := history[0]; newest.State != jobs.StateSucceeded {
-		t.Fatalf("the run after recovery = %+v", newest)
-	}
 }
 
 // Backups that quietly stop must be reported. This is the silent-failure case
 // the whole notification layer exists for: runs keep being attempted, they keep
 // failing, and without a notification nobody would ever look.
 func TestIntegration_StaleBackupIsReported(t *testing.T) {
-	ctx := context.Background()
-	garage := testutil.StartGarage(ctx, t)
-	clock := testutil.NewFakeClock(scheduleEpoch)
-	backing := state.NewMemoryStore()
+	forEachStateBackend(t, func(t *testing.T, backing state.Store) {
+		ctx := context.Background()
+		garage := testutil.StartGarage(ctx, t)
+		clock := testutil.NewFakeClock(scheduleEpoch)
 
-	f := startProcess(ctx, t, backing, clock, garage, newScheduledSpace(), newClusterSecrets(t), true, 10*time.Minute)
+		f := startProcess(ctx, t, backing, clock, garage, newScheduledSpace(), newClusterSecrets(t), true, 10*time.Minute)
 
-	clock.Set(scheduleEpoch.Add(2*time.Hour + 31*time.Minute))
-	f.tick(ctx)
-
-	// The target disappears — an admin deleted it, or its credentials were
-	// revoked. Runs keep being attempted and keep failing.
-	if err := f.targets.DeleteTarget(ctx, testTargetID); err != nil {
-		t.Fatalf("DeleteTarget: %v", err)
-	}
-	for day := 1; day <= 3; day++ {
-		clock.Set(scheduleEpoch.Add(time.Duration(day)*24*time.Hour + 2*time.Hour + 31*time.Minute))
+		clock.Set(scheduleEpoch.Add(2*time.Hour + 31*time.Minute))
 		f.tick(ctx)
-	}
 
-	history, err := f.jobs.List(ctx, testSpaceID)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(history) != 4 {
-		t.Fatalf("runs = %d, want the successful one plus three failures", len(history))
-	}
-	if history[0].State != jobs.StateFailed {
-		t.Fatalf("latest run = %+v, want a failure", history[0])
-	}
-
-	events, err := f.events.List(ctx, testSpaceID, 0)
-	if err != nil {
-		t.Fatalf("List events: %v", err)
-	}
-	var stale, failed []notify.Event
-	for _, e := range events {
-		switch e.Kind {
-		case notify.KindBackupStale:
-			stale = append(stale, e)
-		case notify.KindRunFailed:
-			failed = append(failed, e)
+		// The target disappears — an admin deleted it, or its credentials were
+		// revoked. Runs keep being attempted and keep failing.
+		if err := f.targets.DeleteTarget(ctx, testTargetID); err != nil {
+			t.Fatalf("DeleteTarget: %v", err)
 		}
-	}
-	if len(failed) != 3 {
-		t.Fatalf("run-failure notifications = %d, want one per failed run", len(failed))
-	}
-	if len(stale) != 1 {
-		t.Fatalf("stale notifications = %+v, want exactly one", stale)
-	}
-	if stale[0].Audience != notify.AudienceSpaceMembers || stale[0].SpaceID != testSpaceID {
-		t.Fatalf("stale notification = %+v", stale[0])
-	}
-
-	// Nothing about this Space may reach the operator's feed (decisions.md #15).
-	operator, err := f.events.ListOperator(ctx, 0)
-	if err != nil {
-		t.Fatalf("ListOperator: %v", err)
-	}
-	for _, e := range operator {
-		if e.SpaceID != "" {
-			t.Fatalf("operator event names a space: %+v", e)
+		for day := 1; day <= 3; day++ {
+			clock.Set(scheduleEpoch.Add(time.Duration(day)*24*time.Hour + 2*time.Hour + 31*time.Minute))
+			f.tick(ctx)
 		}
-	}
+
+		history, err := f.jobs.List(ctx, testSpaceID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(history) != 4 {
+			t.Fatalf("runs = %d, want the successful one plus three failures", len(history))
+		}
+		if history[0].State != jobs.StateFailed {
+			t.Fatalf("latest run = %+v, want a failure", history[0])
+		}
+
+		events, err := f.events.List(ctx, testSpaceID, 0)
+		if err != nil {
+			t.Fatalf("List events: %v", err)
+		}
+		var stale, failed []notify.Event
+		for _, e := range events {
+			switch e.Kind {
+			case notify.KindBackupStale:
+				stale = append(stale, e)
+			case notify.KindRunFailed:
+				failed = append(failed, e)
+			}
+		}
+		if len(failed) != 3 {
+			t.Fatalf("run-failure notifications = %d, want one per failed run", len(failed))
+		}
+		if len(stale) != 1 {
+			t.Fatalf("stale notifications = %+v, want exactly one", stale)
+		}
+		if stale[0].Audience != notify.AudienceSpaceMembers || stale[0].SpaceID != testSpaceID {
+			t.Fatalf("stale notification = %+v", stale[0])
+		}
+
+		// Nothing about this Space may reach the operator's feed (decisions.md #15).
+		operator, err := f.events.ListOperator(ctx, 0)
+		if err != nil {
+			t.Fatalf("ListOperator: %v", err)
+		}
+		for _, e := range operator {
+			if e.SpaceID != "" {
+				t.Fatalf("operator event names a space: %+v", e)
+			}
+		}
+	})
 }

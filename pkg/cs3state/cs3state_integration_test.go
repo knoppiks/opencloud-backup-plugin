@@ -41,12 +41,9 @@ import (
 )
 
 func TestIntegration_CS3State(t *testing.T) {
-	addr := os.Getenv("CS3_GATEWAY_ADDR")
-	saID := os.Getenv("CS3_SERVICE_ACCOUNT_ID")
-	saSecret := os.Getenv("CS3_SERVICE_ACCOUNT_SECRET")
-	if addr == "" || saID == "" || saSecret == "" {
-		t.Skip("OpenCloud fixture env not set; source test/fixtures/opencloud/fixture.env")
-	}
+	env := testutil.OpenCloudEnv(t,
+		"CS3_GATEWAY_ADDR", "CS3_SERVICE_ACCOUNT_ID", "CS3_SERVICE_ACCOUNT_SECRET")
+	addr, saID, saSecret := env[0], env[1], env[2]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -74,7 +71,7 @@ func TestIntegration_CS3State(t *testing.T) {
 			t.Fatalf("ListSpaces: %v", err)
 		}
 		if len(spaces) == 0 {
-			t.Skip("no space visible to the service account")
+			testutil.FixtureGap(t, "no space visible to the service account")
 		}
 		spaceID = spaces[0].ID
 	}
@@ -241,12 +238,9 @@ func TestIntegration_CS3State(t *testing.T) {
 // fires on this version. It is kept for servers that do refuse, at the cost of
 // nothing on those that do not.
 func TestIntegration_CS3StateOverwriteSemantics(t *testing.T) {
-	addr := os.Getenv("CS3_GATEWAY_ADDR")
-	saID := os.Getenv("CS3_SERVICE_ACCOUNT_ID")
-	saSecret := os.Getenv("CS3_SERVICE_ACCOUNT_SECRET")
-	if addr == "" || saID == "" || saSecret == "" {
-		t.Skip("OpenCloud fixture env not set; source test/fixtures/opencloud/fixture.env")
-	}
+	env := testutil.OpenCloudEnv(t,
+		"CS3_GATEWAY_ADDR", "CS3_SERVICE_ACCOUNT_ID", "CS3_SERVICE_ACCOUNT_SECRET")
+	addr, saID, saSecret := env[0], env[1], env[2]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -270,7 +264,7 @@ func TestIntegration_CS3StateOverwriteSemantics(t *testing.T) {
 		t.Fatalf("ListSpaces: %v", err)
 	}
 	if len(spaces) == 0 {
-		t.Skip("no space visible to the service account")
+		testutil.FixtureGap(t, "no space visible to the service account")
 	}
 	space := spaces[0]
 

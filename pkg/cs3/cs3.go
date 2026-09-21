@@ -74,8 +74,6 @@ type SpaceReader interface {
 	// The empty path denotes the space root. Returned entries carry paths
 	// relative to the space root.
 	ListDir(ctx context.Context, space Space, relDir string) ([]Entry, error)
-	// Walk visits every entry under the space root, calling fn for each.
-	Walk(ctx context.Context, space Space, fn func(Entry) error) error
 	// OpenFile streams the bytes of one space-relative file starting at offset.
 	// The caller closes the returned reader.
 	OpenFile(ctx context.Context, space Space, relPath string, offset int64) (io.ReadCloser, error)

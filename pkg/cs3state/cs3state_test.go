@@ -85,8 +85,6 @@ func dirKey(relDir string) string {
 	return relDir
 }
 
-func (f *fakeSpace) Walk(context.Context, cs3.Space, func(cs3.Entry) error) error { return nil }
-
 func (f *fakeSpace) OpenFile(_ context.Context, _ cs3.Space, relPath string, _ int64) (io.ReadCloser, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

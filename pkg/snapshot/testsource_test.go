@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -48,12 +47,6 @@ func (m *memSource) put(p string, data []byte, modTime time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.files[p] = memFile{data: data, modTime: modTime}
-}
-
-func (m *memSource) remove(p string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.files, p)
 }
 
 func (m *memSource) openCount(p string) int {
@@ -159,6 +152,3 @@ func (s slowSource) Open(ctx context.Context, p string, offset int64) (io.ReadCl
 
 // fixedDirTime keeps synthesised directory mtimes stable across runs.
 var fixedDirTime = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-
-// join is a small helper mirroring the Source path convention.
-func join(parts ...string) string { return path.Join(parts...) }

@@ -37,6 +37,11 @@ type fakeGateway struct {
 	// listStatus overrides the ListContainer status code.
 	listStatus rpc.Code
 
+	// statedPaths records every reference path passed to Stat; statStatus
+	// overrides its status code (zero value is CODE_OK).
+	statedPaths []string
+	statStatus  rpc.Code
+
 	// downloadEndpoint/downloadToken drive InitiateFileDownload responses.
 	downloadEndpoint string
 	downloadToken    string
@@ -114,8 +119,9 @@ func (f *fakeGateway) ListContainer(_ context.Context, in *provider.ListContaine
 	}, nil
 }
 
-func (f *fakeGateway) Stat(context.Context, *provider.StatRequest, ...grpc.CallOption) (*provider.StatResponse, error) {
-	return &provider.StatResponse{Status: okStatus(rpc.Code_CODE_OK)}, nil
+func (f *fakeGateway) Stat(_ context.Context, in *provider.StatRequest, _ ...grpc.CallOption) (*provider.StatResponse, error) {
+	f.statedPaths = append(f.statedPaths, in.GetRef().GetPath())
+	return &provider.StatResponse{Status: okStatus(f.statStatus)}, nil
 }
 
 func (f *fakeGateway) InitiateFileDownload(_ context.Context, in *provider.InitiateFileDownloadRequest, _ ...grpc.CallOption) (*gateway.InitiateFileDownloadResponse, error) {
@@ -163,16 +169,6 @@ func (f *fakeGateway) InitiateFileUpload(_ context.Context, in *provider.Initiat
 			Token:          f.uploadToken,
 		}},
 	}, nil
-}
-
-// dirInfo builds a container ResourceInfo as ListContainer returns it (the CS3
-// Path is absolute; only its base name is meaningful to the walker).
-func dirInfo(name string) *provider.ResourceInfo {
-	return &provider.ResourceInfo{
-		Path:  "/" + name,
-		Type:  provider.ResourceType_RESOURCE_TYPE_CONTAINER,
-		Mtime: &types.Timestamp{Seconds: 100},
-	}
 }
 
 // fileInfo builds a file ResourceInfo with an explicit size and mtime.
