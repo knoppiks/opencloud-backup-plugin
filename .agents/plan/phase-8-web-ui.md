@@ -176,7 +176,135 @@ Recovery Key and finds it opens nothing. Everything else fails loudly.
    and a reader of the exit criteria below could reasonably assume the endpoints
    exist.
 
-### Sub-phase 8a outcome (implemented)
+Tracked as issue #35.
+
+### Sub-phase 8b plan — decisions taken before implementation
+
+The route table:
+
+```
+GET    /api/v1/admin/targets              list
+POST   /api/v1/admin/targets              create
+GET    /api/v1/admin/targets/{id}         read one
+PUT    /api/v1/admin/targets/{id}         update metadata; credentials optional
+DELETE /api/v1/admin/targets/{id}         delete target + its grants
+GET    /api/v1/admin/targets/{id}/grants  read the audience
+PUT    /api/v1/admin/targets/{id}/grants  replace the audience, whole list
+POST   /api/v1/admin/targets/check        stateless reachability check
+```
+
+All of it sits behind the existing `Authenticate -> ResolveAdmin -> RequireAdmin`
+chain; the `/api/v1/admin/` prefix route stays as the 404 for anything
+unmatched, so a path nobody implemented is still not a way past the gate.
+
+1. **Grants are replaced as a whole list, not one at a time.** The store already
+   writes a target's entire grant list as one document per version (`state.go`),
+   so a full-list `PUT` is one request and one write. `Store` gains
+   `ReplaceGrants`; `PutGrant`/`DeleteGrant` stay for the seeder and for callers
+   that genuinely mean "one grant". The rejected alternative — `POST`/`DELETE`
+   per grant — needed a body on a `DELETE` (a grant's identity is
+   scope+user/space, not an id) and turned a multi-grant edit into N
+   non-atomic requests, which is an authorization bug waiting for a crash.
+
+2. **Credentials are all-or-nothing on write, and this is a consequence, not a
+   preference.** A target's whole `CredentialSet` is one sealed blob and the
+   admin path may not open it (#14). So: credentials absent from an update ->
+   the stored blob is untouched (`UpdateTarget` already does this); credentials
+   present -> the submitted set *replaces* the stored set entirely. Re-entering
+   only the backup pair therefore drops a configured maintenance pair. Merging
+   would require decrypting in the admin process, which is precisely the
+   capability #14 withholds. The UI must say so; the API cannot hide it.
+
+3. **`Target` gains a non-secret `maintenance_configured` flag.** The admin UI
+   has to be able to show whether a target is credential-separated, and the only
+   other way to answer it is to open the blob. The flag is a yes/no written at
+   seal time from what the admin submitted — it is not key material. Records
+   written before it read as `false`, which is the correct answer for a
+   single-credential target.
+
+4. **Deleting a target that Spaces are bound to is refused with a count.** 409
+   plus "N spaces still use this target", never their ids — a count discloses no
+   Space and no user, so #15 holds. There is no `force`: the alternative is an
+   admin action that silently stops other people's backups. The admin rebinds or
+   the members do, then the delete succeeds.
+
+5. **Target ids are server-generated random hex**, as job ids are. An
+   admin-chosen id is a namespace the admin types, which needs charset
+   validation and a collision path, and makes "create" able to overwrite.
+
+6. **The connection check is stateless and coarse.**
+   `POST /api/v1/admin/targets/check` takes a full target spec *including*
+   credentials and stores nothing; it never opens a stored blob. Testing a
+   *stored* credential against an admin-supplied endpoint would be a credential
+   oracle — edit the endpoint to a host you control, press "test", and the
+   stored access key id leaves in the SigV4 `Authorization` header — so the
+   check only ever uses what the caller already holds. The cost is that an
+   existing target cannot be tested without re-entering its secret, which is
+   what write-only credentials mean.
+   It answers a classification per credential role (`ok`, `unreachable`,
+   `auth_failed`, `bucket_missing`, `denied`, `timeout`) and nothing else: no
+   upstream status code, no response body, no error text, no redirects, bounded
+   timeout. The operation is a read-only list of the target prefix — what a run
+   does first anyway. The endpoint is still an outbound request to a host the
+   caller names, and the coarse answer is what keeps it from being a probe of
+   the household's internal network with the results echoed back.
+
+### Sub-phase 8b outcome (implemented, issue #35)
+
+The eight routes landed as planned, with the semantics above. What the plan did
+not say:
+
+- **Grant scopes travel as words, not as the stored integer.** `GrantScope` is
+  an `iota` on disk and stays that way — the records are append-only and
+  re-encoding them would mean rewriting history — but the API speaks
+  `all_users` / `user` / `space`. An authorization API whose meaning depends on
+  remembering that `2` means "user" is one typo away from granting the wrong
+  audience, and the zero value would be the typo that grants everybody.
+- **`Grant.Validate` was missing and is now enforced in the store, not only at
+  the boundary.** The model always said "exactly one of the scope-specific
+  fields is set, per Scope" and nothing checked it: `PutGrant` would happily
+  persist `{Scope: 0}`, which `grantsAllow` then matches against nothing — a
+  grant an admin wrote, that silently grants no one. Both stores now refuse it,
+  so the seeder and any future caller are held to the same rule as the API.
+- **A refused grant write changes nothing.** `ReplaceGrants` validates the whole
+  list before writing any of it; applying the valid prefix would leave an admin
+  with an audience they did not choose, which is worse than the error.
+- **The 404s are uniform.** A target that does not exist and an id that never
+  did produce the same body on every route, for the same reason denials are
+  uniform elsewhere: otherwise the admin surface enumerates.
+- **`TestAdminRouteTable` is the new `roleTable`.** The admin routes get the
+  table treatment the space-scoped ones already had — unauthenticated is 401,
+  non-admin is 403, admin gets through, once per route — and
+  `TestAdminRoutesReturnNoCredential` walks the same table instead of the single
+  hand-written row it replaced. It checks the plaintext markers, the encodings
+  of the seeded blob, *and* the encodings of every blob in the store after the
+  call, because `create` mints a fresh envelope that a test knowing only the old
+  one would miss. Verified by mutation: adding the sealed blob to the admin DTO
+  fails three rows.
+- **Validation errors are part of the credential promise.** A handler that
+  never returns a credential can still leak one by quoting the offending input
+  back; `TestAdminValidationErrorsDoNotEchoCredentials` submits real secrets in
+  a body that fails validation and checks the 400.
+- **Deviation — the check has a seventh outcome, `unknown`.** The six agreed
+  names cover what an admin can act on; an S3 error code nobody mapped is not
+  one of them, and forcing it into `denied` would send someone to fix a
+  permission that is fine. It follows the precedent already in the package: the
+  capability probe reports `unknown` rather than guessing.
+- **Deviation — `maintenance_credentials` alone is refused, on create *and* on
+  update.** The plan only said a half-filled pair is refused. Sending a
+  maintenance pair with no backup pair is the same mistake wearing a different
+  hat: it would require opening the stored blob to keep the half that was not
+  sent, which is the decrypt the admin path does not have.
+- **`DELETE` needs the space-config store, and says so when it does not have
+  it.** With no way to count bound Spaces the handler answers 503 rather than
+  deleting — the same shape as decisions.md #20: a consequence that cannot be
+  established is refused, not guessed.
+- **Without `TW_KEY` the admin surface still works, minus credentials.**
+  Create and credentialed updates answer 503 with a message naming the missing
+  key; listing, metadata edits and grants carry on. An operator whose TW key is
+  missing needs the admin UI to open in order to discover that.
+
+### Sub-phase 8a outcome (implemented, issue #35)
 
 The crypto foundation, in both directions, plus three things the plan did not
 anticipate.

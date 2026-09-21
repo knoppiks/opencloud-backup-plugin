@@ -12,6 +12,7 @@ package api
 // target record, or a widened DTO, fails this test rather than shipping.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
@@ -67,14 +68,7 @@ func credentialMarkers(sealed []byte) []string {
 		roleTargetMaintenanceID,
 		roleTargetMaintenanceKey,
 	}
-	if len(sealed) > 0 {
-		markers = append(markers,
-			base64.StdEncoding.EncodeToString(sealed),
-			base64.RawURLEncoding.EncodeToString(sealed),
-			hex.EncodeToString(sealed),
-		)
-	}
-	return markers
+	return append(markers, encodings(sealed)...)
 }
 
 // TestNoRouteEverReturnsATargetCredential calls every space-scoped route as the
@@ -111,12 +105,85 @@ func TestNoRouteEverReturnsATargetCredential(t *testing.T) {
 }
 
 // The admin surface is the one an operator reaches with the most authority, and
-// decision #15 makes it a configuration surface rather than a data one. It
-// answers 404 today; when it grows handlers, this row keeps its promise.
+// decision #15 makes it a configuration surface rather than a data one. Every
+// route on it is walked as an admin against a target holding real sealed
+// credentials — including the write routes, which are the ones that take a
+// credential in and could most plausibly echo it back.
+//
+// The markers here are the admin fixture's own, because these routes are called
+// against the admin fixture's target; the space-scoped table above uses the
+// role fixture's. Both sets are real credentials in a real sealed blob.
 func TestAdminRoutesReturnNoCredential(t *testing.T) {
-	env := newRoleTestEnv(t)
-	rec := doJSON(env.srv, http.MethodGet, "/api/v1/admin/targets", roleTestToken+"manager", nil)
-	assertNoCredential(t, "admin targets", rec.Body.String(), env.sealedCreds)
+	for _, r := range adminRouteTable("t1") {
+		t.Run(r.name, func(t *testing.T) {
+			env := newAdminTestEnv(t)
+			seeded := env.seedTarget(t, "t1")
+
+			rec := env.as(adminToken, r.method, r.path, r.body)
+			body := rec.Body.String()
+
+			markers := append(adminCredentialMarkers(), encodings(seeded.WrappedCreds)...)
+			// Every blob the store holds *after* the call, not just the seeded
+			// one: create mints a fresh envelope, and a handler echoing that
+			// one back would otherwise pass a test that only knows the old.
+			all, err := env.store.ListTargets(context.Background())
+			if err != nil {
+				t.Fatalf("ListTargets: %v", err)
+			}
+			for _, stored := range all {
+				markers = append(markers, encodings(stored.WrappedCreds)...)
+			}
+
+			for _, marker := range markers {
+				if strings.Contains(body, marker) {
+					t.Fatalf("%s returned a target credential (%q): %s", r.name, marker, body)
+				}
+			}
+		})
+	}
+}
+
+// The response to a *rejected* write is the other half of the same promise: an
+// error that quotes the offending input is how a credential escapes a handler
+// that otherwise never returns one.
+func TestAdminValidationErrorsDoNotEchoCredentials(t *testing.T) {
+	env := newAdminTestEnv(t)
+	// A body that fails validation (no bucket) while carrying real secrets.
+	rec := env.as(adminToken, http.MethodPost, "/api/v1/admin/targets", []byte(`{
+		"name":"Buddy","endpoint":"garage.internal:3900",
+		"credentials":{"access_key_id":"`+adminAccessKeyID+`","secret_access_key":"`+adminSecretAccessKey+`"},
+		"maintenance_credentials":{"access_key_id":"`+adminMaintenanceKeyID+`","secret_access_key":"`+adminMaintenanceSecret+`"}
+	}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	for _, marker := range adminCredentialMarkers() {
+		if strings.Contains(rec.Body.String(), marker) {
+			t.Fatalf("a validation error echoed a credential: %s", rec.Body.String())
+		}
+	}
+}
+
+// adminCredentialMarkers is what an admin typed in and must never get back.
+func adminCredentialMarkers() []string {
+	return []string{
+		adminAccessKeyID, adminSecretAccessKey,
+		adminMaintenanceKeyID, adminMaintenanceSecret,
+	}
+}
+
+// encodings covers the likelier leak by far: a DTO that carries the stored
+// Target straight through, which discloses only ciphertext but discloses it to
+// anyone with an admin session.
+func encodings(sealed []byte) []string {
+	if len(sealed) == 0 {
+		return nil
+	}
+	return []string{
+		base64.StdEncoding.EncodeToString(sealed),
+		base64.RawURLEncoding.EncodeToString(sealed),
+		hex.EncodeToString(sealed),
+	}
 }
 
 // The public projection of a target is what a UI is given. It carries an id and

@@ -116,10 +116,10 @@ than drifting.
     Rationale: a family admin wants to point different people at different buddy
     stores without redeploying the cluster. **Enforcement is server-side** (a
     user sees/uses only granted targets); client input is never trusted.
-    *Status:* the target store, the grant model and the server-side enforcement
-    exist. The **admin API and UI do not** — `/api/v1/admin/` is a placeholder
-    that answers 404, and the only writer today is the optional first-start
-    seeding below. Both land in Phase 8.
+    *Status:* the target store, the grant model, the server-side enforcement and
+    the **admin API** exist — `/api/v1/admin/targets` and `.../grants` are real
+    since sub-phase 8b, so the admin is no longer limited to the optional
+    first-start seeding below. The **admin UI** lands in sub-phase 8e.
 
 13. **The in-app admin identity is the OpenCloud admin role, reused — we do not
     build our own admin user store.** Admin status is derived from OpenCloud

@@ -298,8 +298,16 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	logger.Info("instance registered", "instance", guard.ID())
 
 	// --- target store / authorizer ---------------------------------------
+	// One value, two roles: the authorizer answers what a user may see, the
+	// store backs the admin API that decides it (decisions.md #12).
 	targetStore := targets.NewStateStore(backing)
-	opts = append(opts, api.WithAuthorizer(targetStore))
+	opts = append(opts,
+		api.WithAuthorizer(targetStore),
+		api.WithTargetStore(targetStore),
+		// The admin's connection check. Read-only and coarse by construction;
+		// see pkg/objstore/check.go.
+		api.WithTargetChecker(objstore.S3Checker{}),
+	)
 
 	// --- key service (Phase 3) -------------------------------------------
 	// The SRW key is cluster/KMS custody (decisions.md #1): it arrives via a
@@ -334,6 +342,9 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 		if err != nil {
 			return service{}, cleanup, err
 		}
+		// The API seals with it and never opens: a credential blob is opened
+		// in worker memory at run time and nowhere else (decisions.md #14).
+		opts = append(opts, api.WithCredSealer(credSealer))
 		logger.Info("target credential sealing enabled")
 	} else {
 		logger.Warn("TW_KEY unset; backup runs will be unavailable")

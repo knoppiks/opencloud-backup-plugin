@@ -148,7 +148,10 @@ func (s *StateStore) writeTarget(ctx context.Context, t Target) error {
 // PutGrant adds or replaces a grant.
 func (s *StateStore) PutGrant(ctx context.Context, g Grant) error {
 	if g.TargetID == "" {
-		return fmt.Errorf("targets: target id required")
+		return errTargetIDRequired
+	}
+	if err := g.Validate(); err != nil {
+		return err
 	}
 	list, err := s.ListGrants(ctx, g.TargetID)
 	if err != nil {
@@ -175,6 +178,18 @@ func (s *StateStore) DeleteGrant(ctx context.Context, g Grant) error {
 		}
 	}
 	return nil
+}
+
+// ReplaceGrants sets a target's whole audience in a single append.
+func (s *StateStore) ReplaceGrants(ctx context.Context, targetID string, grants []Grant) error {
+	if targetID == "" {
+		return errTargetIDRequired
+	}
+	list, err := normalizeGrants(targetID, grants)
+	if err != nil {
+		return err
+	}
+	return s.writeGrants(ctx, targetID, list)
 }
 
 // ListGrants returns the grants for a target.
