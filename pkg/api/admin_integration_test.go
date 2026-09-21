@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"opencloud-backup-plugin/internal/testutil"
 	"opencloud-backup-plugin/pkg/api"
 )
 
@@ -28,10 +29,7 @@ import (
 //	Run: source test/fixtures/opencloud/fixture.env && \
 //	     go test -tags integration ./pkg/api/...
 func TestAdminAppRoleIDPinnedIntegration(t *testing.T) {
-	base := os.Getenv("OC_URL")
-	if base == "" {
-		t.Skip("OC_URL not set; source test/fixtures/opencloud/fixture.env")
-	}
+	base := testutil.OpenCloudEnv(t, "OC_URL")[0]
 	adminRoleID := os.Getenv("OC_ADMIN_APP_ROLE_ID")
 	if adminRoleID == "" {
 		adminRoleID = api.DefaultAdminAppRoleID

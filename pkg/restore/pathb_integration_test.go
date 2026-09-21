@@ -157,28 +157,6 @@ func (m *memSpace) ListDir(_ context.Context, _ cs3.Space, dir string) ([]cs3.En
 	return entries, nil
 }
 
-func (m *memSpace) Walk(ctx context.Context, space cs3.Space, fn func(cs3.Entry) error) error {
-	var walk func(string) error
-	walk = func(dir string) error {
-		entries, err := m.ListDir(ctx, space, dir)
-		if err != nil {
-			return err
-		}
-		for _, e := range entries {
-			if err := fn(e); err != nil {
-				return err
-			}
-			if e.IsDir {
-				if err := walk(e.Path); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	return walk("")
-}
-
 func (m *memSpace) OpenFile(_ context.Context, _ cs3.Space, p string, offset int64) (io.ReadCloser, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -276,8 +254,8 @@ func newFixture(ctx context.Context, t *testing.T) *fixture {
 		DisableTLS:      true,
 	}
 	seedTarget(t, targetStore, sealer, location)
-	seedConfig(t, configs)
-	seedKeys(t, keyStore, wrapper)
+	seedConfig(t, configs, spaceID)
+	seedKeys(t, keyStore, wrapper, spaceID)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
@@ -324,16 +302,16 @@ func seedTarget(t *testing.T, store *targets.MemoryStore, sealer targets.CredSea
 	}
 }
 
-func seedConfig(t *testing.T, store *spacecfg.MemoryStore) {
+func seedConfig(t *testing.T, store *spacecfg.MemoryStore, space string) {
 	t.Helper()
 	if _, err := store.Put(context.Background(), spacecfg.Config{
-		SpaceID: spaceID, TargetID: targetID, Enabled: true,
+		SpaceID: space, TargetID: targetID, Enabled: true,
 	}); err != nil {
 		t.Fatalf("spacecfg.Put: %v", err)
 	}
 }
 
-func seedKeys(t *testing.T, store *keys.MemoryStore, wrapper *keys.SRWWrapper) {
+func seedKeys(t *testing.T, store *keys.MemoryStore, wrapper *keys.SRWWrapper, space string) {
 	t.Helper()
 	dk, err := keys.GenerateDK()
 	if err != nil {
@@ -345,7 +323,7 @@ func seedKeys(t *testing.T, store *keys.MemoryStore, wrapper *keys.SRWWrapper) {
 	if err != nil {
 		t.Fatalf("WrapSRW: %v", err)
 	}
-	if err := store.PutSRW(spaceID, wrapped); err != nil {
+	if err := store.PutSRW(space, wrapped); err != nil {
 		t.Fatalf("PutSRW: %v", err)
 	}
 }

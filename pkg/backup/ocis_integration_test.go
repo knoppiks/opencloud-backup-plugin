@@ -44,15 +44,12 @@ import (
 )
 
 func TestIntegration_OpenCloudEndToEnd(t *testing.T) {
-	addr := os.Getenv("CS3_GATEWAY_ADDR")
-	saID := os.Getenv("CS3_SERVICE_ACCOUNT_ID")
-	saSecret := os.Getenv("CS3_SERVICE_ACCOUNT_SECRET")
-	expectFile := strings.TrimPrefix(os.Getenv("CS3_EXPECT_FILE"), "/")
-	expectSHA := os.Getenv("CS3_EXPECT_SHA256")
+	env := testutil.OpenCloudEnv(t,
+		"CS3_GATEWAY_ADDR", "CS3_SERVICE_ACCOUNT_ID", "CS3_SERVICE_ACCOUNT_SECRET",
+		"CS3_EXPECT_FILE", "CS3_EXPECT_SHA256")
+	addr, saID, saSecret := env[0], env[1], env[2]
+	expectFile, expectSHA := strings.TrimPrefix(env[3], "/"), env[4]
 	ownerUID := os.Getenv("OC_ADMIN_USER_ID")
-	if addr == "" || saID == "" || saSecret == "" || expectFile == "" || expectSHA == "" {
-		t.Skip("OpenCloud fixture env not set; source test/fixtures/opencloud/fixture.env")
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -149,11 +146,8 @@ func TestIntegration_OpenCloudEndToEnd(t *testing.T) {
 
 	// The nested, non-ASCII path proves directory traversal and structure
 	// preservation against real reva references, not just a flat read.
-	nestedFile := strings.TrimPrefix(os.Getenv("CS3_EXPECT_NESTED_FILE"), "/")
-	nestedSHA := os.Getenv("CS3_EXPECT_NESTED_SHA256")
-	if nestedFile == "" || nestedSHA == "" {
-		t.Skip("nested fixture file not seeded; re-run test/fixtures/opencloud/seed.sh")
-	}
+	nested := testutil.OpenCloudEnv(t, "CS3_EXPECT_NESTED_FILE", "CS3_EXPECT_NESTED_SHA256")
+	nestedFile, nestedSHA := strings.TrimPrefix(nested[0], "/"), nested[1]
 	assertRestoredChecksum(t, out, nestedFile, nestedSHA)
 }
 
@@ -169,15 +163,12 @@ func TestIntegration_OpenCloudEndToEnd(t *testing.T) {
 //	export OC_FIXTURE_DOWN_CMD="$PWD/test/fixtures/opencloud/down.sh"
 //	go test -tags integration -run TestIntegration_OpenCloudPathA ./pkg/backup/...
 func TestIntegration_OpenCloudPathAWithDeploymentStopped(t *testing.T) {
-	addr := os.Getenv("CS3_GATEWAY_ADDR")
-	saID := os.Getenv("CS3_SERVICE_ACCOUNT_ID")
-	saSecret := os.Getenv("CS3_SERVICE_ACCOUNT_SECRET")
-	expectFile := strings.TrimPrefix(os.Getenv("CS3_EXPECT_FILE"), "/")
-	expectSHA := os.Getenv("CS3_EXPECT_SHA256")
+	env := testutil.OpenCloudEnv(t,
+		"CS3_GATEWAY_ADDR", "CS3_SERVICE_ACCOUNT_ID", "CS3_SERVICE_ACCOUNT_SECRET",
+		"CS3_EXPECT_FILE", "CS3_EXPECT_SHA256")
+	addr, saID, saSecret := env[0], env[1], env[2]
+	expectFile, expectSHA := strings.TrimPrefix(env[3], "/"), env[4]
 	ownerUID := os.Getenv("OC_ADMIN_USER_ID")
-	if addr == "" || saID == "" || saSecret == "" || expectFile == "" || expectSHA == "" {
-		t.Skip("OpenCloud fixture env not set; source test/fixtures/opencloud/fixture.env")
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -288,8 +279,9 @@ func stopOpenCloudFixture(t *testing.T) {
 	cmd := os.Getenv("OC_FIXTURE_DOWN_CMD")
 	if cmd == "" {
 		t.Log("OC_FIXTURE_DOWN_CMD unset: OpenCloud stays up (it is simply never " +
-			"contacted). Set it to test/fixtures/opencloud/down.sh for the full " +
-			"acceptance criterion.")
+			"contacted). Set it to an absolute path to " +
+			"test/fixtures/opencloud/down.sh — the command runs from this " +
+			"package's directory — for the full acceptance criterion.")
 		return
 	}
 

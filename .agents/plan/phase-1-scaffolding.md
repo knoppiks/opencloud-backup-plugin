@@ -25,7 +25,6 @@ layout does not depend on spike outcomes; the `/pkg/snapshot` internals do).
    /pkg/takeout/        # Path A: admin extract + verify
    /pkg/takeout/decrypt/# Path A: the user-side offline decrypt (own package on
                         # purpose — see its doc comment)
-   /pkg/s3target/       # Garage/S3 capability probe boundary (unimplemented)
    /pkg/scheduler/      # per-space cron scheduling, prune cadence
    /pkg/jobs/           # job/state store + per-Space run lock
    /pkg/state/          # durable document store (interface + memory impl)

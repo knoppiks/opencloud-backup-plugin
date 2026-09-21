@@ -157,7 +157,8 @@ func TestUploadWithoutAnEndpointFails(t *testing.T) {
 	fg := &fakeGateway{authToken: "t"}
 	client := NewClient(fg, ServiceAccountAuth{Gateway: fg, ClientID: "svc", Secret: "s"})
 
-	err := client.Upload(context.Background(), testSpace(), "f", 0, restoreMTime, strings.NewReader(""))
+	// Non-empty: an endpoint is only needed when there are bytes to send.
+	err := client.Upload(context.Background(), testSpace(), "f", 4, restoreMTime, strings.NewReader("data"))
 	if err == nil || !strings.Contains(err.Error(), "no upload endpoint") {
 		t.Fatalf("err = %v, want a missing-endpoint error", err)
 	}
@@ -213,5 +214,36 @@ func TestPickUploadProtocolPrefersSimple(t *testing.T) {
 
 	if endpoint, _ := pickUploadProtocol(nil); endpoint != "" {
 		t.Fatalf("picked %q from no protocols", endpoint)
+	}
+}
+
+// An empty file is created by the upload *initiation*, not by a body: reva
+// finishes a zero-length upload there and then refuses the PUT that would
+// follow. The client must therefore send nothing — and must not call a success
+// what it did not verify.
+func TestUploadOfAnEmptyFileSendsNoBody(t *testing.T) {
+	client, fg, got := writerFixture(t, http.StatusInternalServerError)
+
+	if err := client.Upload(context.Background(), testSpace(), "empty.txt", 0, restoreMTime, strings.NewReader("")); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if got.method != "" {
+		t.Fatalf("the data gateway was called (%s) for an empty file; the 500 it answers "+
+			"with is exactly what this avoids", got.method)
+	}
+	if len(fg.statedPaths) != 1 || fg.statedPaths[0] != "./empty.txt" {
+		t.Fatalf("stated paths = %v, want the uploaded path confirmed once", fg.statedPaths)
+	}
+}
+
+// A server that does nothing at initiation must produce an error, not a
+// success that created no file.
+func TestUploadOfAnEmptyFileFailsWhenTheServerDidNotCreateIt(t *testing.T) {
+	client, fg, _ := writerFixture(t, http.StatusOK)
+	fg.statStatus = rpc.Code_CODE_NOT_FOUND
+
+	err := client.Upload(context.Background(), testSpace(), "empty.txt", 0, restoreMTime, strings.NewReader(""))
+	if err == nil || !strings.Contains(err.Error(), "did not create the empty file") {
+		t.Fatalf("err = %v, want a complaint that the empty file was not created", err)
 	}
 }

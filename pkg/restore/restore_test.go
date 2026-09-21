@@ -56,8 +56,6 @@ func (f *fakeSpaces) ListDir(context.Context, cs3.Space, string) ([]cs3.Entry, e
 	return nil, nil
 }
 
-func (f *fakeSpaces) Walk(context.Context, cs3.Space, func(cs3.Entry) error) error { return nil }
-
 func (f *fakeSpaces) OpenFile(context.Context, cs3.Space, string, int64) (io.ReadCloser, error) {
 	return nil, errors.New("not used")
 }

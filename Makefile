@@ -48,6 +48,14 @@ test: ## Run unit tests with the race detector.
 test-integration: ## Run integration tests (Garage fixture; needs Docker).
 	$(GO) test -tags integration ./...
 
+.PHONY: test-opencloud
+test-opencloud: ## Run the OpenCloud-fixture tests (run dev-up first; failures, not skips).
+	@test -f $(OPENCLOUD_DIR)/fixture.env || \
+		{ echo "no $(OPENCLOUD_DIR)/fixture.env — run 'make dev-up' and $(OPENCLOUD_DIR)/seed.sh first" >&2; exit 1; }
+	set -a; . $(OPENCLOUD_DIR)/fixture.env; set +a; \
+	OPENCLOUD_FIXTURE_REQUIRED=1 $(GO) test -tags integration -count=1 \
+		./pkg/cs3/... ./pkg/cs3state/... ./pkg/api/... ./pkg/restore/... ./pkg/backup/...
+
 .PHONY: lint
 lint: ## Run golangci-lint.
 	golangci-lint run ./...

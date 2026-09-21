@@ -161,11 +161,43 @@ func (c *Client) Upload(ctx context.Context, space Space, relPath string, size i
 		return err
 	}
 
+	// A zero-length upload is already finished. reva's decomposedfs completes
+	// it during initiation — the file exists, with the requested mtime, before
+	// any body is sent — and then refuses the PUT that would follow, because
+	// there is no upload session left to write to ("upload not found", 500).
+	//
+	// So an empty file is created by *not* uploading it. That reads like a
+	// server quirk being indulged, which is why it is verified rather than
+	// assumed: if some other server does nothing at initiation, this says so
+	// instead of reporting a success that left no file behind.
+	// Pinned by TestIntegration_ZeroByteUploadCompletesAtInitiation.
+	if size == 0 {
+		if err := c.confirmCreated(authCtx, space, rel); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	endpoint, transfer := pickUploadProtocol(res.GetProtocols())
 	if endpoint == "" {
 		return fmt.Errorf("cs3 initiate upload: no upload endpoint returned")
 	}
 	return c.put(ctx, endpoint, token, transfer, size, modTime, r)
+}
+
+// confirmCreated checks that a path exists, for the one case where nothing was
+// written to create it.
+func (c *Client) confirmCreated(authCtx context.Context, space Space, rel string) error {
+	res, err := c.gw.Stat(authCtx, &provider.StatRequest{Ref: reference(space, rel)})
+	if err != nil {
+		return fmt.Errorf("cs3 upload: confirm empty file: %w", err)
+	}
+	if code := res.GetStatus().GetCode(); code != rpc.Code_CODE_OK {
+		return fmt.Errorf(
+			"cs3 upload: the server did not create the empty file %s during upload initiation (stat: %s)",
+			rel, code)
+	}
+	return nil
 }
 
 // put streams the body to the data gateway.

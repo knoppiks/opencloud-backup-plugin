@@ -892,6 +892,54 @@ fallback if runner minutes are a concern.
    `MemoryStore`s if the contract suites are rebased onto
    `state.NewMemoryStore()`).
 
+### Outcome (implemented, issue #30)
+
+Option A, all seven tasks — and the first run of task 2 found a bug that would
+have broken a restore on contact with a real Space, which is the entire argument
+for this plan item.
+
+- **Finding — a zero-byte upload fails against reva, and did so silently until
+  now.** `InitiateFileUpload` with length 0 *completes the upload during
+  initiation* (the file exists, with the requested mtime, before any body is
+  sent) and the PUT that follows is answered with HTTP 500,
+  `ERR_UPLOAD_NOT_FOUND`. Every restore would have failed on the first empty
+  file it met, and real Spaces are full of them. `cs3.Client.Upload` now sends
+  no body for an empty file and confirms the result with a `Stat` instead of
+  assuming the server's behaviour. Recorded in `phase-0-findings.md`, pinned by
+  an integration test, and covered by two unit tests — one asserting no request
+  reaches the data gateway, one asserting that a server which creates nothing
+  produces an error rather than a silent success.
+- **`X-OC-Mtime` is honoured**, so the plan's "or documented as best-effort"
+  branch was not needed: the assertion stands, and if a future OpenCloud drops
+  the header the test says so.
+- **Deviation — "fail, do not skip" is a property of the environment, not of the
+  job.** Task 1 asks the CI job to fail when `CS3_GATEWAY_ADDR` is unset. A
+  check inside the workflow would cover exactly that variable and nothing else,
+  so instead `OPENCLOUD_FIXTURE_REQUIRED` turns every fixture skip into a
+  failure, naming the variable that was missing. The same guard covers a fixture
+  that is present but incomplete — a Space that is not there, a seed that did
+  not run — which is the case a workflow-level check cannot see at all.
+- **Deviation — the Path A "OpenCloud stopped" test runs last, deliberately.**
+  It is the only test that destroys the fixture, so it is its own final step
+  with `OC_FIXTURE_DOWN_CMD` set, after everything else has finished. In CI this
+  makes the Phase-5 acceptance criterion literal — OpenCloud is really stopped —
+  rather than a code path exercised with the server still up.
+- **Task 3 turned each criterion into two.** `forEachStateBackend` runs the four
+  Phase-6 exit criteria over `{memory, opencloud}`; the second builds a real
+  `cs3state` store under a per-run prefix and removes it afterwards. All four
+  pass over CS3. The memory variant is kept because a failure in one and not the
+  other localises the fault immediately.
+- **Tasks 4, 5 and 6 were already done** by R1, R3, R4, R2 and R6 respectively —
+  each remediation wrote its own test as it landed. What R9 adds is that they now
+  run.
+- **Task 7's linter finds almost nothing, and that is the point.** `unused`
+  treats exported identifiers as used, so it reported four unused test helpers
+  and none of the dead exported code the plan names. That was removed by hand
+  after the owner's decision: `pkg/s3target` (imported by nothing) and
+  `SpaceReader.Walk` / `Client.Walk` (no production caller, six test fakes
+  implementing it for nothing). The per-package `MemoryStore`s stay — they are
+  used by other packages' tests, which is what they are for.
+
 ---
 
 ## R10 — Unbounded revision and trash growth in the state Space

@@ -52,8 +52,10 @@ than drifting.
    kopia's own Object-Lock ransomware feature is **not usable on Garage** (no
    Object Lock) → kopia used for snapshot/dedup/crypto only; immutability handled
    out-of-band (see threat model). Keep the Object-Lock path capability-flagged.
-   *Status:* a capability type and probe interface are reserved (`pkg/s3target`);
-   nothing implements or calls them, and no flag reaches the engine yet.
+   *Status:* not built. A placeholder package held a capability type and a probe
+   interface that nothing implemented, called or imported; it was deleted in R9
+   rather than left to imply a feature exists. The probe belongs with the
+   immutability work that needs it.
 
 6. **Key/snapshot scope: per Space.** One Data Key + one kopia repo + one snapshot
    chain per Space. A shared space is backed up **once**, not once per member.
@@ -336,10 +338,10 @@ decision.
   infrastructure nobody asked for.
   **Validated against OpenCloud 7.3.0** (`pkg/cs3state` integration test): the
   service account can create folders, write, *overwrite*, list and delete, and
-  run history survives a new store instance. Read "validated" throughout this
-  file as *"a test exists and has been run by hand against the OpenCloud
-  fixture"* — those tests skip themselves when the fixture is absent, and CI does
-  not start one (R9). Only the Garage tests are enforced automatically.
+  run history survives a new store instance. Since R9 this is enforced: CI starts
+  the pinned OpenCloud, runs these tests against it, and fails rather than skips
+  when the fixture is missing. The four Phase-6 exit criteria run over this store
+  as well as the in-memory one.
   *Constraints this imposes, which are binding:*
   - The state Space must be one **no end user is a member of**. A member could
     delete the service's memory, and it is not a user's document. Since the R1
@@ -790,8 +792,9 @@ is listed here so the corrections are themselves on the record:
 - **"The operator is never told which Space is failing" was true of the wrong
   half.** It holds for notification records and mail; the service log names
   Spaces throughout, deliberately. The property is restated as what it is.
-- **"Validated against OpenCloud 7.3.0" means a test run by hand.** None of those
-  tests run in CI, because CI starts no OpenCloud (R9's job).
+- **"Validated against OpenCloud 7.3.0" meant a test run by hand.** None of those
+  tests ran in CI, because CI started no OpenCloud. R9 fixed that; the wording
+  here is left as the record of what it was.
 - **The service-account secret joined the trust and threat models** as the
   highest-value credential in the deployment. It was documented in the manifests
   and absent from the model those manifests implement.
@@ -805,6 +808,39 @@ is listed here so the corrections are themselves on the record:
   without it, asserted by a dependency-graph test. `pkg/keys` is still linked
   there — extraction reads envelope headers — and that limit is stated rather
   than glossed.
+
+### Amendments from the September 2026 review — R9 (real-OpenCloud CI)
+
+- **A skipped test is now a failed one, where a fixture was promised.** Every
+  OpenCloud-dependent test skipped itself when no OpenCloud was present, and CI
+  never started one — so they all skipped, every run, and the summary was green.
+  `OPENCLOUD_FIXTURE_REQUIRED` inverts that for the CI job that does start the
+  fixture: a missing variable, or a Space that is not there, fails and says
+  which. Locally the skip stays, because a unit-test run should not depend on
+  Docker.
+
+- **Path B is tested against reva, and the first run found a bug.** A zero-length
+  upload is *completed by `InitiateFileUpload` itself* on OpenCloud 7.3.0; the
+  PUT that used to follow is answered 500. Every restore would have failed on the
+  first empty file in a Space. The in-memory Space that stood in for reva could
+  not have shown this — it agreed with the code by construction. Empty files,
+  empty directories, names with spaces and non-Latin names, and modification
+  times are now round-tripped through a real Space; `X-OC-Mtime` is honoured, so
+  the mtime in backup scope (#4) is asserted rather than assumed.
+  *The general lesson, worth more than the fix:* a fake at a boundary tests the
+  code's idea of the boundary. It is worth having for speed and for failure
+  injection, and it is not evidence about the other side.
+
+- **The Phase-6 exit criteria run over the real state store.** Unattended run,
+  restart safety, crash recovery and stale reporting are claims about
+  durability, and were only ever exercised against the in-memory store — which
+  has none of the properties that make the real one hard. Each now runs twice,
+  the second time against an OpenCloud Space over CS3.
+
+- **Dead code was removed rather than documented.** A capability-probe package
+  nothing imported and a `Walk` method on the CS3 read boundary that no
+  production path called, plus the six test fakes that implemented it. Both were
+  described in this file as if they existed for a reason.
 
 ---
 

@@ -77,49 +77,6 @@ func TestListDir_NonOKStatus(t *testing.T) {
 	}
 }
 
-func TestWalk_DepthFirstWithRelativePaths(t *testing.T) {
-	fg := &fakeGateway{
-		dirs: map[string][]*provider.ResourceInfo{
-			".":             {dirInfo("docs"), fileInfo("readme.txt", 3, 10)},
-			"./docs":        {dirInfo("nested"), fileInfo("notes.txt", 5, 11)},
-			"./docs/nested": {fileInfo("deep.bin", 7, 12)},
-		},
-	}
-	c := newClient(fg)
-
-	var got []Entry
-	if err := c.Walk(context.Background(), testSpace(), func(e Entry) error {
-		got = append(got, e)
-		return nil
-	}); err != nil {
-		t.Fatalf("Walk: %v", err)
-	}
-
-	want := []Entry{
-		{Path: "docs", IsDir: true, MTimeUnix: 100},
-		{Path: "docs/nested", IsDir: true, MTimeUnix: 100},
-		{Path: "docs/nested/deep.bin", Size: 7, MTimeUnix: 12},
-		{Path: "docs/notes.txt", Size: 5, MTimeUnix: 11},
-		{Path: "readme.txt", Size: 3, MTimeUnix: 10},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("walk order/paths = %+v, want %+v", got, want)
-	}
-}
-
-func TestWalk_PropagatesCallbackError(t *testing.T) {
-	fg := &fakeGateway{
-		dirs: map[string][]*provider.ResourceInfo{".": {fileInfo("a.txt", 1, 1)}},
-	}
-	c := newClient(fg)
-
-	sentinel := io.ErrUnexpectedEOF
-	err := c.Walk(context.Background(), testSpace(), func(Entry) error { return sentinel })
-	if err != sentinel {
-		t.Fatalf("Walk error = %v, want %v", err, sentinel)
-	}
-}
-
 // downloadServer serves body and records the headers it saw.
 type downloadServer struct {
 	*httptest.Server
