@@ -103,10 +103,19 @@ func serve(logger *slog.Logger) {
 		os.Exit(1)
 	}
 
+	basePath, err := resolveBasePath()
+	if err != nil {
+		logger.Error("startup failed", "err", err)
+		os.Exit(1)
+	}
+	if basePath != "" {
+		logger.Info("API mounted under a path prefix", "basePath", basePath)
+	}
+
 	addr := envOr("BACKUPD_ADDR", ":8080")
 	httpSrv := &http.Server{
 		Addr:    addr,
-		Handler: svc.api.Handler(),
+		Handler: mountBasePath(svc.api.Handler(), basePath),
 		// A stalled or slow client must not be able to hold a connection open
 		// indefinitely. WriteTimeout is generous because a snapshot listing for
 		// a large Space is served synchronously; backup runs are background jobs
@@ -571,6 +580,12 @@ func buildStateStore(client *cs3.Client, logger *slog.Logger) (state.Store, erro
 	store, err := cs3state.New(client, cs3state.Options{
 		SpaceID: spaceID,
 		Prefix:  envOr("STATE_PREFIX", cs3state.DefaultPrefix),
+		// The state Space is created by the service account (see
+		// `backupd provision-state-space`), which leaves that account a manager
+		// grant OpenCloud will not let anyone remove. Check needs to know which
+		// principal that is in order to tell the service's own access apart
+		// from an end user's.
+		ServiceAccountID: os.Getenv("OC_SERVICE_ACCOUNT_ID"),
 	})
 	if err != nil {
 		return nil, err
