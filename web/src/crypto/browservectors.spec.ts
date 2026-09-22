@@ -14,7 +14,14 @@
 // a diff full of new random bytes hides the one line that mattered.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { base64Decode, base64Encode, bytesToHex, equalBytes, hexToBytes, randomBytes } from './bytes'
+import {
+  base64Decode,
+  base64Encode,
+  bytesToHex,
+  equalBytes,
+  hexToBytes,
+  randomBytes
+} from './bytes'
 import {
   checkRecoveryEnvelope,
   DEFAULT_ARGON_PARAMS,
@@ -144,7 +151,9 @@ describe('browser-produced vectors', () => {
   const file = JSON.parse(readFileSync(VECTORS_PATH, 'utf8')) as BrowserVectorFile
 
   it('covers every case', () => {
-    expect(file.vectors.map((vector) => vector.name)).toEqual(cases.map((testCase) => testCase.name))
+    expect(file.vectors.map((vector) => vector.name)).toEqual(
+      cases.map((testCase) => testCase.name)
+    )
   })
 
   for (const vector of file.vectors) {

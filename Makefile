@@ -64,6 +64,15 @@ test-opencloud: ## Run the OpenCloud-fixture tests (run dev-up first; failures, 
 web-install: ## Install the web extension's dependencies (frozen lockfile).
 	cd $(WEB_DIR) && $(PNPM) install --frozen-lockfile
 
+.PHONY: web-lint
+web-lint: ## Lint and format-check the web extension.
+	cd $(WEB_DIR) && $(PNPM) lint
+	cd $(WEB_DIR) && $(PNPM) format:check
+
+.PHONY: web-format
+web-format: ## Reformat the web extension in place (prettier).
+	cd $(WEB_DIR) && $(PNPM) format
+
 .PHONY: web-test
 web-test: ## Run the web extension's unit tests (includes the Go interop vectors).
 	cd $(WEB_DIR) && $(PNPM) test
@@ -75,6 +84,14 @@ web-typecheck: ## Typecheck the web extension.
 .PHONY: web-build
 web-build: ## Build the web extension bundle into $(WEB_DIR)/dist.
 	cd $(WEB_DIR) && $(PNPM) build
+
+.PHONY: web-install-fixture
+web-install-fixture: ## Build the extension into the OpenCloud fixture and verify it loaded.
+	$(OPENCLOUD_DIR)/install-webapp.sh
+
+.PHONY: web-verify-fixture
+web-verify-fixture: ## Re-verify the installed extension without rebuilding it.
+	$(OPENCLOUD_DIR)/install-webapp.sh --no-build
 
 .PHONY: web-vectors
 web-vectors: ## Regenerate the browser-produced interop vectors, then verify Go opens them.

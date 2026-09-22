@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Backup Vault — OpenCloud Web extension for opencloud-backup-plugin",
+  "description": "Backup Vault \u2014 OpenCloud Web extension for opencloud-backup-plugin",
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.18.0",
   "engines": {
@@ -12,6 +12,10 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "vue-tsc --noEmit",
@@ -23,15 +27,23 @@
     "hash-wasm": "4.12.0"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.5",
     "@opencloud-eu/extension-sdk": "7.2.0",
     "@opencloud-eu/web-client": "7.2.0",
     "@opencloud-eu/web-pkg": "7.2.0",
     "@vitest/coverage-v8": "4.1.11",
+    "eslint": "9.39.5",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-vue": "10.11.0",
     "happy-dom": "20.0.11",
+    "jiti": "2.7.0",
+    "prettier": "3.9.8",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.70.1",
     "vite": "8.3.0",
     "vitest": "4.1.11",
     "vue": "3.5.43",
+    "vue-eslint-parser": "10.4.1",
     "vue-router": "5.2.0",
     "vue-tsc": "3.3.11",
     "vue3-gettext": "4.0.1"

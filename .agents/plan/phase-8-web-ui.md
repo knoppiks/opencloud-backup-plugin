@@ -364,6 +364,112 @@ expensive to reverse once views are written against it.
    Spike 4 checked by hand. In-browser proof stays 8f's; this is the exit
    criterion made scriptable without it.
 
+### Sub-phase 8c outcome (implemented, issue #35)
+
+The skeleton landed as planned. What the plan did not say, in rough order of how
+much it cost:
+
+- **The state Space could not be created, and that is a backend defect 8c
+  tripped over rather than a frontend one.** Standing `backupd` up behind the
+  fixture's origin was supposed to be configuration. It turned out that
+  `cs3state.Check` refused every Space OpenCloud can actually produce, so a
+  default deployment with durable state could not start at all — since R5 made
+  `STATE_SPACE_ID` required, which is to say since R5. Recorded in full as
+  "Amendments from Phase 8 — 8c" in `decisions.md`; the fix is that `Check`
+  discounts the service account's own grant, plus `backupd
+  provision-state-space`. The runbook in `README.md` was impossible to follow as
+  written and now says so, along with why.
+  *Why 8c found it and nothing else had:* `Check` was covered by unit tests
+  against a fake Space which agreed with the code by construction. It is R9's
+  lesson — a fake at a boundary tests the code's idea of the boundary — in a new
+  place, and the place was a startup check, which is a claim about the
+  environment specifically.
+
+- **The proxy question had a clear answer and it was not the expected one.** The
+  risk being tested — that OpenCloud's proxy would swap the OIDC bearer for a
+  reva token — did not materialise: an `unprotected: true` route forwards
+  `Authorization` verbatim and rewrites no path. What killed the option was that
+  the proxy has no way to *append* a route: `policies` replaces the default
+  route table wholesale (every other endpoint answered 500 in the spike) and
+  `additional_policies` routes are never consulted by the static selector. Using
+  it would mean restating OpenCloud's entire route table, per release, in every
+  deployment. The fixture therefore gets Caddy on `:9200` and OpenCloud moves to
+  `:9201`; the measurements are in the plan section above so the option stays
+  available to an operator who wants it.
+  **`:9200` staying the single origin is what made this cheap**: `OC_URL`, the
+  issuer, the data-gateway URLs and every existing integration test are
+  untouched, and the OpenCloud-fixture suite passes through the new proxy
+  without knowing it is there.
+
+- **`backupd` runs on the host in the fixture, not in the compose stack.** The
+  sub-phase decision said "in the compose stack"; the deviation is forced by the
+  issuer. Tokens carry `iss: https://localhost:9200`, so the service must be
+  configured with that exact string — and inside a container `localhost:9200` is
+  that container. Aliasing `localhost` to reach the proxy is worse than running
+  the binary where every integration test in this repo already runs it, and it
+  keeps the 8d/8e loop at `go run` rather than an image build. `up.sh` now
+  writes everything it needs into `fixture.env`, including
+  `OIDC_AUDIENCE=web` — the value #21 makes load-bearing.
+
+- **`applicationConfig` works, and the delivery route is
+  `web/src/manifest.json`.** The SDK copies that file into `dist/manifest.json`
+  adding only `entrypoint`, and OpenCloud 7.3.0 forwards its `config` key into
+  `config.json`'s `external_apps[]`, from where it arrives in `setup()`.
+  Verified end to end against the fixture rather than assumed, because this was
+  the one link in decision 1 that could not be read off the SDK source.
+
+- **Same-origin is now a property of the code, not a warning in a README.**
+  `resolveApiBase` takes a path and resolves it against `window.location.origin`,
+  and refuses anything carrying a scheme, a host or a protocol-relative prefix —
+  with a final assertion that the resolved origin still matches, so a future
+  edit that loosens the checks has to defeat that too. The service gained the
+  matching half, `BACKUPD_BASE_PATH`, and the health probes deliberately stay at
+  the root because the kubelet does not go through the ingress that adds the
+  prefix.
+  Measured on the running fixture: `/healthz` 200 at the root, bare
+  `/api/v1/spaces` **404** (the prefix is not bypassable), `/backup/api/v1/spaces`
+  401 through Caddy with exactly the error envelope the TypeScript client parses.
+
+- **ESLint earned itself on the first run.** The `src/crypto` import ban is not
+  a style rule: 8a's outcome calls that directory's independence the reason the
+  interop vectors could exist before any UI, and it held by care alone. Verified
+  by mutation — adding `vue`, `vue3-gettext` and `fetch` to `bytes.ts` produces
+  three errors naming each one. Prettier came with it and reformatted four files
+  8a had hand-formatted; the changes are cosmetic, and two of them collapse
+  vertical unions that were arguably nicer before. That is the trade a formatter
+  is: it is worth it to stop having the conversation.
+
+- **i18n ships a German catalogue and a test that can fail.** The finding worth
+  recording is that `translations` was never passed to the host, so every
+  `$gettext` call fell through to its msgid — which looks perfect in English and
+  is simply untranslated in German, with nothing to notice. `translations.spec.ts`
+  scans the source for msgids and fails on an English string with no German, on
+  a German entry whose original has gone, and on a "translation" that is a copy
+  of the msgid. It also asserts it found msgids at all, because a regex matching
+  nothing would make the other three vacuous. Verified by mutation.
+  No `.pot`/`.po` pipeline yet, as planned — it arrives in 8d with enough text
+  to justify it.
+
+- **"It loads in the fixture" is a command.** `make web-install-fixture` builds,
+  installs, chowns for the container's uid, restarts OpenCloud — the restart is
+  the documented gotcha, and one handled by a target is one nobody rediscovers —
+  then asserts the app is in `external_apps` *with its `config.apiPath`* and that
+  the entry chunk serves 200. `make web-verify-fixture` re-checks without
+  rebuilding. Verified by mutation that the registration check fails when the app
+  is absent.
+
+- **Deviation — `make dev-up` now seeds.** `up.sh` rewrites `fixture.env` from
+  scratch and `dev-up` never ran `seed.sh`, so the seeded ids silently vanished
+  and `make test-opencloud` failed reporting a variable as "not set". It cost a
+  false failure during this sub-phase before the cause was obvious.
+
+- **Not done, and not claimed:** no component tests mount a view. The client, the
+  base-URL resolution, the app config and the catalogue are unit-tested (143
+  tests in `web/`), and the extension is proven to load and to reach the API
+  through the real origin; asserting what `RequestState.vue` *renders* for each
+  failure needs `@vue/test-utils` and the host's design-system globals stubbed,
+  which belongs with 8d's views rather than ahead of them.
+
 ### Sub-phase 8b outcome (implemented, issue #35)
 
 The eight routes landed as planned, with the semantics above. What the plan did

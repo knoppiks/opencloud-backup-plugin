@@ -425,6 +425,51 @@ Users are unaffected and need do nothing.
 - Keep a copy of the `decrypt` binary somewhere that is not the server you are
   trying to recover.
 
+## Developing the web extension
+
+The UI is an OpenCloud Web extension in [`web/`](web/). It runs *inside* the
+OpenCloud SPA and calls this service with the signed-in user's own bearer token,
+which is why it has to share OpenCloud's origin — see the preconditions above.
+
+```sh
+make web-install                 # dependencies (pnpm via Corepack)
+make web-lint web-typecheck web-test web-build
+```
+
+To see it in a browser, against the pinned OpenCloud:
+
+```sh
+make dev-up                      # Garage + OpenCloud 7.3.0 + the fixture proxy, seeded
+make web-install-fixture         # build, install into the fixture, verify it registered
+```
+
+`web-install-fixture` restarts OpenCloud, because the apps directory is scanned
+at startup only — a bundle dropped in while it is running is invisible, with no
+error anywhere. It then checks that the app appears in `config.json`'s
+`external_apps` carrying its `config.apiPath`, and that the entry chunk serves
+200. `make web-verify-fixture` repeats the check without rebuilding.
+
+The fixture's `:9200` is a Caddy proxy providing the single origin: OpenCloud
+everywhere, and `/backup/*` to a `backupd` on the host at port 8080. OpenCloud
+itself is on `:9201` if you need to bypass the proxy. To run the service behind
+it:
+
+```sh
+source test/fixtures/opencloud/fixture.env   # written by up.sh
+backupd provision-state-space                # once; then add the id to fixture.env
+source test/fixtures/opencloud/fixture.env
+go run ./cmd/backupd
+```
+
+`fixture.env` carries `OIDC_AUDIENCE=web` (the SPA's client id — anything else
+401s every request), `BACKUPD_BASE_PATH=/backup` to match the proxy, and
+`SSL_CERT_FILE` pointing at the proxy's extracted CA root so the service can
+verify the OIDC issuer without turning verification off.
+
+`backupd` runs on the host rather than in the compose stack on purpose: tokens
+carry `iss: https://localhost:9200`, and inside a container `localhost` is that
+container.
+
 ## Documentation
 
 - Design decisions, trust model, and threat model:

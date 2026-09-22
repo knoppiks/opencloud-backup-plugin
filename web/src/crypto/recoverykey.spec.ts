@@ -78,7 +78,10 @@ describe('recovery key round trip', () => {
   it('reads a handwritten key back with the look-alikes mapped', () => {
     const { display, secret } = generateRecoveryKey()
     const [prefix, ...groups] = display.split('-')
-    const handwritten = [prefix, ...groups.map((group) => group.replaceAll('0', 'O').replaceAll('1', 'I'))].join('-')
+    const handwritten = [
+      prefix,
+      ...groups.map((group) => group.replaceAll('0', 'O').replaceAll('1', 'I'))
+    ].join('-')
 
     expect(equalBytes(decodeRecoveryKey(handwritten), secret)).toBe(true)
   })

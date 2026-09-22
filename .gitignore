@@ -16,3 +16,5 @@ test/fixtures/opencloud/config/
 test/fixtures/opencloud/data/
 test/fixtures/opencloud/apps/
 test/fixtures/opencloud/fixture.env
+# The fixture proxy's local CA root, extracted by up.sh for SSL_CERT_FILE.
+test/fixtures/opencloud/ca.crt

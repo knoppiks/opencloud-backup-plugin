@@ -58,7 +58,7 @@ jobs:
       run: go test -race ./...
 
   web:
-    name: web extension (typecheck / test / build)
+    name: web extension (lint / typecheck / test / build)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
@@ -75,6 +75,18 @@ jobs:
     - name: install
       working-directory: web
       run: pnpm install --frozen-lockfile
+
+    # ESLint carries one rule that is not a style preference: src/crypto may not
+    # import Vue, HTTP or OpenCloud. 8a's outcome calls that independence the
+    # reason the interop vectors could be written before any UI existed, and
+    # until now it held by care alone.
+    - name: lint
+      working-directory: web
+      run: pnpm lint
+
+    - name: format check
+      working-directory: web
+      run: pnpm format:check
 
     - name: typecheck
       working-directory: web

@@ -20,5 +20,5 @@
 
     "types": ["vitest/globals"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts", "eslint.config.ts"]
 }

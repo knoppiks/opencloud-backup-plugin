@@ -94,12 +94,7 @@ const MAX_ARGON_LANES = 16
 
 /** EnvelopeErrorCode names why an envelope was refused. */
 export type EnvelopeErrorCode =
-  | 'malformed'
-  | 'unsupported_version'
-  | 'unknown_kdf'
-  | 'bad_params'
-  | 'wrong_kind'
-  | 'weak'
+  'malformed' | 'unsupported_version' | 'unknown_kdf' | 'bad_params' | 'wrong_kind' | 'weak'
 
 /** EnvelopeError is a structural or policy failure — never a key failure. */
 export class EnvelopeError extends Error {

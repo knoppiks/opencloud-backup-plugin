@@ -39,12 +39,7 @@ const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
  * error identically, but they must agree on *why* a key failed: "mistyped" and
  * "wrong key" lead a user to opposite actions.
  */
-export type RecoveryKeyErrorReason =
-  | 'length'
-  | 'version'
-  | 'charset'
-  | 'checksum'
-  | 'padding'
+export type RecoveryKeyErrorReason = 'length' | 'version' | 'charset' | 'checksum' | 'padding'
 
 /**
  * RecoveryKeyError is a malformed, mistyped, or wrong-version Recovery Key.
