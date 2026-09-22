@@ -249,6 +249,121 @@ unmatched, so a path nobody implemented is still not a way past the gate.
    caller names, and the coarse answer is what keeps it from being a probe of
    the household's internal network with the results echoed back.
 
+### Sub-phase 8c plan — decisions taken before implementation
+
+The skeleton's job is to make every later view cheap: one place that knows where
+the backend is, one place that speaks to it, one place that renders "this went
+wrong". Seven decisions were taken before any code, because each of them is
+expensive to reverse once views are written against it.
+
+1. **The API base URL is a *path*, never an origin, and the type system says
+   so.** The client resolves `new URL(apiPath, window.location.origin)`, where
+   `apiPath` comes from `applicationConfig` and defaults to the deployed prefix.
+   An `apiPath` carrying a scheme or a host is refused, not honoured.
+   Rationale: the Go service has no CORS middleware and no `OPTIONS` route, and
+   that is deliberate — the listener is plain HTTP behind an ingress on
+   OpenCloud's own origin, and the Data Key crosses it once at setup (R5). A
+   configurable *origin* would make "same-origin" a deployment convention that a
+   single `config.json` edit can violate, with the failure mode being either a
+   silently broken extension or a pull towards adding CORS. A configurable
+   *path* makes cross-origin structurally impossible while still allowing the
+   API to be relocated without rebuilding the bundle. The rejected alternative,
+   hardcoding the path, costs that relocation for no gain.
+   *Mechanism, which the SDK settles:* `web/src/manifest.json` is copied
+   verbatim into `dist/manifest.json` with only `entrypoint` added, and the
+   SDK's own metadata reader treats `manifest.config` as the app config. So the
+   `config` key is the supply route; whether OpenCloud 7.3.0 forwards it into
+   `setup({applicationConfig})` is verified against the fixture rather than
+   assumed.
+
+2. **The API moves to a namespaced prefix, and the service learns
+   `BACKUPD_BASE_PATH`.** Routes stay written as `/api/v1/...`; a base path is
+   stripped in front of the mux. The deployed prefix becomes `/backup/api/v1/`.
+   Rationale: `/api/v1/` is a namespace OpenCloud also owns on the origin this
+   service is now required to share. Nothing collides on 7.3.0 today, which is a
+   statement about one release of software this project does not control. One
+   env var and an `http.StripPrefix` retire the whole collision class, and the
+   alternative — discovering it from a future OpenCloud release, in a household
+   deployment, as backups that stop — is not a trade worth making for the saved
+   line.
+
+3. **The fixture gains a single origin, and which proxy provides it was measured
+   rather than chosen.** OpenCloud's own proxy was the preferred answer — it is
+   the production topology the README already prescribes — provided it forwards
+   the caller's bearer token untouched. That proxy *authenticates* requests and
+   rewrites headers, and if it exchanged the OIDC token for a reva one, every
+   extension request would arrive at `Authenticate` as garbage. So the first
+   task of 8c was a spike against the 7.3.0 fixture rather than an assumption.
+
+   **Measured, and the risk we were testing for did not materialise.** A route
+   carrying `unprotected: true` forwards `Authorization: Bearer …` **verbatim**;
+   the proxy adds `X-Forwarded-*` and `Traceparent` and takes nothing away. It
+   also **does not rewrite the path** — a request to `/backup/api/v1/spaces`
+   arrives at the backend as `/backup/api/v1/spaces`, which is the independent
+   confirmation that decision 2's `BACKUPD_BASE_PATH` is required rather than
+   merely tidy.
+
+   **A different obstacle appeared, and it is the one that decides the
+   question: OpenCloud's proxy has no way to append a route.** Setting
+   `proxy.policies` *replaces* the default route table wholesale — with our
+   route plus a `/` fallback defined, every other endpoint on the origin
+   (`/config.json`, `/graph`, `/.well-known`, `/konnect`, `/remote.php`, `/ocs`)
+   answered 500. Setting `additional_policies` instead preserves the defaults but
+   its routes are never consulted: the static selector resolves the
+   default-named policy first and a same-named additional policy does not merge
+   into it, so `/backup/` fell through to the SPA's catch-all. Using OpenCloud's
+   proxy therefore means restating its entire default route table in our config,
+   pinned to 7.3.0, and re-pinning it on every OpenCloud release — in the
+   fixture *and* in every operator's deployment.
+
+   **So: a dedicated reverse proxy provides the origin.** This is not a
+   divergence from production, which is the objection that would have mattered
+   (R9: a fake at a boundary tests the code's idea of the boundary). Production
+   already prescribes "an ingress that terminates TLS on the same origin as
+   OpenCloud", and an Ingress with two path rules *is* this shape; the
+   OpenCloud-proxy variant was the odd one out. The measurement above is kept on
+   the record because it leaves that variant available to an operator who wants
+   it, with its cost stated.
+
+4. **`backupd` joins the fixture in 8c, not in 8f.** The sub-phase delivers an
+   API client and error states; both are claims that only a running backend can
+   check. Two of this phase's known failure modes — `OIDC_AUDIENCE` not matching
+   the SPA client id (#21), and the proxy question above — produce a 401 on every
+   request and are indistinguishable from a dozen frontend bugs. Finding them
+   here costs a fixture; finding them in 8f costs a fixture *plus* a new
+   Playwright setup, with no way to tell which half is wrong. The price is
+   honest: self-signed issuer trust inside the service container, a state Space
+   that `seed.sh` must create with no member grants (R1 refuses to start
+   otherwise), SRW/TW keys, and a memory-backed `BACKUP_WORK_DIR`.
+
+5. **Lint arrives with one rule that pays for the tool on its first run.**
+   ESLint flat config plus Prettier, wired into the make targets and the CI web
+   job. The rule is a `no-restricted-imports` ban on `src/crypto/**` covering
+   `vue`, `vue-router`, `@opencloud-eu/*`, `axios` and `fetch`. 8a's outcome
+   states that directory has no Vue, no HTTP and no OpenCloud dependency, and
+   calls that the reason the interop vectors could be written before any UI
+   existed. It is currently true by care alone, and the first person to reach for
+   a composable in a ceremony helper would make it false without noticing. A
+   stated invariant that nothing checks is a comment.
+
+6. **i18n ships its wiring and a German catalogue; extraction waits for 8d.**
+   `ClassicApplicationScript.translations` takes a `{lang: {msgid: …}}` map, so
+   the extension carries its own catalogue rather than depending on the host's —
+   which is worth knowing, because today we pass none and every `$gettext` call
+   falls through to its msgid, so nothing has looked broken. 8c wires it and
+   ships `de` for the strings that exist, with a test that every catalogue key is
+   a msgid the source actually uses. Extraction tooling pinned against a handful
+   of strings is churn; the wiring is the scaffold, and it has to exist before
+   8d's strings have anywhere to go.
+
+7. **"It loads in the fixture" becomes a command, not a claim.** A make target
+   builds, installs into `test/fixtures/opencloud/apps/`, and restarts OpenCloud
+   — the restart is a documented gotcha, and a gotcha handled by a target is one
+   nobody rediscovers. A verify step curls `/config.json` for the `external_apps`
+   entry and asserts the entrypoint `.mjs` serves 200, which is precisely what
+   Spike 4 checked by hand. In-browser proof stays 8f's; this is the exit
+   criterion made scriptable without it.
+
 ### Sub-phase 8b outcome (implemented, issue #35)
 
 The eight routes landed as planned, with the semantics above. What the plan did

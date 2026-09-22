@@ -106,9 +106,14 @@ secret-scan: ## Scan the full git history for committed secrets (gitleaks).
 	gitleaks git . --redact --no-banner
 
 .PHONY: dev-up
-dev-up: ## Start dev Garage, then the test OpenCloud fixture.
+dev-up: ## Start dev Garage, then the test OpenCloud fixture (and seed it).
 	docker compose -f $(DEV_COMPOSE) up -d
 	cd $(OPENCLOUD_DIR) && ./up.sh
+	# up.sh rewrites fixture.env from scratch, so the seeded ids have to be
+	# appended again afterwards or `make test-opencloud` fails on a variable it
+	# reports as "not set" rather than as "not seeded" — which reads like a
+	# broken test rather than an unseeded fixture.
+	cd $(OPENCLOUD_DIR) && ./seed.sh
 
 .PHONY: dev-down
 dev-down: ## Stop the OpenCloud fixture and dev Garage.

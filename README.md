@@ -107,6 +107,16 @@ cannot check, so it is on you.
   as OpenCloud, or set `TLS_CERT_FILE` and `TLS_KEY_FILE` and let it terminate
   TLS itself. **Nothing enforces this from inside the process** — it cannot see
   what is in front of it, so it logs which mode it started in and trusts you.
+- **One origin, shared with OpenCloud, under a path prefix.** The web extension
+  runs inside the OpenCloud SPA and calls this service with the user's own
+  bearer token. There is no CORS middleware here and no `OPTIONS` route, on
+  purpose: a second origin would be one more place the Data Key travels to. So
+  the ingress must route a prefix on OpenCloud's origin to this service —
+  `BACKUPD_BASE_PATH` (recommended `/backup`, giving `/backup/api/v1/…`) tells
+  it which prefix to expect, and the extension's `apiPath` must agree. Without
+  the prefix the API would sit at `/api/v1/`, a namespace OpenCloud also owns.
+  `/healthz` and `/readyz` stay at the root regardless, because the kubelet
+  reaches them on the pod rather than through the ingress.
 - **Exactly one instance.** Two instances against one state Space can mark each
   other's runs failed and back up the same Space twice, so the manifest deploys
   with `strategy: Recreate` — a rolling update would run two by design. Each
@@ -137,18 +147,37 @@ check the startup log says the zone you meant.
 The service needs one OpenCloud Space of its own, and it is picky about which,
 because that Space holds the server-side copy of every wrapped Data Key.
 
-1. Create a **project Space** for the service — for example "Backup service
-   state" — and add **no members** to it. The service account reaches it with
-   owner scope; nobody else needs to.
-2. Set `STATE_SPACE_ID` to that Space's id.
+**You cannot create it in the OpenCloud admin UI**, and it is worth saying why
+before the command that does. A Space created through the UI or the graph API
+leaves *its creator* — your admin account — holding a manager grant, and
+OpenCloud refuses to remove the last one ("cannot remove the last share with
+manager permissions on a space root"). That is a Space an end user can empty,
+which is the one thing this Space must not be.
+
+So the service creates it, as its own service account:
+
+```sh
+# Needs CS3_GATEWAY_ADDR, OC_SERVICE_ACCOUNT_ID and OC_SERVICE_ACCOUNT_SECRET —
+# the same values the service runs with. STATE_SPACE_ID must be unset.
+backupd provision-state-space
+# prints the space id on stdout
+```
+
+Set `STATE_SPACE_ID` to the id it prints. The Space it creates is granted to the
+service account alone, so no person is a member of it.
+
+The command refuses to run while `STATE_SPACE_ID` is already set. Creating a
+second state Space would leave the first one holding every wrapped Data Key with
+nothing pointing at it — which looks like a working deployment until somebody
+needs a restore.
 
 The service **refuses to start** if the configured Space is a personal Space or
-carries any member grant. A member could delete the folder without knowing what
-it was, and losing it would mean every unattended backup for the affected Spaces
-stopping until each user re-ran the key ceremony with their Recovery Key. (If
-OpenCloud is not reachable at startup the check is deferred to first use with a
-warning — an IdP or gateway that is a few seconds late must not crash-loop the
-backup service.)
+carries a member grant held by anyone other than its own service account. A
+member could delete the folder without knowing what it was, and losing it would
+mean every unattended backup for the affected Spaces stopping until each user
+re-ran the key ceremony with their Recovery Key. (If OpenCloud is not reachable
+at startup the check is deferred to first use with a warning — an IdP or gateway
+that is a few seconds late must not crash-loop the backup service.)
 
 What lives there is metadata and ciphertext only — wrapped key envelopes and
 wrapped target credentials, never plaintext keys. Records whose loss cannot be

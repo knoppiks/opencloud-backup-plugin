@@ -921,6 +921,52 @@ is listed here so the corrections are themselves on the record:
   rejected Deployment. They are in `env:` now, and `kubeconform` is run over the
   uncommented form as well as the shipped one.
 
+### Amendments from Phase 8 — 8c (the state Space was unobtainable)
+
+- **#16's constraint said "no end user is a member"; the code checked "no
+  member at all", and no Space satisfying the second one can be created.**
+  Measured against the OpenCloud 7.3.0 fixture while standing `backupd` up for
+  the web extension:
+  - A project Space created through graph (the path README's runbook told the
+    operator to use) leaves its **creator** — a real admin user — holding a
+    manager grant.
+  - That grant cannot be removed. Graph answers `403 accessDenied`, *"cannot
+    remove the last share with manager permissions on a space root"*.
+  - So a Space with zero member grants does not exist, `cs3state.Check` refused
+    every candidate, and since R5 made `STATE_SPACE_ID` required, **a default
+    deployment with durable state could not start at all.** The runbook had been
+    impossible to follow since it was written, and nothing caught it because
+    every integration test constructs its own store and never calls `Check`.
+
+  The predicate is what was wrong. A Space created **over CS3 by the service
+  account** carries exactly one grant, held by the service account itself — no
+  end user can reach it, which is the property #16 actually asks for. `Check`
+  now discounts a grant held by that one principal and refuses every other, so
+  an admin's grant is still refused and a personal Space is still refused
+  whoever holds what. With no service-account id configured the check stays
+  strict, because silence must not widen a security predicate.
+
+  *The exemption is for one named principal, not for "a single manager".* The
+  rejected alternative — allow any lone manager grant — permits precisely the
+  case R1 added the check to prevent, since the admin who would hold it is an
+  end user.
+
+- **Provisioning is an operator command, because it cannot be a UI step.**
+  `backupd provision-state-space` creates the Space as the service account,
+  verifies it with the same `Check` startup uses, and prints the id. It refuses
+  to run while `STATE_SPACE_ID` is already set: a second state Space leaves the
+  first holding every wrapped Data Key with nothing pointing at it. Startup
+  deliberately does **not** provision implicitly — on a mistyped
+  `STATE_SPACE_ID` that would quietly create a fresh Space and begin writing to
+  it, which is the same silent-orphaning failure #17 exists to prevent.
+
+- **The general lesson, which is R9's again in a new place.** `Check` was
+  covered by unit tests against a fake Space, and they all passed: the fake
+  agreed with the code's idea of what a Space looks like. Nothing had ever run
+  the predicate against a Space OpenCloud actually produces. A startup check is
+  a claim about the environment, and a claim about the environment tested only
+  against a fake is untested.
+
 ---
 
 ## Trust & key model
