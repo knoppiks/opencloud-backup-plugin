@@ -8,8 +8,9 @@
 // this codebase.
 //
 // A job record is metadata only — ids, states, counts, timestamps and a
-// sanitized error string. It never holds key material, credentials, file names
-// or paths (AGENTS.md).
+// sanitized error string. It never holds key material, credentials, or the
+// names or paths of a user's files (AGENTS.md). The one path it carries is the
+// restore folder, which this service names and creates itself.
 package jobs
 
 import (
@@ -83,6 +84,12 @@ type Job struct {
 	// that found nothing to do.
 	SnapshotsDeleted int `json:"snapshots_deleted,omitempty"`
 	SnapshotsKept    int `json:"snapshots_kept,omitempty"`
+	// RestoreFolder is the space-relative folder a restore writes into
+	// ("Restore/<timestamp>"). Set when the restore starts, so a member can
+	// find a partial result of a failed run as well as a finished one. Empty
+	// for every other kind of run. It is a name this service chose, never a
+	// path from the user's data.
+	RestoreFolder string `json:"restore_folder,omitempty"`
 }
 
 // Duration reports how long a finished job took. It is zero while running.

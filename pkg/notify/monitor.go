@@ -33,7 +33,8 @@ const (
 	// staleFactor is how many scheduled occurrences may be missed before a
 	// Space counts as stale.
 	staleFactor = 2
-	// historyLookback bounds the history a staleness check reads.
+	// historyLookback bounds the notification history the repeat check reads.
+	// The run history a staleness check reads is StaleLookback.
 	historyLookback = 20
 )
 
@@ -162,37 +163,23 @@ func (m *Monitor) reportUnreadable(ctx context.Context, count int, now time.Time
 }
 
 // isStale reports whether a Space has gone too long without a successful
-// backup, and since when.
+// backup, and since when. The rule itself is StaleRule's, shared with the
+// status endpoint.
 func (m *Monitor) isStale(ctx context.Context, cfg spacecfg.Config, now time.Time) (bool, time.Time, error) {
 	// Only backups can answer this, and only backups are read: a Space that
 	// prunes and restores as well would otherwise crowd its own last successful
 	// backup out of the window and be reported stale while it is healthy.
-	history, err := m.jobs.ListRecentOfKind(ctx, cfg.SpaceID, jobs.KindBackup, historyLookback)
+	history, err := m.jobs.ListRecentOfKind(ctx, cfg.SpaceID, jobs.KindBackup, StaleLookback)
 	if err != nil {
 		return false, time.Time{}, fmt.Errorf("notify: read run history: %w", err)
 	}
-
-	since := cfg.CreatedAt
-	if last, ok := jobs.LastOf(history, jobs.KindBackup, jobs.StateSucceeded); ok {
-		since = last.CreatedAt
-	}
-	if since.IsZero() {
-		// Nothing to measure against yet.
-		return false, time.Time{}, nil
-	}
-
-	return now.Sub(since) > m.staleAfter(cfg, since), since, nil
+	verdict := m.rule().Assess(cfg, history, now)
+	return verdict.Stale, verdict.Since, nil
 }
 
-// staleAfter derives the threshold from the Space's own schedule.
-func (m *Monitor) staleAfter(cfg spacecfg.Config, from time.Time) time.Duration {
-	threshold := m.opts.MinStaleAfter
-	if interval, ok := scheduleInterval(cfg.EffectiveSchedule(), from); ok {
-		if scaled := staleFactor * interval; scaled > threshold {
-			threshold = scaled
-		}
-	}
-	return threshold
+// rule is the staleness rule this monitor applies.
+func (m *Monitor) rule() StaleRule {
+	return StaleRule{MinStaleAfter: m.opts.MinStaleAfter}
 }
 
 // notifiedRecently reports whether this Space was already told it is stale

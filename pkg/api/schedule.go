@@ -80,6 +80,15 @@ type statusResponse struct {
 	Enabled    bool             `json:"enabled"`
 	Cron       string           `json:"cron,omitempty"`
 	Preset     scheduler.Preset `json:"preset,omitzero"`
+	// KeysConfigured reports whether the Space's key ceremony is complete
+	// (both envelopes stored). A Space can be bound to a target without it,
+	// and cannot run until it has it.
+	KeysConfigured bool `json:"keys_configured"`
+	// Stale is notify.StaleRule's verdict — the same rule the monitor uses to
+	// send the backup_stale notification, so the card and the notification
+	// cannot disagree. StaleSince is set only when Stale is.
+	Stale      bool   `json:"stale"`
+	StaleSince string `json:"stale_since,omitempty"`
 	// Running reports whether a run is under way right now, and which.
 	Running      bool         `json:"running"`
 	CurrentJob   *jobResponse `json:"current_job,omitempty"`
@@ -169,16 +178,25 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.spaceConfigs == nil || s.jobStore == nil {
+	if s.spaceConfigs == nil || s.jobStore == nil || s.keyStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup status not available")
 		return
 	}
 
 	out := statusResponse{SpaceID: spaceID}
 
+	// A key store that cannot answer is an error, not "no keys": the UI would
+	// otherwise offer a setup the server must refuse (decisions.md #17).
+	keyStatus, ok := s.keyStatus(w, spaceID)
+	if !ok {
+		return
+	}
+	out.KeysConfigured = keyStatus.Configured
+
 	cfg, err := s.spaceConfigs.Get(r.Context(), spaceID)
+	configured := err == nil
 	switch {
-	case err == nil:
+	case configured:
 		out.Configured = true
 		out.Enabled = cfg.Enabled
 		out.Cron = cfg.EffectiveSchedule()
@@ -201,12 +219,17 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 	// restores and prunes share that history, and a Space that prunes daily
 	// would otherwise push its own last backup out of the window and report
 	// "never backed up".
-	backups, err := s.jobStore.ListRecentOfKind(r.Context(), spaceID, jobs.KindBackup, defaultHistoryLimit)
+	// The window is the staleness rule's, so this verdict is computed from
+	// exactly what the monitor reads.
+	backups, err := s.jobStore.ListRecentOfKind(r.Context(), spaceID, jobs.KindBackup, notify.StaleLookback)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
 		return
 	}
 	applyHistory(&out, history, backups)
+	if configured {
+		applyStaleness(&out, s.staleRule.Assess(cfg, backups, s.clock()))
+	}
 
 	if s.schedules != nil && out.Enabled {
 		next, err := s.schedules.NextRun(r.Context(), spaceID)
@@ -240,6 +263,14 @@ func applyHistory(out *statusResponse, history, backups []jobs.Job) {
 	if success, ok := jobs.LastOf(backups, jobs.KindBackup, jobs.StateSucceeded); ok {
 		resp := toJobResponse(success)
 		out.LastSuccess = &resp
+	}
+}
+
+// applyStaleness copies the staleness verdict into a status response.
+func applyStaleness(out *statusResponse, verdict notify.Staleness) {
+	out.Stale = verdict.Stale
+	if verdict.Stale {
+		out.StaleSince = formatTime(verdict.Since)
 	}
 }
 

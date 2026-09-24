@@ -11,12 +11,23 @@
 //
 // Nothing in this file describes the admin API. That is sub-phase 8e.
 
+/**
+ * SpaceRole is the caller's own authority on a Space, in the server's words.
+ *
+ * It decides what the UI *offers*, never what is allowed: every route enforces
+ * its own minimum server-side. viewer reads and restores, editor configures and
+ * runs, manager (and owner) set up and replace keys.
+ */
+export type SpaceRole = 'viewer' | 'editor' | 'manager' | 'owner'
+
 /** Space is one OpenCloud Space the caller may back up. `GET /spaces`. */
 export interface Space {
   id: string
   name: string
   /** type is the CS3 space type, e.g. "personal" or "project". */
   type: string
+  /** role is the caller's own role; an unknown word is treated as viewer. */
+  role: SpaceRole | string
 }
 
 /**
@@ -72,6 +83,18 @@ export interface BackupConfigRequest {
   enabled: boolean
 }
 
+/**
+ * BackupConfigPatch changes some fields of an existing binding.
+ * `PATCH /backup/config`. Absent fields keep their stored value; the server
+ * refuses fields it does not know, so a typo is an error rather than a no-op.
+ */
+export interface BackupConfigPatch {
+  target_id?: string
+  /** 0 restores the default; anything else is floored at 7 (#22). */
+  retention_days?: number
+  enabled?: boolean
+}
+
 /** BackupConfig is a Space's stored binding. */
 export interface BackupConfig {
   space_id: string
@@ -115,7 +138,7 @@ export interface Schedule {
 }
 
 /** JobState is where a run got to. */
-export type JobState = 'queued' | 'running' | 'succeeded' | 'failed'
+export type JobState = 'pending' | 'running' | 'succeeded' | 'failed'
 
 /** JobKind distinguishes the three things a run can be. */
 export type JobKind = 'backup' | 'restore' | 'prune'
@@ -144,6 +167,12 @@ export interface Job {
   snapshots_kept?: number
   /** error is the sanitized message the runner recorded, never a path. */
   error?: string
+  /**
+   * Restore runs only: the space-relative folder the snapshot is written into,
+   * set from the moment the run starts, so a failed run's partial result can
+   * be found too.
+   */
+  restore_folder?: string
 }
 
 /** BackupStatus is everything the status board needs in one request. */
@@ -151,6 +180,15 @@ export interface BackupStatus {
   space_id: string
   /** configured reports whether the Space is bound to a target at all. */
   configured: boolean
+  /** keys_configured reports whether the key ceremony is complete. */
+  keys_configured: boolean
+  /**
+   * stale is the same verdict the backup_stale notification is sent on, so
+   * the board and the notification never disagree. stale_since is set only
+   * when stale is.
+   */
+  stale: boolean
+  stale_since?: string
   enabled: boolean
   cron?: string
   preset?: SchedulePreset

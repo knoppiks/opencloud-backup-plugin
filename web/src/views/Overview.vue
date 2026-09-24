@@ -1,19 +1,19 @@
 <script setup lang="ts">
-// The Backup Vault landing page.
+// The Backup Vault landing page: one card per Space, each saying whether that
+// Space is protected.
 //
-// Sub-phase 8c's job is the skeleton: this view proves the extension loads,
-// that the API client reaches backupd through the same origin with the user's
-// own token, and that every failure has somewhere to be shown. The per-Space
-// cards, the setup wizard and the status board are 8d — what is here is the
-// Space list plus whether each Space has been set up, which is exactly the data
-// those cards will hang off.
+// The Space list gates the page; each Space's status then loads on its own.
+// A status that fails shows on its card only. One Space whose status cannot
+// be read is not a reason to hide the others, least of all the ones that are
+// fine.
 //
 // `oc-*` elements are host globals: see components/RequestState.vue.
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { useBackupApi } from '../composables/useBackupApi'
 import RequestState from '../components/RequestState.vue'
-import { ApiError, isApiError, type Space, type Target } from '../api'
+import SpaceCard from '../components/SpaceCard.vue'
+import { ApiError, isApiError, type BackupStatus, type Space, type Target } from '../api'
 
 const { $gettext } = useGettext()
 const api = useBackupApi()
@@ -22,6 +22,35 @@ const loading = ref(true)
 const error = ref<ApiError | undefined>(undefined)
 const spaces = ref<Space[]>([])
 const targets = ref<Target[]>([])
+
+/** SpaceResult is one card's status, or why it has none. */
+interface SpaceResult {
+  status?: BackupStatus
+  error?: ApiError
+}
+const results = reactive<Record<string, SpaceResult>>({})
+
+/** Personal Space first, then shared ones by name: "mine" is what people look for. */
+const sortedSpaces = computed(() =>
+  [...spaces.value].sort((a, b) => {
+    const personal = Number(b.type === 'personal') - Number(a.type === 'personal')
+    return personal !== 0 ? personal : a.name.localeCompare(b.name)
+  })
+)
+
+function asApiError(err: unknown): ApiError {
+  // An unexpected throw is still shown, not swallowed: a blank page is the one
+  // outcome worse than an ugly error.
+  return isApiError(err) ? err : new ApiError('unknown', $gettext('Something went wrong'))
+}
+
+async function loadStatus(space: Space): Promise<void> {
+  try {
+    results[space.id] = { status: await api.status(space.id) }
+  } catch (err: unknown) {
+    results[space.id] = { error: asApiError(err) }
+  }
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -33,12 +62,15 @@ async function load(): Promise<void> {
     spaces.value = loadedSpaces
     targets.value = loadedTargets
   } catch (err: unknown) {
-    // An unexpected throw is still shown, not swallowed: a blank page is the
-    // one outcome worse than an ugly error.
-    error.value = isApiError(err) ? err : new ApiError('unknown', $gettext('Something went wrong'))
+    error.value = asApiError(err)
+    return
   } finally {
     loading.value = false
   }
+  for (const id of Object.keys(results)) {
+    delete results[id]
+  }
+  await Promise.all(spaces.value.map(loadStatus))
 }
 
 onMounted(load)
@@ -60,7 +92,7 @@ onMounted(load)
         there are. Saying so here beats letting a user reach the wizard and
         find an empty picker (decisions.md #12: the admin grants targets).
       -->
-      <p v-if="targets.length === 0" class="ext:mt-3" role="status">
+      <p v-if="targets.length === 0" class="ext:mt-3" role="status" data-testid="no-targets">
         {{
           $gettext(
             'No backup destination has been shared with you yet. Ask your administrator to grant you one.'
@@ -68,16 +100,13 @@ onMounted(load)
         }}
       </p>
 
-      <ul class="ext:mt-4 ext:flex ext:flex-col ext:gap-2">
-        <li
-          v-for="space in spaces"
-          :key="space.id"
-          class="ext:rounded ext:border ext:border-role-outline-variant ext:p-3"
-        >
-          <span class="ext:font-medium">{{ space.name }}</span>
-          <span class="ext:ml-2 ext:text-sm ext:text-role-on-surface-variant">
-            {{ space.type }}
-          </span>
+      <ul class="ext:mt-4 ext:grid ext:gap-3 ext:sm:grid-cols-2 ext:xl:grid-cols-3">
+        <li v-for="space in sortedSpaces" :key="space.id">
+          <SpaceCard
+            :space="space"
+            :status="results[space.id]?.status"
+            :error="results[space.id]?.error"
+          />
         </li>
       </ul>
     </RequestState>

@@ -48,6 +48,16 @@ export default defineWebApplication({
         name: 'backup-vault-overview',
         component: () => import('./views/Overview.vue'),
         meta: { authContext: 'user', title: $gettext('Backup Vault') }
+      },
+      {
+        // The Space id travels as a route param and reaches the view as a
+        // prop, so the view never needs the router (which this remote must
+        // not import; see composables/useBackupApi.ts).
+        path: '/space/:spaceId',
+        name: 'backup-vault-space',
+        component: () => import('./views/SpaceStatus.vue'),
+        props: true,
+        meta: { authContext: 'user', title: $gettext('Backup Vault') }
       }
     ]
 

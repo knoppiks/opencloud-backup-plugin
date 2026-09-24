@@ -39,9 +39,15 @@ it.
 
 **Phase 8 is split into sub-phases** (8a crypto interop, 8b admin API, 8c
 skeleton, 8d user flows, 8e admin view, 8f E2E); see that phase's doc for the
-split, the decisions behind it, and what has landed. **8a is implemented**: the
-browser crypto lives in `/web/src/crypto` and is pinned against `pkg/keys` in
-both directions.
+split, the decisions behind it, and what has landed. **8a–8c and 8d.1 are
+implemented**:
+- the browser crypto in `/web/src/crypto`, pinned against `pkg/keys` in both
+  directions;
+- the admin API;
+- the extension skeleton;
+- the overview and the status board.
+
+8d.2–8d.4 (wizard, restore, Recovery Key) are next.
 
 **Target management (decisions.md #12–#15):** backup targets are managed in-app
 by an OpenCloud admin, who grants each target to all or specific users. The

@@ -6,19 +6,17 @@
 // so "backend down", "token expired", "not allowed" and "nothing yet" look the
 // same everywhere and are worded once.
 //
-// Two rules the wording follows:
-//
-//   - **Branch on the code, not on the server's message.** The message is
-//     English, written by the service, and cannot be translated. It is shown
-//     only as a detail line, and only when it adds something.
-//   - **Offer a retry only when retrying could work.** A 403 will fail
-//     identically forever, and a retry button next to one is a lie.
+// The wording lives in api/errortext.ts, shared with inline action failures.
+// The rule this component adds: **offer a retry only when retrying could
+// work.** A 403 will fail identically forever, and a retry button next to one
+// is a lie.
 //
 // `oc-*` components are host globals on purpose: importing from
 // @opencloud-eu/design-system would bundle a second copy of it into this remote.
 import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { ApiError } from '../api'
+import { errorAdvice, errorTitle } from '../api/errortext'
 
 const props = defineProps<{
   loading: boolean
@@ -33,59 +31,9 @@ const emit = defineEmits<{ retry: [] }>()
 
 const { $gettext } = useGettext()
 
-const title = computed(() => {
-  const error = props.error
-  if (!error) {
-    return ''
-  }
-  switch (error.code) {
-    case 'offline':
-      return $gettext('The backup service cannot be reached')
-    case 'timeout':
-      return $gettext('The backup service did not answer in time')
-    case 'unauthorized':
-      return $gettext('Your session has expired')
-    case 'forbidden':
-      return $gettext('You do not have access to this')
-    case 'not_found':
-      return $gettext('This is not available')
-    case 'not_configured':
-      return $gettext('Backups are not set up for this space yet')
-    case 'run_in_progress':
-      return $gettext('A backup is already running for this space')
-    case 'target_unavailable':
-      return $gettext('The backup destination cannot be used right now')
-    case 'unavailable':
-      return $gettext('The backup service is temporarily unavailable')
-    case 'upstream_error':
-      return $gettext('OpenCloud did not answer the backup service')
-    case 'malformed_response':
-      return $gettext('The backup service sent something unexpected')
-    default:
-      return $gettext('Something went wrong')
-  }
-})
+const title = computed(() => (props.error ? errorTitle(props.error.code, $gettext) : ''))
 
-const advice = computed(() => {
-  const error = props.error
-  if (!error) {
-    return ''
-  }
-  switch (error.code) {
-    case 'offline':
-    case 'timeout':
-    case 'unavailable':
-      return $gettext('Your backups are unaffected. Try again in a moment.')
-    case 'unauthorized':
-      return $gettext('Reload the page to sign in again.')
-    case 'forbidden':
-      return $gettext('Ask a manager of this space if you need access.')
-    case 'upstream_error':
-      return $gettext('This usually clears up on its own. Try again in a moment.')
-    default:
-      return ''
-  }
-})
+const advice = computed(() => (props.error ? errorAdvice(props.error.code, $gettext) : ''))
 
 /**
  * detail is the service's own message.

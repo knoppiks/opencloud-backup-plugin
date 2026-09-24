@@ -83,4 +83,14 @@ describe('translation catalogue', () => {
       .map(([id]) => id)
     expect(copied).toEqual([])
   })
+
+  // An interpolated string whose translation drops or renames a placeholder
+  // renders a literal "%{when}" — or silently loses the date — only in German.
+  it('keeps every placeholder of the msgid', () => {
+    const placeholders = (text: string) => [...text.matchAll(/%\{(\w+)\}/g)].map((m) => m[1]).sort()
+    const mismatched = Object.entries(translations.de ?? {})
+      .filter(([id, value]) => placeholders(id).join() !== placeholders(value).join())
+      .map(([id]) => id)
+    expect(mismatched).toEqual([])
+  })
 })

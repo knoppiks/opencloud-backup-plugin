@@ -206,6 +206,7 @@ func roleTable() []route {
 
 		{"put config", http.MethodPut, "/backup/config",
 			[]byte(`{"target_id":"` + roleTargetID + `","retention_days":30,"enabled":true}`), cs3.RoleEditor},
+		{"patch config", http.MethodPatch, "/backup/config", []byte(`{"retention_days":30}`), cs3.RoleEditor},
 		{"put schedule", http.MethodPut, "/backup/schedule",
 			[]byte(`{"schedule":"0 3 * * *"}`), cs3.RoleEditor},
 		{"run backup", http.MethodPost, "/backup/run", nil, cs3.RoleEditor},
@@ -281,6 +282,84 @@ func TestExpiredMemberDoesNotSeeTheSpace(t *testing.T) {
 	decodeBody(t, rec.Body, &got)
 	if len(got.Spaces) != 0 {
 		t.Fatalf("expired member must see no spaces: %+v", got.Spaces)
+	}
+}
+
+// listSpacesAs returns GET /spaces as the given roleTestEnv subject.
+func (e *roleTestEnv) listSpacesAs(t *testing.T, subject string) (int, []spaceDTO, string) {
+	t.Helper()
+	rec := authGet(e.srv, "/api/v1/spaces", roleTestToken+subject)
+	var got struct {
+		Spaces []spaceDTO `json:"spaces"`
+	}
+	if rec.Code == http.StatusOK {
+		decodeBody(t, rec.Body, &got)
+	}
+	return rec.Code, got.Spaces, rec.Body.String()
+}
+
+// TestSpaceListReportsTheCallersOwnRole: the web UI decides what to offer from
+// this field, so it must be the effective role — group grants included — and
+// in the exact words the client matches on.
+func TestSpaceListReportsTheCallersOwnRole(t *testing.T) {
+	want := map[string]string{
+		"viewer":  "viewer",
+		"editor":  "editor",
+		"manager": "manager",
+		"grouped": "editor", // via the group grant only
+	}
+	for subject, role := range want {
+		env := newRoleTestEnv(t)
+		code, spaces, body := env.listSpacesAs(t, subject)
+		if code != http.StatusOK {
+			t.Fatalf("%s: list spaces = %d %s", subject, code, body)
+		}
+		if len(spaces) != 1 || spaces[0].Role != role {
+			t.Fatalf("%s: spaces = %+v, want role %q", subject, spaces, role)
+		}
+	}
+}
+
+// The role is the caller's own and nothing more: no other member's name or
+// grant appears in the listing.
+func TestSpaceListDoesNotDiscloseOtherMembers(t *testing.T) {
+	env := newRoleTestEnv(t)
+	_, _, body := env.listSpacesAs(t, "viewer")
+	for _, other := range []string{"\"editor\"", "\"manager\"", "lapsed", roleGroupID} {
+		if contains(body, other) {
+			t.Fatalf("listing for a viewer mentions %s: %s", other, body)
+		}
+	}
+}
+
+// A group could raise a direct viewer to editor, so when groups cannot be
+// resolved the listing refuses rather than understating the role (#20). A
+// manager's role cannot be raised by a group, so no lookup is attempted.
+func TestSpaceListRoleFailsClosedOnlyWhenAGroupCouldRaiseIt(t *testing.T) {
+	env := newRoleTestEnv(t)
+	env.groups.err = errors.New("graph down")
+	if code, _, body := env.listSpacesAs(t, "viewer"); code != http.StatusBadGateway {
+		t.Fatalf("viewer with a broken resolver = %d %s, want 502", code, body)
+	}
+
+	env = newRoleTestEnv(t)
+	env.groups.err = errors.New("graph down")
+	if code, spaces, body := env.listSpacesAs(t, "manager"); code != http.StatusOK || spaces[0].Role != "manager" {
+		t.Fatalf("manager with a broken resolver = %d %s", code, body)
+	}
+	if env.groups.calls != 0 {
+		t.Fatalf("resolved groups %d time(s) for a manager", env.groups.calls)
+	}
+}
+
+func TestRoleNameIsTheWireContract(t *testing.T) {
+	for role, want := range map[cs3.Role]string{
+		cs3.RoleNone: "none", cs3.RoleViewer: "viewer", cs3.RoleEditor: "editor",
+		cs3.RoleManager: "manager", cs3.RoleOwner: "owner",
+	} {
+		if got := roleName(role); got != want {
+			t.Fatalf("roleName(%v) = %q, want %q", role, got, want)
+		}
 	}
 }
 

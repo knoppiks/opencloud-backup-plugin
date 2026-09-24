@@ -331,12 +331,17 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 
 	var srwWrapper *keys.SRWWrapper
 	keyStore := keys.NewStateStore(backing, nil)
+	// The store holds ciphertext only and is wired regardless of the SRW key:
+	// the status board reads a Space's key state from it, and "is this Space
+	// set up" must not become unanswerable because the key that *adds* a wrap
+	// is missing. Setup itself still refuses without the SRW wrapper.
+	opts = append(opts, api.WithKeyStore(keyStore))
 	if wrapKeys.srw != nil {
 		srwWrapper, err = keys.NewSRWWrapper(wrapKeys.srw)
 		if err != nil {
 			return service{}, cleanup, err
 		}
-		opts = append(opts, api.WithKeyStore(keyStore), api.WithSRWWrapper(srwWrapper))
+		opts = append(opts, api.WithSRWWrapper(srwWrapper))
 		logger.Info("key service enabled")
 	} else {
 		logger.Warn("SRW_KEY unset; backup key endpoints will be unavailable")

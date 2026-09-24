@@ -18,6 +18,7 @@ export {
 export { BackupApi, DEFAULT_TIMEOUT_MS, type BackupApiOptions, type TokenSource } from './client'
 export type {
   BackupConfig,
+  BackupConfigPatch,
   BackupConfigRequest,
   BackupStatus,
   Job,
@@ -34,5 +35,6 @@ export type {
   ScheduleRequest,
   Snapshot,
   Space,
+  SpaceRole,
   Target
 } from './types'

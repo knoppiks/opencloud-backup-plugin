@@ -967,6 +967,20 @@ is listed here so the corrections are themselves on the record:
   a claim about the environment, and a claim about the environment tested only
   against a fake is untested.
 
+### Amendments from Phase 8 — 8d.1 (what the member's UI is told)
+
+- **`GET /spaces` carries the caller's own role.** This is not a disclosure of
+  membership. Other members' grants stay server-side. The caller's own role is
+  what they could learn by trying an action and reading the 403. It is resolved
+  under #20: if a group grant could raise the role and groups cannot be
+  resolved, the listing fails rather than understating the role.
+- **Staleness has one definition** (`notify.StaleRule`). The member
+  notification and the status board both use it, over the same history window,
+  so they cannot disagree.
+- **A job record may carry one path: the restore folder**, which the service
+  names itself. It never carries paths from the user's data, which is what the
+  earlier rule was protecting.
+
 ---
 
 ## Trust & key model

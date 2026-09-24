@@ -182,6 +182,40 @@ func TestStoreContract_PruneCountsRoundTrip(t *testing.T) {
 	}
 }
 
+// The restore folder is set at creation and must outlive the run finishing:
+// the member's UI links to it after the fact, including for a failed run.
+func TestStoreContract_RestoreFolderSurvivesFinish(t *testing.T) {
+	implementations := map[string]func(Clock) Store{
+		"memory": func(c Clock) Store { return NewMemoryStoreWithClock(c) },
+		"state":  func(c Clock) Store { return NewStateStore(state.NewMemoryStore(), c) },
+	}
+
+	for name, newImpl := range implementations {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newImpl(testutil.NewFakeClock(epoch))
+
+			j, err := store.Create(ctx, Job{
+				SpaceID: "s1", Kind: KindRestore, State: StateRunning,
+				RestoreFolder: "Restore/2026-05-06T07-08-09Z",
+			})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if err := store.Finish(ctx, j.ID, Outcome{State: StateFailed, Error: "failed"}); err != nil {
+				t.Fatalf("Finish: %v", err)
+			}
+			got, err := store.Get(ctx, j.ID)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.RestoreFolder != "Restore/2026-05-06T07-08-09Z" {
+				t.Fatalf("restore folder = %q", got.RestoreFolder)
+			}
+		})
+	}
+}
+
 func TestStateStore_SurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	backing := state.NewMemoryStore()

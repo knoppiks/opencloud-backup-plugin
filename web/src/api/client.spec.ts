@@ -136,6 +136,18 @@ describe('BackupApi requests', () => {
     expect(JSON.parse(init.body as string)).toEqual({ enabled: true, cron: '0 3 * * *' })
   })
 
+  // PATCH exists so an edit to one field does not re-send the others; a client
+  // that filled in the rest "helpfully" would reintroduce the race it removes.
+  it('sends only the fields given on a config patch', async () => {
+    const { calls, fetchImpl } = stub(200, { space_id: SPACE, retention_days: 30 })
+    await client(fetchImpl).patchBackupConfig(SPACE, { retention_days: 30 })
+
+    const { url, init } = calls[0]!
+    expect(url).toBe(`${BASE}/spaces/${encodeURIComponent(SPACE)}/backup/config`)
+    expect(init.method).toBe('PATCH')
+    expect(JSON.parse(init.body as string)).toEqual({ retention_days: 30 })
+  })
+
   it('sends only a snapshot id on restore: the destination is not the client to choose', async () => {
     const { calls, fetchImpl } = stub(202, { job_id: 'j', space_id: SPACE, snapshot_id: 'snap' })
     await client(fetchImpl).restore(SPACE, 'snap')
@@ -144,7 +156,7 @@ describe('BackupApi requests', () => {
   })
 
   it('accepts a 202 body for a started run', async () => {
-    const { fetchImpl } = stub(202, { job_id: 'job-1', space_id: SPACE, state: 'queued' })
+    const { fetchImpl } = stub(202, { job_id: 'job-1', space_id: SPACE, state: 'running' })
     expect(await client(fetchImpl).runBackup(SPACE)).toMatchObject({ job_id: 'job-1' })
   })
 })

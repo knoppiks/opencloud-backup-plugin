@@ -19,6 +19,7 @@ import type { RotateRecoveryKeyRequest, SetupRequest } from '../crypto'
 import { ApiError, apiErrorFromResponse } from './errors'
 import type {
   BackupConfig,
+  BackupConfigPatch,
   BackupConfigRequest,
   BackupStatus,
   Job,
@@ -154,6 +155,20 @@ export class BackupApi {
   setBackupConfig(spaceId: string, body: BackupConfigRequest): Promise<BackupConfig> {
     return this.request<BackupConfig>(this.space(spaceId, '/backup/config'), {
       method: 'PUT',
+      body
+    })
+  }
+
+  /**
+   * patchBackupConfig changes only the fields given. Editor role.
+   *
+   * Prefer this to setBackupConfig for edits: PUT replaces the whole record,
+   * so re-sending fields read a moment ago silently undoes a concurrent edit
+   * to them. Answers 404 for a Space with no binding yet.
+   */
+  patchBackupConfig(spaceId: string, body: BackupConfigPatch): Promise<BackupConfig> {
+    return this.request<BackupConfig>(this.space(spaceId, '/backup/config'), {
+      method: 'PATCH',
       body
     })
   }

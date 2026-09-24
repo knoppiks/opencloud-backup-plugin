@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -343,5 +344,173 @@ func TestConfigResponse_CarriesNoSecrets(t *testing.T) {
 		if contains(string(raw), forbidden) {
 			t.Fatalf("config response exposes %q: %s", forbidden, raw)
 		}
+	}
+}
+
+// --- PATCH /backup/config ---------------------------------------------------
+
+const configPath = "/api/v1/spaces/space-alice/backup/config"
+
+// seedConfig stores a complete configuration for alice's Space, so a patch has
+// something to leave untouched.
+func (e *backupTestEnv) seedConfig(t *testing.T) spacecfg.Config {
+	t.Helper()
+	cfg, err := e.configs.Put(context.Background(), spacecfg.Config{
+		SpaceID: "space-alice", TargetID: "t-granted",
+		RetentionWindow: 30 * 24 * time.Hour, Schedule: "0 4 * * 1", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	return cfg
+}
+
+func (e *backupTestEnv) patch(body string) *httptest.ResponseRecorder {
+	return doJSON(e.srv, http.MethodPatch, configPath, "alice-tok", []byte(body))
+}
+
+func (e *backupTestEnv) stored(t *testing.T) spacecfg.Config {
+	t.Helper()
+	cfg, err := e.configs.Get(context.Background(), "space-alice")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	return cfg
+}
+
+// The reason the route exists: changing one field leaves every other one
+// exactly as stored, including the schedule PUT never sees.
+func TestPatchBackupConfig_ChangesOnlyWhatIsSent(t *testing.T) {
+	env := newBackupTestEnv(t)
+	env.seedConfig(t)
+
+	rec := env.patch(`{"retention_days":60}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	var got configResponse
+	decodeBody(t, rec.Body, &got)
+	if got.RetentionDays != 60 {
+		t.Fatalf("response = %+v", got)
+	}
+	stored := env.stored(t)
+	if stored.RetentionWindow != 60*24*time.Hour || stored.TargetID != "t-granted" ||
+		stored.Schedule != "0 4 * * 1" || !stored.Enabled {
+		t.Fatalf("stored = %+v", stored)
+	}
+
+	if rec := env.patch(`{"enabled":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("patch enabled = %d %s", rec.Code, rec.Body)
+	}
+	stored = env.stored(t)
+	if stored.Enabled || stored.RetentionWindow != 60*24*time.Hour {
+		t.Fatalf("stored after enabled patch = %+v", stored)
+	}
+}
+
+// Zero means "the default", exactly as it does for PUT.
+func TestPatchBackupConfig_ZeroRetentionRestoresTheDefault(t *testing.T) {
+	env := newBackupTestEnv(t)
+	env.seedConfig(t)
+	rec := env.patch(`{"retention_days":0}`)
+	var got configResponse
+	decodeBody(t, rec.Body, &got)
+	if rec.Code != http.StatusOK || got.RetentionDays != int(spacecfg.DefaultRetentionWindow.Hours()/24) {
+		t.Fatalf("status = %d, response = %+v", rec.Code, got)
+	}
+}
+
+func TestPatchBackupConfig_EmptyPatchChangesNothing(t *testing.T) {
+	env := newBackupTestEnv(t)
+	before := env.seedConfig(t)
+	if rec := env.patch(`{}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body)
+	}
+	after := env.stored(t)
+	if after.TargetID != before.TargetID || after.RetentionWindow != before.RetentionWindow ||
+		after.Schedule != before.Schedule || after.Enabled != before.Enabled {
+		t.Fatalf("empty patch changed the record: %+v -> %+v", before, after)
+	}
+}
+
+// A new target is held to the same grant check as PUT, with the same answer
+// for "not granted" and "no such target".
+func TestPatchBackupConfig_TargetIsGrantChecked(t *testing.T) {
+	env := newBackupTestEnv(t)
+	env.seedConfig(t)
+	ctx := context.Background()
+
+	for _, targetID := range []string{"t-secret", "t-does-not-exist"} {
+		rec := env.patch(`{"target_id":"` + targetID + `"}`)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("target %q: status = %d, want 403", targetID, rec.Code)
+		}
+	}
+	if got := env.stored(t).TargetID; got != "t-granted" {
+		t.Fatalf("refused patch changed the target to %q", got)
+	}
+
+	if _, err := env.targets.CreateTarget(ctx, targets.Target{ID: "t-second", Name: "Second"}); err != nil {
+		t.Fatalf("CreateTarget: %v", err)
+	}
+	if err := env.targets.PutGrant(ctx, targets.Grant{TargetID: "t-second", Scope: targets.ScopeUser, UserSub: "alice"}); err != nil {
+		t.Fatalf("PutGrant: %v", err)
+	}
+	if rec := env.patch(`{"target_id":"t-second"}`); rec.Code != http.StatusOK {
+		t.Fatalf("granted target: status = %d %s", rec.Code, rec.Body)
+	}
+	if got := env.stored(t); got.TargetID != "t-second" || got.RetentionWindow != 30*24*time.Hour {
+		t.Fatalf("stored = %+v", got)
+	}
+}
+
+func TestPatchBackupConfig_Validation(t *testing.T) {
+	cases := map[string]string{
+		"malformed body":         `{`,
+		"retention below floor":  `{"retention_days":3}`,
+		"negative retention":     `{"retention_days":-1}`,
+		"empty target":           `{"target_id":""}`,
+		"unknown field":          `{"schedule":"* * * * *"}`,
+		"wrong type":             `{"enabled":"yes"}`,
+		"unknown beside a known": `{"retention_days":30,"retention":30}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := newBackupTestEnv(t)
+			before := env.seedConfig(t)
+			rec := env.patch(body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (%s)", rec.Code, rec.Body)
+			}
+			if after := env.stored(t); after.RetentionWindow != before.RetentionWindow || after.TargetID != before.TargetID {
+				t.Fatalf("refused patch changed the record: %+v", after)
+			}
+		})
+	}
+}
+
+// Binding a target is PUT's job; PATCH does not create a configuration.
+func TestPatchBackupConfig_UnconfiguredSpaceIsNotFound(t *testing.T) {
+	env := newBackupTestEnv(t)
+	rec := env.patch(`{"target_id":"t-granted"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if _, err := env.configs.Get(context.Background(), "space-alice"); err == nil {
+		t.Fatal("PATCH created a configuration")
+	}
+}
+
+func TestPatchBackupConfig_IsMemberGated(t *testing.T) {
+	env := newBackupTestEnv(t)
+	env.seedConfig(t)
+	if rec := doJSON(env.srv, http.MethodPatch, configPath, "bob-tok", []byte(`{"enabled":false}`)); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-member = %d, want 403", rec.Code)
+	}
+	if rec := doJSON(env.srv, http.MethodPatch, configPath, "", []byte(`{"enabled":false}`)); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated = %d, want 401", rec.Code)
+	}
+	if !env.stored(t).Enabled {
+		t.Fatal("refused patch took effect")
 	}
 }

@@ -61,6 +61,14 @@ export default tseslint.config(
   },
 
   {
+    // The host stand-ins for component tests: several tiny stubs in one file,
+    // with optional props that mirror the design system's own (which have no
+    // defaults either). Test doubles, not components anyone renders.
+    files: ['src/test/**/*.ts'],
+    rules: { 'vue/one-component-per-file': 'off', 'vue/require-default-prop': 'off' }
+  },
+
+  {
     // `src/crypto` has no Vue, no HTTP and no OpenCloud dependency, and 8a's
     // outcome records that as the reason the interop vectors could be written
     // before any UI existed. It has been true by care alone; this makes it

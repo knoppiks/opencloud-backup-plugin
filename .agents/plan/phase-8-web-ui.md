@@ -364,6 +364,189 @@ expensive to reverse once views are written against it.
    Spike 4 checked by hand. In-browser proof stays 8f's; this is the exit
    criterion made scriptable without it.
 
+### Sub-phase 8d plan — decisions taken before implementation
+
+These decisions were made before any view was written. Surveying the API from
+the browser's side showed four gaps. Each of them would otherwise have been
+papered over in TypeScript:
+
+- `GET /spaces` returns `{id, name, type}` and nothing else. It does not give
+  the caller's role or any backup state.
+- `/backup/status` has no staleness. The only "stale" rule lives inside
+  `notify.Monitor.isStale`.
+- Key state is available only from a second endpoint.
+- A restore job does not record the folder it wrote into, so the UI has nothing
+  to link to.
+
+1. **The backend closes those gaps. The frontend does not work around them.**
+   - `GET /spaces` gains the caller's **own** `role` on each Space. This is not
+     the membership disclosure that `spaceDTO`'s comment rules out, which is
+     about other people's grants. It is what the caller could learn anyway by
+     trying an action and receiving a 403.
+   - `/backup/status` gains `keys_configured` and `stale`. The staleness rule is
+     extracted from the monitor into one function that both call.
+   - Restore jobs gain a space-relative `restore_folder`.
+
+   The rejected alternative was N+1 requests per card, a TypeScript copy of the
+   staleness rule, and roles discovered by failing. Its cost is two copies of a
+   rule that must agree, and the one showing the user a green card would be the
+   copy nobody tests against the notifier.
+
+2. **Progress is indeterminate, and the plan's "progress bar" stays deferred.**
+   The Phase-6 amendment deferred live progress "to Phase 8 if the UI proves it
+   needs more". Nothing in 8d proves that. A running job shows "running since
+   <time>", an indeterminate indicator, and the last completed run's counts.
+   Status is polled only while a job runs and the view is mounted. A real
+   percentage would mean wiring kopia's uploader progress through the snapshot
+   engine boundary. That is backend work with its own tests, and does not belong
+   inside a UI sub-phase.
+
+3. **The wizard writes in the order that keeps a crash cheap, and resumes from
+   the server, not the browser.**
+   - The steps are `PUT /backup/config` (target binding: cheap, redoable), then
+     `POST /backup/setup` (keys: once-only, #17), then `PUT /backup/schedule`.
+   - When the wizard reopens, it reads `keystatus`/`status` and skips what is
+     already done. The ceremony above all is never offered again for a Space
+     with keys.
+   - Nothing about a half-finished setup is kept in browser storage. A Recovery
+     Key must never end up there.
+   - Setup's 409 is shown as "this Space is already protected".
+   - Role gates come from decision 1's `role`:
+     - An editor can bind a target and set a schedule, but meets "a manager of
+       this Space has to finish setup" at the key step.
+     - A viewer gets a read-only card.
+     - The server still enforces every one of these gates. The client gate is
+       about presentation, not security.
+
+4. **The confirmation gate asks for two randomly chosen groups of the seven.**
+   One group can be read off the screen before the key is hidden. The full key
+   is friction that a family audience would work around. The gate is a state in
+   the wizard's machine and cannot be skipped. It is unit-tested alongside the
+   self-verify failure.
+   - The Recovery Key lives in component state for the duration of the ceremony
+     only. It is never in a store, a route, a query string or a log.
+   - The Data Key is zeroized after the setup POST settles, whether it succeeds
+     or fails.
+
+5. **Schedule: daily or weekly, with a time of day.** Daily at 02:30 is
+   preselected; weekly adds a weekday. The time is in the **service's**
+   timezone (R6), and the UI says so rather than implying the browser's. There
+   is no cron input. A custom cron set through the API is shown read-only.
+   `weekday` is `omitempty` on the wire, so a weekly preset with no weekday
+   means Sunday.
+
+6. **Retention is editable on the status board by editors.** The floor (#22)
+   is explained in the form, not only in the 400.
+   - `PUT /backup/config` replaces the whole record, so a retention edit would
+     have to re-send `target_id` and `enabled` as read a moment earlier. Two
+     tabs could then silently undo each other's edits, because the state store
+     has no compare-and-set (#16). **So 8d.1 adds `PATCH /backup/config`:**
+     fields that are absent stay as stored, the same validation as `PUT`
+     applies (retention floor, grant re-check when `target_id` is present),
+     editor role, and 404 when the Space has no config yet. That narrows the
+     race to the field actually being edited. It does not remove it, and the
+     plan does not claim it does.
+   - The wizard does not ask about retention; it takes the default.
+
+7. **Shared-space retrieval becomes "Check my Recovery Key".**
+   - Any member (viewer and above, #7) can enter a Recovery Key. The browser
+     fetches the recovery envelope and unwraps it locally, then reports only
+     "this key works" or "this key does not open this Space's backups".
+     Nothing is sent back.
+   - The same view offers `recovery.ocbke` as a download for the offline
+     `decrypt` path.
+   - This also gives owners a way to find out they have lost their key before
+     a disaster instead of during one. The "lost key" wording (no escrow, no
+     re-setup) lives here and in the replacement flow.
+
+8. **i18n keeps the TypeScript catalogue and its spec. There is no `.po`
+   pipeline.** This deviates from 8c decision 6. The spec already fails on a
+   missing, stale or copied translation, and extraction tooling for two
+   languages would add tooling to maintain without adding any check the spec
+   does not already make. Revisit if a third language arrives.
+
+9. **Component tests arrive with the first view that needs them.** They use
+   `@vue/test-utils` (pinned), with the host's `oc-*` components stubbed in one
+   shared setup file.
+
+10. **Found during the survey, fixed in 8d.1:** `JobState` in
+    `web/src/api/types.ts` says `'queued'`, but Go says `pending`. The client
+    spec stubs the wrong value, so it agrees with the bug.
+
+**Slices.** Each slice leaves the repository green:
+
+| # | Slice | Delivers |
+|---|---|---|
+| 8d.1 | Backend additions + overview + status board | decision 1, `JobState` fix, component-test harness, per-Space cards, status board, "Back up now", retention edit |
+| 8d.2 | Setup wizard | target picker, ceremony + gate, schedule, done screen, resume |
+| 8d.3 | Restore | snapshot picker, confirm, progress, link to `restore_folder` |
+| 8d.4 | Recovery Key | replacement flow, "Check my Recovery Key", envelope download |
+
+### Sub-phase 8d.1 outcome (implemented, issue #35)
+
+The backend gaps are closed. The overview has per-Space cards, and there is a
+status board with "Back up now" and a retention edit. The component-test harness
+came in with the first view that needed it. Notes on what the plan did not say:
+
+- **The caller's role costs a group lookup more often than before.** `permits`
+  can stop at a threshold. `role` cannot, because a group grant may raise a
+  direct viewer to editor. So `GET /spaces` now resolves groups whenever a Space
+  has a group grant and the caller is below manager. A broken resolver used to
+  hide only Spaces the caller reached *through* a group. It now fails the whole
+  listing for such a caller (502/503). That is #20 applied as written:
+  understating the role would send someone to ask for a permission they already
+  hold. Managers and owners still trigger no lookup, and that is pinned by a
+  test.
+- **The staleness rule lives in `notify.StaleRule`, and the monitor's window
+  grew.** The monitor used to read 20 backup records and the status board 50,
+  so after a run of failures the two could disagree about when the last success
+  was. Both now read `notify.StaleLookback` (50).
+  `TestBackupStatus_StalenessAgreesWithTheMonitor` drives the real monitor over
+  the same stores and compares its notification with the board's flag in six
+  scenarios. A mutation check confirmed it catches a board that never reports
+  stale.
+- **The key store is wired even without `SRW_KEY`.** The status endpoint now
+  requires it, because "are keys configured" read as `false` when the store was
+  missing would offer a setup the server must refuse (#17). The deployment used
+  to wire it only alongside the SRW wrapper. Now it is always wired, and setup
+  still refuses with 503 without the wrapper. A side effect: without `SRW_KEY`,
+  `keystatus`, `recovery-envelope` and Recovery Key rotation now answer where
+  they used to 503. All three touch ciphertext only. Rotation is RK-side only
+  and needs no SRW key.
+- **`restore_folder` is written when the job is created, not when it
+  finishes.** A failed restore can still leave part of a snapshot behind, and
+  the member needs to know where. The `jobs` package comment said a job record
+  holds no paths. It now says "no paths from the user's data", because this one
+  is a name the service chooses.
+- **`PATCH /backup/config` refuses unknown fields.** A client that sends
+  `schedule` in a patch would otherwise get 200 and a change that never
+  happened. A patch with no fields is accepted and changes nothing.
+- **The overview still makes one status request per Space.** Decision 1 removed
+  the *second* request per card (`keystatus`) and the role guessing. It did not
+  batch statuses, because at household scale N parallel reads is not a
+  problem. Each card shows its own failure.
+- **No notification list on the board.** The plan's "warnings mirroring Phase 6
+  notifications" is met by `stale`/`stale_since` and `last_error`, which carry
+  the same facts the two member notification kinds do. The notification
+  *messages* are English server text, and a list of them would have been the
+  one untranslatable block on the page. The endpoint stays; a view can adopt it
+  if the notification kinds grow.
+- **i18n gained a check.** Interpolated strings (`%{when}`) arrived with the
+  dates, so `translations.spec.ts` now also fails when a German entry drops or
+  renames a placeholder. A mutation check confirmed it.
+- **The host stand-in is `src/test/host.ts`.** It holds the gettext plugin,
+  `oc-*` stubs that render plain HTML, and a `router-link` stub. Views reach
+  their Space id through route `props: true`, so no spec needs a router, and
+  the remote still imports no `vue-router` value.
+- **Verified against the fixture:** `make test-opencloud` passes (the job-record
+  field round-trips through the CS3 state store). `make web-install-fixture`
+  registers the new bundle and serves its entry chunk. Not verified: a real
+  user token against the new fields, which needs the OIDC browser flow that 8f
+  brings.
+- **Tests:** 236 web tests (was 143), in 18 files. Go tests for every new field
+  and route, including `PATCH` in the role table, so the credential-leak and
+  role sweeps cover it.
+
 ### Sub-phase 8c outcome (implemented, issue #35)
 
 The skeleton landed as planned. What the plan did not say, in rough order of how
