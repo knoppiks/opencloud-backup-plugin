@@ -36,6 +36,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -116,6 +117,18 @@ var (
 // stretched with a fresh random salt; when kdf is kdfNone the secret must be a
 // 32-byte uniformly random key (SRW/TW).
 func seal(plaintext, secret []byte, kind WrapKind, kdf kdfID, params ArgonParams) ([]byte, error) {
+	return sealWith(rand.Reader, plaintext, secret, kind, kdf, params)
+}
+
+// sealWith is seal with the randomness supplied by the caller.
+//
+// Production always passes crypto/rand.Reader through seal. The seam exists for
+// one reason: the interop vectors that pin this format for the browser client
+// (Phase 8) must be reproducible, and an envelope whose salt and nonce come from
+// the operating system cannot be compared byte-for-byte against anything. It is
+// unexported and takes the reader first so a call site that supplies weak
+// randomness is visible at a glance.
+func sealWith(random io.Reader, plaintext, secret []byte, kind WrapKind, kdf kdfID, params ArgonParams) ([]byte, error) {
 	if len(plaintext) == 0 {
 		return nil, fmt.Errorf("%w: empty plaintext", ErrBadEnvelope)
 	}
@@ -129,7 +142,7 @@ func seal(plaintext, secret []byte, kind WrapKind, kdf kdfID, params ArgonParams
 			return nil, fmt.Errorf("%w: zero salt length", ErrBadEnvelope)
 		}
 		salt = make([]byte, params.SaltLen)
-		if _, err := rand.Read(salt); err != nil {
+		if _, err := io.ReadFull(random, salt); err != nil {
 			return nil, fmt.Errorf("keys: salt: %w", err)
 		}
 	} else {
@@ -152,7 +165,7 @@ func seal(plaintext, secret []byte, kind WrapKind, kdf kdfID, params ArgonParams
 		return nil, fmt.Errorf("keys: aead: %w", err)
 	}
 	nonce := make([]byte, nonceSize)
-	if _, err := rand.Read(nonce); err != nil {
+	if _, err := io.ReadFull(random, nonce); err != nil {
 		return nil, fmt.Errorf("keys: nonce: %w", err)
 	}
 

@@ -47,6 +47,7 @@ type config struct {
 	list       bool
 	verify     bool
 	workDir    string
+	envelope   string
 }
 
 func run(args []string) error {
@@ -63,6 +64,8 @@ func run(args []string) error {
 	fs.BoolVar(&cfg.list, "list", false, "list the available snapshots and exit")
 	fs.BoolVar(&cfg.verify, "verify", false, "check the take-out against its manifest and exit")
 	fs.StringVar(&cfg.workDir, "work-dir", "", "directory for temporary files (default: system temp)")
+	fs.StringVar(&cfg.envelope, "envelope", "",
+		"recovery.ocbke downloaded from Backup Vault, used instead of the take-out's own")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -103,7 +106,7 @@ func verify(ctx context.Context, dir string) error {
 }
 
 func list(ctx context.Context, cfg config, rk []byte) error {
-	snaps, err := takeoutdecrypt.ListSnapshots(ctx, cfg.in, rk, cfg.workDir)
+	snaps, err := takeoutdecrypt.ListSnapshots(ctx, cfg.options(rk))
 	if err != nil {
 		return explain(err)
 	}
@@ -116,13 +119,7 @@ func list(ctx context.Context, cfg config, rk []byte) error {
 }
 
 func decrypt(ctx context.Context, cfg config, rk []byte) error {
-	res, err := takeoutdecrypt.Decrypt(ctx, takeoutdecrypt.Options{
-		Dir:         cfg.in,
-		RecoveryKey: rk,
-		OutDir:      cfg.out,
-		SnapshotID:  cfg.snapshotID,
-		WorkDir:     cfg.workDir,
-	})
+	res, err := takeoutdecrypt.Decrypt(ctx, cfg.options(rk))
 	if err != nil {
 		return explain(err)
 	}
@@ -130,6 +127,18 @@ func decrypt(ctx context.Context, cfg config, rk []byte) error {
 	fmt.Printf("restored snapshot %s (taken %s) to %s\n",
 		res.SnapshotID, res.StartTime.Local().Format(time.RFC3339), res.OutDir)
 	return nil
+}
+
+// options turns the flags into the library's options.
+func (cfg config) options(rk []byte) takeoutdecrypt.Options {
+	return takeoutdecrypt.Options{
+		Dir:          cfg.in,
+		RecoveryKey:  rk,
+		OutDir:       cfg.out,
+		SnapshotID:   cfg.snapshotID,
+		WorkDir:      cfg.workDir,
+		EnvelopeFile: cfg.envelope,
+	}
 }
 
 // readRecoveryKey prompts for the Recovery Key without echoing it. When stdin is
@@ -179,6 +188,12 @@ func explain(err error) error {
 	case errors.Is(err, takeout.ErrNoEnvelope):
 		return errors.New("this take-out has no key envelope, so it cannot be decrypted.\n" +
 			"       ask the administrator to extract it again after a backup has run")
+	case errors.Is(err, takeoutdecrypt.ErrBadEnvelopeFile):
+		return errors.New("the file given with -envelope is not a recovery key envelope.\n" +
+			"       download recovery.ocbke again from Backup Vault, or leave -envelope out")
+	case errors.Is(err, takeoutdecrypt.ErrEnvelopeFileMismatch):
+		return errors.New("the file given with -envelope does not belong to this take-out.\n" +
+			"       check that you downloaded it from the same space the take-out is from")
 	case errors.Is(err, takeoutdecrypt.ErrUnsupportedEnvelope):
 		return errors.New("this take-out was written by a newer version of the backup service.\n" +
 			"       use a newer 'decrypt' build to open it")
@@ -218,6 +233,10 @@ Usage:
 
 You will be asked for your Recovery Key; it is never shown as you type and is
 never stored.
+
+If your Recovery Key was replaced recently, the take-out may still hold the
+envelope for the old key. Download recovery.ocbke for the space from Backup
+Vault ("Recovery Key" page) and pass it with -envelope.
 
 Flags:
 `

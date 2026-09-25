@@ -8,8 +8,9 @@
 // this codebase.
 //
 // A job record is metadata only — ids, states, counts, timestamps and a
-// sanitized error string. It never holds key material, credentials, file names
-// or paths (AGENTS.md).
+// sanitized error string. It never holds key material, credentials, or the
+// names or paths of a user's files (AGENTS.md). The one path it carries is the
+// restore folder, which this service names and creates itself.
 package jobs
 
 import (
@@ -83,6 +84,12 @@ type Job struct {
 	// that found nothing to do.
 	SnapshotsDeleted int `json:"snapshots_deleted,omitempty"`
 	SnapshotsKept    int `json:"snapshots_kept,omitempty"`
+	// RestoreFolder is the space-relative folder a restore writes into
+	// ("Restore/<timestamp>"). Set when the restore starts, so a member can
+	// find a partial result of a failed run as well as a finished one. Empty
+	// for every other kind of run. It is a name this service chose, never a
+	// path from the user's data.
+	RestoreFolder string `json:"restore_folder,omitempty"`
 }
 
 // Duration reports how long a finished job took. It is zero while running.
@@ -117,6 +124,14 @@ type Store interface {
 	Create(ctx context.Context, j Job) (Job, error)
 	// Get returns one job by id, or ErrNotFound.
 	Get(ctx context.Context, id string) (Job, error)
+	// GetInSpace returns one job of one Space, or ErrNotFound — including for
+	// a job that exists but belongs to another Space, so a caller scoped to a
+	// Space cannot tell the two apart.
+	//
+	// Unlike Get it answers from the Space's own history rather than from any
+	// process-wide index, so it finds a job another process created a moment
+	// ago. It is the lookup to serve a member following their own run.
+	GetInSpace(ctx context.Context, spaceID, id string) (Job, error)
 	// List returns a Space's jobs, newest first.
 	List(ctx context.Context, spaceID string) ([]Job, error)
 	// ListRecent returns at most limit of a Space's jobs, newest first. A limit

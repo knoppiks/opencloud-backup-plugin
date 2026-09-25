@@ -224,11 +224,13 @@ func (r *Runner) begin(ctx context.Context, spaceID string, id snapshot.Snapshot
 	}
 
 	startedAt := r.deps.Clock.Now()
+	folder := RestoreFolderName(startedAt)
 	job, err := r.deps.Jobs.Create(ctx, jobs.Job{
-		SpaceID:    spaceID,
-		Kind:       jobs.KindRestore,
-		State:      jobs.StateRunning,
-		SnapshotID: string(id),
+		SpaceID:       spaceID,
+		Kind:          jobs.KindRestore,
+		State:         jobs.StateRunning,
+		SnapshotID:    string(id),
+		RestoreFolder: folder,
 	})
 	if err != nil {
 		release()
@@ -239,7 +241,7 @@ func (r *Runner) begin(ctx context.Context, spaceID string, id snapshot.Snapshot
 		space:      space,
 		snapshotID: id,
 		job:        job,
-		folder:     RestoreFolderName(startedAt),
+		folder:     folder,
 		startedAt:  startedAt,
 		release:    release,
 	}, nil

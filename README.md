@@ -14,11 +14,13 @@ backups **without ever seeing the plaintext content** of a user's data.
 > offline with their Recovery Key (verified with OpenCloud stopped), and a
 > user-triggered restore back into their Space. Unattended scheduling, retention
 > and key rotation have landed since. **There is no user interface yet**: every
-> flow below that mentions one is an HTTP API today, including the key ceremony,
-> which needs a client that generates the Recovery Key in the browser. Admin
-> management of backup targets is likewise API-less — targets come from
-> first-start seeding. Both are the next phase. The design and phased roadmap
-> live in [`.agents/plan/`](.agents/plan/).
+> flow below that mentions one is an HTTP API today. The browser half of the key
+> ceremony now exists under [`web/`](web/) — Recovery Key generation, the
+> envelope format and the self-verification step, tested byte-for-byte against
+> the Go implementation in both directions — but the views that would let a
+> person use it do not. Admin management of backup targets is likewise API-less:
+> targets come from first-start seeding. Both are the current phase. The design
+> and phased roadmap live in [`.agents/plan/`](.agents/plan/).
 
 ## What it does
 
@@ -105,6 +107,16 @@ cannot check, so it is on you.
   as OpenCloud, or set `TLS_CERT_FILE` and `TLS_KEY_FILE` and let it terminate
   TLS itself. **Nothing enforces this from inside the process** — it cannot see
   what is in front of it, so it logs which mode it started in and trusts you.
+- **One origin, shared with OpenCloud, under a path prefix.** The web extension
+  runs inside the OpenCloud SPA and calls this service with the user's own
+  bearer token. There is no CORS middleware here and no `OPTIONS` route, on
+  purpose: a second origin would be one more place the Data Key travels to. So
+  the ingress must route a prefix on OpenCloud's origin to this service —
+  `BACKUPD_BASE_PATH` (recommended `/backup`, giving `/backup/api/v1/…`) tells
+  it which prefix to expect, and the extension's `apiPath` must agree. Without
+  the prefix the API would sit at `/api/v1/`, a namespace OpenCloud also owns.
+  `/healthz` and `/readyz` stay at the root regardless, because the kubelet
+  reaches them on the pod rather than through the ingress.
 - **Exactly one instance.** Two instances against one state Space can mark each
   other's runs failed and back up the same Space twice, so the manifest deploys
   with `strategy: Recreate` — a rolling update would run two by design. Each
@@ -135,18 +147,37 @@ check the startup log says the zone you meant.
 The service needs one OpenCloud Space of its own, and it is picky about which,
 because that Space holds the server-side copy of every wrapped Data Key.
 
-1. Create a **project Space** for the service — for example "Backup service
-   state" — and add **no members** to it. The service account reaches it with
-   owner scope; nobody else needs to.
-2. Set `STATE_SPACE_ID` to that Space's id.
+**You cannot create it in the OpenCloud admin UI**, and it is worth saying why
+before the command that does. A Space created through the UI or the graph API
+leaves *its creator* — your admin account — holding a manager grant, and
+OpenCloud refuses to remove the last one ("cannot remove the last share with
+manager permissions on a space root"). That is a Space an end user can empty,
+which is the one thing this Space must not be.
+
+So the service creates it, as its own service account:
+
+```sh
+# Needs CS3_GATEWAY_ADDR, OC_SERVICE_ACCOUNT_ID and OC_SERVICE_ACCOUNT_SECRET —
+# the same values the service runs with. STATE_SPACE_ID must be unset.
+backupd provision-state-space
+# prints the space id on stdout
+```
+
+Set `STATE_SPACE_ID` to the id it prints. The Space it creates is granted to the
+service account alone, so no person is a member of it.
+
+The command refuses to run while `STATE_SPACE_ID` is already set. Creating a
+second state Space would leave the first one holding every wrapped Data Key with
+nothing pointing at it — which looks like a working deployment until somebody
+needs a restore.
 
 The service **refuses to start** if the configured Space is a personal Space or
-carries any member grant. A member could delete the folder without knowing what
-it was, and losing it would mean every unattended backup for the affected Spaces
-stopping until each user re-ran the key ceremony with their Recovery Key. (If
-OpenCloud is not reachable at startup the check is deferred to first use with a
-warning — an IdP or gateway that is a few seconds late must not crash-loop the
-backup service.)
+carries a member grant held by anyone other than its own service account. A
+member could delete the folder without knowing what it was, and losing it would
+mean every unattended backup for the affected Spaces stopping until each user
+re-ran the key ceremony with their Recovery Key. (If OpenCloud is not reachable
+at startup the check is deferred to first use with a warning — an IdP or gateway
+that is a few seconds late must not crash-loop the backup service.)
 
 What lives there is metadata and ciphertext only — wrapped key envelopes and
 wrapped target credentials, never plaintext keys. Records whose loss cannot be
@@ -327,6 +358,19 @@ wrong it says so and writes nothing.
 `decrypt -in ./takeout-alice -verify` checks a Take-Out against its manifest and
 needs no key at all.
 
+A Take-Out carries the key envelope the target held when it was made. After a
+Recovery Key replacement the target's copy is refreshed by the next backup run,
+so a Take-Out made in between still wants the *old* key. Any member can
+download the Space's current envelope as `recovery.ocbke` from the Space's
+"Recovery Key" page in Backup Vault and hand it to `decrypt`:
+
+```sh
+decrypt -in ./takeout-alice -envelope ./recovery.ocbke -out ./my-files
+```
+
+The same works for a Take-Out that was forced without an envelope. The file is
+ciphertext, as useless without the Recovery Key as the Take-Out itself.
+
 ### The normal case: OpenCloud is running (Path B)
 
 The user picks a backup and confirms; the files appear in a new
@@ -334,10 +378,17 @@ The user picks a backup and confirms; the files appear in a new
 overwritten or deleted. Only members of a Space can do this; an administrator
 cannot restore into someone else's Space, by design.
 
-Until the web UI lands this is two API calls with the user's own session:
+In Backup Vault this is "Restore files from a backup" on the Space's page. Any
+member can use it, viewers included. The page follows the restore to its end
+and then links to the folder. The folder is also listed under the Space's
+recent activity, including after a failed restore that left part of the files
+behind.
+
+The same flow over the API, with the user's own session:
 `GET /api/v1/spaces/{id}/snapshots` lists the backups,
 `POST /api/v1/spaces/{id}/restore` with `{"snapshot_id":"…"}` starts the restore
-as a background job.
+as a background job, and `GET /api/v1/spaces/{id}/backup/runs/{job_id}` follows
+that job until it is done.
 
 ### Replacing a key
 
@@ -347,11 +398,25 @@ protects, so no data is re-uploaded and no existing backup stops working.
 **A user's Recovery Key** (lost paper, a key that was photographed or shared):
 the current key unwraps the envelope on the user's own device, a new key is
 generated there, and only the re-wrapped envelope is sent back
-(`POST /api/v1/spaces/{id}/backup/recovery-key/rotate`). The old key stops
-working; the plaintext of neither key ever reaches the server, and no backup is
-re-uploaded. A user who has *lost* their Recovery Key cannot do this — there is
-no escrow, by design. **The client that performs this in a browser is the next
-phase**; the server side is in place.
+(`POST /api/v1/spaces/{id}/backup/recovery-key/rotate`). The plaintext of
+neither key ever reaches the server, and no backup is re-uploaded. A user who has
+*lost* their Recovery Key cannot do this — there is no escrow, by design.
+
+In Backup Vault this is "Replace the Recovery Key", reached from the Space's
+"Recovery Key" page, for managers and owners. The new key is shown once and two
+of its groups must be typed back before anything is sent. The old key stops
+working once the next backup has run, because that run refreshes the envelope
+copy on the target; the page offers "Back up now" for that reason. After that,
+destroy the old key. Other members of a shared Space need the new one.
+
+The request names the envelope it replaces (`replaces_sha256`, a hash of the
+ciphertext). If someone else replaced the key in the meantime, the service
+answers 409 instead of silently discarding one of the two new keys.
+
+The same page offers every member "Check my Recovery Key". It tries a key
+against the Space's envelope in the browser and says whether it opens the
+backups; nothing is sent. It is the way to find out that a key is lost before
+it is needed.
 
 Setting up a Space again is **not** a way to fix a lost key. The service refuses
 it, on purpose: a second setup would install a new Data Key and every existing
@@ -393,6 +458,51 @@ Users are unaffected and need do nothing.
   rather than the ability to run unattended backups at all.
 - Keep a copy of the `decrypt` binary somewhere that is not the server you are
   trying to recover.
+
+## Developing the web extension
+
+The UI is an OpenCloud Web extension in [`web/`](web/). It runs *inside* the
+OpenCloud SPA and calls this service with the signed-in user's own bearer token,
+which is why it has to share OpenCloud's origin — see the preconditions above.
+
+```sh
+make web-install                 # dependencies (pnpm via Corepack)
+make web-lint web-typecheck web-test web-build
+```
+
+To see it in a browser, against the pinned OpenCloud:
+
+```sh
+make dev-up                      # Garage + OpenCloud 7.3.0 + the fixture proxy, seeded
+make web-install-fixture         # build, install into the fixture, verify it registered
+```
+
+`web-install-fixture` restarts OpenCloud, because the apps directory is scanned
+at startup only — a bundle dropped in while it is running is invisible, with no
+error anywhere. It then checks that the app appears in `config.json`'s
+`external_apps` carrying its `config.apiPath`, and that the entry chunk serves
+200. `make web-verify-fixture` repeats the check without rebuilding.
+
+The fixture's `:9200` is a Caddy proxy providing the single origin: OpenCloud
+everywhere, and `/backup/*` to a `backupd` on the host at port 8080. OpenCloud
+itself is on `:9201` if you need to bypass the proxy. To run the service behind
+it:
+
+```sh
+source test/fixtures/opencloud/fixture.env   # written by up.sh
+backupd provision-state-space                # once; then add the id to fixture.env
+source test/fixtures/opencloud/fixture.env
+go run ./cmd/backupd
+```
+
+`fixture.env` carries `OIDC_AUDIENCE=web` (the SPA's client id — anything else
+401s every request), `BACKUPD_BASE_PATH=/backup` to match the proxy, and
+`SSL_CERT_FILE` pointing at the proxy's extracted CA root so the service can
+verify the OIDC issuer without turning verification off.
+
+`backupd` runs on the host rather than in the compose stack on purpose: tokens
+carry `iss: https://localhost:9200`, and inside a container `localhost` is that
+container.
 
 ## Documentation
 

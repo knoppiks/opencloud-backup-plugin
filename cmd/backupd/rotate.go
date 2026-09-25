@@ -42,8 +42,12 @@ func runCommand(ctx context.Context, name string, args []string, logger *slog.Lo
 		return runRotate(ctx, srwRotation, args, logger)
 	case "rotate-tw":
 		return runRotate(ctx, twRotation, args, logger)
+	case "provision-state-space":
+		return runProvisionStateSpace(ctx, args, logger)
 	default:
-		return fmt.Errorf("unknown command %q; known commands are rotate-srw and rotate-tw", name)
+		return fmt.Errorf(
+			"unknown command %q; known commands are provision-state-space, rotate-srw and rotate-tw",
+			name)
 	}
 }
 

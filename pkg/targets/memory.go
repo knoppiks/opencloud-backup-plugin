@@ -94,6 +94,9 @@ func (m *MemoryStore) ListTargets(_ context.Context) ([]Target, error) {
 
 // PutGrant adds or replaces a grant.
 func (m *MemoryStore) PutGrant(_ context.Context, g Grant) error {
+	if err := g.Validate(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	list := m.grants[g.TargetID]
@@ -119,6 +122,21 @@ func (m *MemoryStore) DeleteGrant(_ context.Context, g Grant) error {
 			return nil
 		}
 	}
+	return nil
+}
+
+// ReplaceGrants sets a target's whole audience in one write.
+func (m *MemoryStore) ReplaceGrants(_ context.Context, targetID string, grants []Grant) error {
+	if targetID == "" {
+		return errTargetIDRequired
+	}
+	list, err := normalizeGrants(targetID, grants)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.grants[targetID] = list
 	return nil
 }
 
@@ -184,6 +202,32 @@ func grantsAllow(grants []Grant, userSub string, spaceSet map[string]struct{}) b
 		}
 	}
 	return false
+}
+
+// normalizeGrants prepares a whole audience for storage: every grant is bound
+// to targetID whatever the caller put in the body, each one must be well
+// formed, and exact duplicates collapse (two identical grants say the same
+// thing, so keeping both would only make the stored list disagree with what an
+// admin sees).
+func normalizeGrants(targetID string, grants []Grant) ([]Grant, error) {
+	out := make([]Grant, 0, len(grants))
+	for _, g := range grants {
+		g.TargetID = targetID
+		if err := g.Validate(); err != nil {
+			return nil, err
+		}
+		duplicate := false
+		for _, kept := range out {
+			if grantEqual(kept, g) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			out = append(out, g)
+		}
+	}
+	return out, nil
 }
 
 func grantEqual(a, b Grant) bool {

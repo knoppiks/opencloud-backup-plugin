@@ -285,6 +285,75 @@ func TestStore_CheckRefusesASpaceUsersCanReach(t *testing.T) {
 			t.Fatalf("the error names a member: %v", err)
 		}
 	})
+
+	// OpenCloud 7.3.0 gives every project Space a manager grant when it is
+	// created and refuses to remove the last one, so a Space with zero grants
+	// cannot exist. The grant the service account holds on the Space it
+	// created itself is the service's access to its own memory.
+	t.Run("the service account's own grant is not an end user", func(t *testing.T) {
+		fake := newFakeSpace()
+		fake.space.Members = map[string]cs3.Member{"svc-account": {Role: cs3.RoleManager}}
+		store, err := New(fake, Options{SpaceID: "state-space", ServiceAccountID: "svc-account"})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if err := store.Check(ctx); err != nil {
+			t.Fatalf("Check: %v", err)
+		}
+	})
+
+	// The exemption is for one principal, not for "a single manager". An admin
+	// who can empty the Space is exactly what the check exists to refuse.
+	t.Run("an end user alongside the service account is still refused", func(t *testing.T) {
+		fake := newFakeSpace()
+		fake.space.Members = map[string]cs3.Member{
+			"svc-account": {Role: cs3.RoleManager},
+			"user-alice":  {Role: cs3.RoleManager},
+		}
+		store, err := New(fake, Options{SpaceID: "state-space", ServiceAccountID: "svc-account"})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		err = store.Check(ctx)
+		if err == nil {
+			t.Fatal("an end user's grant must still be refused")
+		}
+		if !strings.Contains(err.Error(), "1 member grant") {
+			t.Fatalf("err = %v, want it to count only the foreign grant", err)
+		}
+		if strings.Contains(err.Error(), "user-alice") {
+			t.Fatalf("the error names a member: %v", err)
+		}
+	})
+
+	// An unconfigured service account must not widen the predicate: silence is
+	// not consent, and the strict answer is the safe one.
+	t.Run("without a configured service account the check stays strict", func(t *testing.T) {
+		fake := newFakeSpace()
+		fake.space.Members = map[string]cs3.Member{"svc-account": {Role: cs3.RoleManager}}
+		store, err := New(fake, Options{SpaceID: "state-space"})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if err := store.Check(ctx); err == nil {
+			t.Fatal("with no service account configured, any grant must be refused")
+		}
+	})
+
+	// A personal Space is refused whoever holds the grants: it belongs to a
+	// person, and the service's memory is not their document.
+	t.Run("a personal space is refused even with only the service account", func(t *testing.T) {
+		fake := newFakeSpace()
+		fake.space.Type = "personal"
+		fake.space.Members = map[string]cs3.Member{"svc-account": {Role: cs3.RoleManager}}
+		store, err := New(fake, Options{SpaceID: "state-space", ServiceAccountID: "svc-account"})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if err := store.Check(ctx); err == nil {
+			t.Fatal("a personal space must be refused")
+		}
+	})
 }
 
 func TestStore_RequiresAConfiguredSpace(t *testing.T) {

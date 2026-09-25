@@ -141,7 +141,7 @@ func TestMonitor_IsNotFooledByABankOfPrunes(t *testing.T) {
 	h.clock.Advance(72 * time.Hour)
 	h.succeed("s1")
 
-	for range historyLookback + 5 {
+	for range StaleLookback + 5 {
 		h.clock.Advance(time.Minute)
 		j, err := h.jobs.Create(ctx, jobs.Job{SpaceID: "s1", Kind: jobs.KindPrune, State: jobs.StateRunning})
 		if err != nil {

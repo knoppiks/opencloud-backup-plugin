@@ -16,10 +16,13 @@
 package api
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/keys"
@@ -167,6 +170,47 @@ type rotateRecoveryKeyRequest struct {
 	// WrappedDKRK is the base64 RK-wrapped DK envelope, produced client-side
 	// under the new Recovery Key.
 	WrappedDKRK string `json:"wrapped_dk_rk"`
+	// ReplacesSHA256 is the lowercase hex SHA-256 of the envelope the client
+	// unwrapped. It is a hash of ciphertext any member may already read, not
+	// key material. The rotation lands only if that envelope is still the one
+	// stored: without it, two managers rotating at once would both get 200, and
+	// the one whose write lost would keep a Recovery Key that opens nothing.
+	ReplacesSHA256 string `json:"replaces_sha256"`
+}
+
+// envelopeDigest is how a rotation names the envelope it replaces.
+func envelopeDigest(blob []byte) string {
+	sum := sha256.Sum256(blob)
+	return hex.EncodeToString(sum[:])
+}
+
+// isEnvelopeDigest accepts exactly the form envelopeDigest produces.
+func isEnvelopeDigest(s string) bool {
+	if len(s) != sha256.Size*2 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// spaceLocks serialises writes to one Space's recovery envelope. The state
+// store has no compare-and-set (decisions.md #16), but the service runs as a
+// single instance (#16 again), so a lock held across "read, compare, write"
+// inside this process is a real compare-and-set for the one writer there is.
+type spaceLocks struct {
+	locks sync.Map // space id -> *sync.Mutex
+}
+
+// lock takes the Space's lock and returns its release.
+func (l *spaceLocks) lock(spaceID string) (unlock func()) {
+	m, _ := l.locks.LoadOrStore(spaceID, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // handleRotateRecoveryKey stores a new recovery envelope for a Space, leaving
@@ -196,12 +240,30 @@ func (s *Server) handleRotateRecoveryKey(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
 		return
 	}
+	if !isEnvelopeDigest(req.ReplacesSHA256) {
+		writeError(w, http.StatusBadRequest, "bad_request", "replaces_sha256 must name the envelope being replaced")
+		return
+	}
 	rkBlob, ok := decodeRecoveryEnvelope(w, req.WrappedDKRK)
 	if !ok {
 		return
 	}
 	info, ok := checkRecoveryEnvelope(w, rkBlob)
 	if !ok {
+		return
+	}
+
+	unlock := s.rkLocks.lock(spaceID)
+	defer unlock()
+
+	current, err := s.keyStore.GetRK(spaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not read recovery envelope")
+		return
+	}
+	if envelopeDigest(current.Blob) != req.ReplacesSHA256 {
+		writeError(w, http.StatusConflict, "conflict",
+			"the recovery key was replaced since this request was prepared")
 		return
 	}
 

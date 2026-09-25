@@ -3,6 +3,8 @@ package main
 import (
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -148,6 +150,116 @@ func TestTLSFiles(t *testing.T) {
 	}
 	if cert != "/etc/tls/tls.crt" || key != "/etc/tls/tls.key" {
 		t.Fatalf("tlsFiles = (%q, %q)", cert, key)
+	}
+}
+
+// The base path is a path, not an origin. The browser client refuses an
+// absolute URL on its side for the same reason: the extension and this service
+// must share an origin, because nothing here implements CORS.
+func TestResolveBasePath(t *testing.T) {
+	cases := map[string]struct {
+		set     string
+		want    string
+		wantErr string
+	}{
+		"unset":                {set: "", want: ""},
+		"prefix":               {set: "/backup", want: "/backup"},
+		"trailing slash":       {set: "/backup/", want: "/backup"},
+		"nested":               {set: "/apps/backup", want: "/apps/backup"},
+		"whitespace":           {set: "  /backup  ", want: "/backup"},
+		"root means unset":     {set: "/", want: ""},
+		"double root is unset": {set: "//", want: ""},
+
+		"absolute URL":       {set: "https://backup.example.org/api", wantErr: "not a URL"},
+		"scheme relative":    {set: "//backup.example.org/api", wantErr: "clean path"},
+		"no leading slash":   {set: "backup", wantErr: "must start with a slash"},
+		"query":              {set: "/backup?x=1", wantErr: "not a URL"},
+		"fragment":           {set: "/backup#x", wantErr: "not a URL"},
+		"empty segment":      {set: "/backup//api", wantErr: "clean path"},
+		"relative segment":   {set: "/backup/../etc", wantErr: "clean path"},
+		"shadows healthz":    {set: "/healthz", wantErr: "health probes"},
+		"shadows readyz":     {set: "/readyz", wantErr: "health probes"},
+		"shadows with slash": {set: "/readyz/", wantErr: "health probes"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(basePathVar, tc.set)
+			got, err := resolveBasePath()
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("resolveBasePath(%q) = %q, want an error", tc.set, got)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want it to mention %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveBasePath(%q): %v", tc.set, err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveBasePath(%q) = %q, want %q", tc.set, got, tc.want)
+			}
+		})
+	}
+}
+
+// The prefix must reach the routes as if it were not there, and must not move
+// the health probes: the kubelet hits those directly on the pod and knows
+// nothing about the ingress that adds the prefix.
+func TestMountBasePath(t *testing.T) {
+	inner := http.NewServeMux()
+	inner.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "healthz")
+	})
+	inner.HandleFunc("/api/v1/spaces", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "spaces")
+	})
+
+	cases := map[string]struct {
+		basePath string
+		request  string
+		wantCode int
+		wantBody string
+	}{
+		"no prefix serves routes at the root": {
+			basePath: "", request: "/api/v1/spaces", wantCode: 200, wantBody: "spaces",
+		},
+		"no prefix serves the probe": {
+			basePath: "", request: "/healthz", wantCode: 200, wantBody: "healthz",
+		},
+		"prefix serves routes beneath it": {
+			basePath: "/backup", request: "/backup/api/v1/spaces", wantCode: 200, wantBody: "spaces",
+		},
+		"prefix keeps the probe at the root": {
+			basePath: "/backup", request: "/healthz", wantCode: 200, wantBody: "healthz",
+		},
+		// The whole point of the prefix: the unprefixed path must not be a
+		// second way in, or a collision with OpenCloud's own /api/v1 would
+		// still be reachable.
+		"prefix does not also serve the bare path": {
+			basePath: "/backup", request: "/api/v1/spaces", wantCode: 404,
+		},
+		// The probe is reachable at both places, and that is deliberate: the
+		// whole handler mounts under the prefix, and the root entry exists to
+		// add the kubelet's path rather than to take the other one away.
+		"prefix also serves the probe beneath it": {
+			basePath: "/backup", request: "/backup/healthz", wantCode: 200, wantBody: "healthz",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mountBasePath(inner, tc.basePath).ServeHTTP(
+				rec, httptest.NewRequest(http.MethodGet, tc.request, nil))
+			if rec.Code != tc.wantCode {
+				t.Fatalf("GET %q with basePath %q = %d, want %d",
+					tc.request, tc.basePath, rec.Code, tc.wantCode)
+			}
+			if tc.wantBody != "" && rec.Body.String() != tc.wantBody {
+				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBody)
+			}
+		})
 	}
 }
 

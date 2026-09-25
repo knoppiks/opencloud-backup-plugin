@@ -105,6 +105,9 @@ func Bootstrap(ctx context.Context, store Store, sealer CredSealer, cfg Bootstra
 		DisableTLS:   cfg.DisableTLS,
 		WrappedCreds: wrapped,
 		Version:      version,
+		// Recorded from what was supplied, not from the sealed blob: nothing
+		// outside a run opens that (decisions.md #14).
+		MaintenanceConfigured: cfg.MaintenanceCreds.Complete(),
 	}); err != nil {
 		return false, fmt.Errorf("targets: bootstrap: create target: %w", err)
 	}

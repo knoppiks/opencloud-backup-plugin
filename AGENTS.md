@@ -52,6 +52,27 @@ is*, see `README.md`. For *design decisions and rationale*, see
   `.agents/plan/decisions.md`** (with rationale) rather than diverging quietly.
 - `.agents/` is always writable; keep planning docs in sync with reality.
 
+## Secret scanning (CI runs gitleaks on the full history)
+
+CI fails on any gitleaks finding in **any commit**, so a leak cannot be fixed by
+a follow-up edit alone: once committed, it is in history.
+
+- **Never write key-shaped literals in source or tests.** That includes
+  Recovery Keys (`ocbk1-XXXXX-…`), base64/hex keys, tokens, and "fake" secrets
+  in specs. gitleaks' `generic-api-key` rule cannot tell a test value from a
+  real one. Generate test keys at runtime (`generateRecoveryKey()`,
+  `randomBytes`), or build fixed ones from parts (e.g. `groups.join('-')`).
+- **Scan before staging is done.** Run `make secret-scan`, or without a local
+  gitleaks, the CI-pinned version:
+  `go run github.com/zricethezav/gitleaks/v8@v<GITLEAKS_VERSION from ci.yml> git . --redact --no-banner`
+  plus `… dir . --redact --no-banner` for uncommitted changes.
+- **Genuine test material** (golden vectors, fixture credentials) is
+  allowlisted by path in `.gitleaks.toml`, with a reason. Add to it only for
+  generated or fixture files, never to silence a finding in hand-written code.
+- **A finding already in history** is fixed in the source *and* its
+  fingerprint added to `.gitleaksignore` with a reason. Rewriting published
+  history is the user's call, not the agent's.
+
 ## Git
 
 - **Never commit.** The user commits. You may `git add` to stage intended files

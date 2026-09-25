@@ -126,12 +126,16 @@ envelope. The two are deliberately indistinguishable.
 ## 4. Recovery Key encoding
 
 ```
-ocbk1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX
+ocbk1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXX
 ```
 
 - `ocbk1` — versioned prefix. A future incompatible format uses `ocbk2`.
-- Payload — 160 bits of entropy + 8-bit checksum = 168 bits → **35 Crockford
-  base32 characters**, in 7 groups of 5.
+- Payload — 160 bits of entropy + 8-bit checksum = 168 bits → **34 Crockford
+  base32 characters**, in six groups of five and a final group of four; 46
+  characters including the prefix and dashes. The last character carries two
+  padding bits, always zero, rejected on decode when they are not — a typo
+  confined to those bits would otherwise decode to the same entropy and pass
+  the checksum.
 - **Crockford base32** alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ` excludes
   `I`, `L`, `O`, `U` so the key survives handwriting and retyping.
 - **Checksum** = first byte of `SHA-256(entropy)`. It catches typos *before* the
@@ -186,8 +190,15 @@ opens nothing. The only reason this is recoverable at all is that envelopes are
 append-only (decisions.md #16): the superseded envelope is still stored, so an
 operator can restore the previous one. Do not rely on that.
 
-Phase 8's crypto-interop test is where this invariant is checked for the shipped
-client.
+For the shipped client the invariant is code, not advice: `performSetupCeremony`
+and `performRecoveryKeyRotation` (`web/src/crypto/ceremony.ts`) unwrap the
+envelope they just built — through the *display string*, not the entropy they
+generated, because the display string is all the user will ever have — and
+refuse to return anything if the recovered Data Key differs.
+
+Interop between that client and this package is pinned in both directions:
+`pkg/keys/testdata/vectors.json` (Go's bytes, reproduced by the browser) and
+`web/testdata/browser-vectors.json` (the browser's envelopes, opened by Go).
 
 ---
 

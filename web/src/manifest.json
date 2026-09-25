@@ -1,0 +1,5 @@
+{
+  "config": {
+    "apiPath": "/backup/api/v1"
+  }
+}
