@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,9 +26,11 @@ var apiEpoch = time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
 type fakeAdvisor struct {
 	next time.Time
 	err  error
+	zone string
 }
 
 func (f fakeAdvisor) NextRun(context.Context, string) (time.Time, error) { return f.next, f.err }
+func (f fakeAdvisor) Timezone() string                                   { return f.zone }
 
 // scheduleEnv extends the backup environment with the Phase-6 collaborators.
 type scheduleEnv struct {
@@ -142,6 +146,75 @@ func TestPutSchedule_RejectsNonsense(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("body %s: status = %d, want 400", body, rec.Code)
 		}
+	}
+}
+
+// A misspelt field used to be ignored, and `enabled` is a plain bool, so the
+// request below answered 200 having reset the schedule and switched scheduled
+// backups off. It must be refused and change nothing.
+func TestPutSchedule_RefusesUnknownFields(t *testing.T) {
+	env := newScheduleEnv(t, fakeAdvisor{})
+	env.configure(t, "0 4 * * *", true)
+
+	body := []byte(`{"schedule":"0 3 * * *"}`)
+	rec := doJSON(env.srv, http.MethodPut, "/api/v1/spaces/space-alice/backup/schedule", "alice-tok", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	stored, err := env.configs.Get(context.Background(), "space-alice")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if stored.Schedule != "0 4 * * *" || !stored.Enabled {
+		t.Fatalf("a refused request changed the config: %+v", stored)
+	}
+}
+
+// The UI labels "02:30" with the zone the scheduler reads it in; every
+// response that carries a preset carries the zone too.
+func TestScheduleResponses_NameTheSchedulerZone(t *testing.T) {
+	env := newScheduleEnv(t, fakeAdvisor{zone: "Europe/Berlin"})
+	env.configure(t, "30 2 * * *", false)
+
+	put := doJSON(env.srv, http.MethodPut, "/api/v1/spaces/space-alice/backup/schedule", "alice-tok",
+		[]byte(`{"enabled":true,"preset":{"kind":"weekly","hour":3,"minute":0,"weekday":1}}`))
+	get := doJSON(env.srv, http.MethodGet, "/api/v1/spaces/space-alice/backup/schedule", "alice-tok", nil)
+	for name, rec := range map[string]*httptest.ResponseRecorder{"put": put, "get": get} {
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, body %s", name, rec.Code, rec.Body)
+		}
+		var got scheduleResponse
+		decodeBody(t, rec.Body, &got)
+		if got.Timezone != "Europe/Berlin" {
+			t.Fatalf("%s: timezone = %q", name, got.Timezone)
+		}
+	}
+
+	status := doJSON(env.srv, http.MethodGet, "/api/v1/spaces/space-alice/backup/status", "alice-tok", nil)
+	var got statusResponse
+	decodeBody(t, status.Body, &got)
+	if got.Timezone != "Europe/Berlin" {
+		t.Fatalf("status: timezone = %q", got.Timezone)
+	}
+}
+
+// With no zone to name, the field is absent rather than a guess: the UI falls
+// back to "server time", which is true, instead of a name that may not be.
+func TestScheduleResponses_OmitAnUnnamedZone(t *testing.T) {
+	for name, advisor := range map[string]scheduleAdvisor{"unnamed": fakeAdvisor{}, "no scheduler": nil} {
+		t.Run(name, func(t *testing.T) {
+			env := newScheduleEnv(t, advisor)
+			env.configure(t, "30 2 * * *", true)
+			for _, path := range []string{"/backup/schedule", "/backup/status"} {
+				rec := doJSON(env.srv, http.MethodGet, "/api/v1/spaces/space-alice"+path, "alice-tok", nil)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s: status = %d", path, rec.Code)
+				}
+				if strings.Contains(rec.Body.String(), `"timezone"`) {
+					t.Fatalf("%s: carries a timezone: %s", path, rec.Body)
+				}
+			}
+		})
 	}
 }
 

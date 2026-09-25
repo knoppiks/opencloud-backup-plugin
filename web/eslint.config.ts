@@ -126,5 +126,51 @@ export default tseslint.config(
     }
   },
 
+  {
+    // The setup wizard's machine holds the Recovery Key between the ceremony
+    // and the setup POST. It is plain TypeScript so it can be tested without
+    // Vue, and it must never persist anything: a key in browser storage
+    // outlives the tab, the session and the person's intention (8d decision 3).
+    // SetupWizard.vue renders that key, so it is held to the storage ban too.
+    files: ['src/wizard/**/*.ts', 'src/views/SetupWizard.vue'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        { name: 'localStorage', message: 'The setup wizard must not persist anything.' },
+        { name: 'sessionStorage', message: 'The setup wizard must not persist anything.' },
+        { name: 'indexedDB', message: 'The setup wizard must not persist anything.' }
+      ],
+      'no-restricted-properties': [
+        'error',
+        { property: 'localStorage', message: 'The setup wizard must not persist anything.' },
+        { property: 'sessionStorage', message: 'The setup wizard must not persist anything.' },
+        { property: 'indexedDB', message: 'The setup wizard must not persist anything.' }
+      ]
+    }
+  },
+
+  {
+    files: ['src/wizard/**/*.ts'],
+    ignores: ['src/wizard/**/*.spec.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            { name: 'vue', message: 'src/wizard is the machine, not the view: keep Vue out.' },
+            { name: 'vue3-gettext', message: 'src/wizard is the machine, not the view.' },
+            { name: 'vue-router', message: 'src/wizard is the machine, not the view.' }
+          ],
+          patterns: [
+            {
+              group: ['@opencloud-eu/*'],
+              message: 'src/wizard is the machine, not the view.'
+            }
+          ]
+        }
+      ]
+    }
+  },
+
   prettier
 )

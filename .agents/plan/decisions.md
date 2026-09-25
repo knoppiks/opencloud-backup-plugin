@@ -981,6 +981,21 @@ is listed here so the corrections are themselves on the record:
   names itself. It never carries paths from the user's data, which is what the
   earlier rule was protecting.
 
+### Amendments from Phase 8 — 8d.2 (setup order and the schedule's zone)
+
+- **A Space is enabled only once it has keys.** The scheduler never looks at
+  keys, so an enabled Space without them fails at every due time and fires a
+  `run_failed` notification each time. The wizard therefore binds the target
+  with `enabled: false` and switches runs on at the schedule step, which is
+  reachable only after the ceremony. Only the client enforces this. The API
+  still lets a caller enable a keyless Space (see the 8d.2 outcome).
+- **The schedule's zone is part of the API.** `/backup/status` and
+  `/backup/schedule` carry `timezone`, the IANA name presets are read in (R6),
+  or omit it when the service cannot name it. A preset hour with no zone
+  beside it is a time the user cannot interpret.
+- **`PUT /backup/schedule` refuses unknown fields.** `enabled` is a plain bool,
+  so a misspelt body used to answer 200 while switching backups off.
+
 ---
 
 ## Trust & key model

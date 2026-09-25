@@ -20,10 +20,11 @@ import {
   DEFAULT_ARGON_PARAMS,
   open,
   seal,
+  UnwrapError,
   WrapKind,
   type ArgonParams
 } from './envelope'
-import { decodeRecoveryKey, generateRecoveryKey } from './recoverykey'
+import { decodeRecoveryKey, generateRecoveryKey, RecoveryKeyError } from './recoverykey'
 
 /** DK_SIZE is the Data Key length in bytes; it is also the kopia repo password. */
 export const DK_SIZE = 32
@@ -198,6 +199,35 @@ export async function recoverDataKey(
   } finally {
     zeroize(secret)
   }
+}
+
+/**
+ * recoveryKeyOpens reports whether a Recovery Key opens an envelope, and
+ * keeps nothing: the recovered Data Key is zeroized before returning.
+ *
+ * "No" covers every way a key can be the wrong one — mistyped, from another
+ * Space, or opening to something that is not a Data Key. An envelope that is
+ * itself malformed is not an answer about the key, and is thrown.
+ */
+export async function recoveryKeyOpens(
+  envelope: Uint8Array,
+  recoveryKey: string
+): Promise<boolean> {
+  let dataKey: Uint8Array
+  try {
+    dataKey = await recoverDataKey(envelope, recoveryKey)
+  } catch (err: unknown) {
+    if (
+      err instanceof UnwrapError ||
+      err instanceof RecoveryKeyError ||
+      err instanceof CeremonyError
+    ) {
+      return false
+    }
+    throw err
+  }
+  zeroize(dataKey)
+  return true
 }
 
 /**

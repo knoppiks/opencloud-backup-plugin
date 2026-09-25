@@ -208,7 +208,7 @@ func roleTable() []route {
 			[]byte(`{"target_id":"` + roleTargetID + `","retention_days":30,"enabled":true}`), cs3.RoleEditor},
 		{"patch config", http.MethodPatch, "/backup/config", []byte(`{"retention_days":30}`), cs3.RoleEditor},
 		{"put schedule", http.MethodPut, "/backup/schedule",
-			[]byte(`{"schedule":"0 3 * * *"}`), cs3.RoleEditor},
+			[]byte(`{"enabled":true,"preset":{"kind":"daily","hour":3,"minute":0}}`), cs3.RoleEditor},
 		{"run backup", http.MethodPost, "/backup/run", nil, cs3.RoleEditor},
 
 		{"key setup", http.MethodPost, "/backup/setup", []byte(`{}`), cs3.RoleManager},

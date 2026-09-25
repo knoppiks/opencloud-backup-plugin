@@ -68,3 +68,34 @@ describe('SpaceCard', () => {
     expect(wrapper.find('[data-testid="state-label"]').text()).toBe(translations.de!['Protected'])
   })
 })
+
+describe('SpaceCard setup link', () => {
+  const unset = { configured: false, keys_configured: false, enabled: false }
+
+  it('links an editor to the wizard for a Space nobody has set up', () => {
+    const wrapper = card({ status: status(unset), space: space({ role: 'editor' }) })
+    const link = wrapper.find('[data-testid="setup-action"]')
+    expect(link.text()).toBe('Set up backup')
+    expect(JSON.parse(link.attributes('data-to') as string)).toMatchObject({
+      name: 'backup-vault-setup'
+    })
+  })
+
+  it('shows a viewer no link', () => {
+    const wrapper = card({ status: status(unset), space: space({ role: 'viewer' }) })
+    expect(wrapper.find('[data-testid="setup-action"]').exists()).toBe(false)
+  })
+
+  it('shows an editor no dead-end link when only a manager can continue', () => {
+    const wrapper = card({
+      status: status({ keys_configured: false, enabled: false }),
+      space: space({ role: 'editor' })
+    })
+    expect(wrapper.find('[data-testid="setup-action"]').exists()).toBe(false)
+  })
+
+  it('shows no link on a protected Space', () => {
+    const wrapper = card({ status: status(), space: space({ role: 'owner' }) })
+    expect(wrapper.find('[data-testid="setup-action"]').exists()).toBe(false)
+  })
+})

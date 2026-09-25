@@ -132,7 +132,81 @@ const de: Record<string, string> = {
   'started by hand': 'von Hand gestartet',
   scheduled: 'geplant',
   '%{deleted} removed, %{kept} kept': '%{deleted} entfernt, %{kept} behalten',
-  '%{files} files, %{size}': '%{files} Dateien, %{size}'
+  '%{files} files, %{size}': '%{files} Dateien, %{size}',
+
+  // Setup entry points (status/setupaction.ts).
+  'Set up backup': 'Sicherung einrichten',
+  'Finish setup': 'Einrichtung abschließen',
+  'Turn on scheduled backups': 'Geplante Sicherungen einschalten',
+  'A manager of this space has to finish setup.':
+    'Eine verwaltende Person dieses Space muss die Einrichtung abschließen.',
+
+  // Setup wizard (views/SetupWizard.vue, components/ActionError.vue).
+  'Back to the space': 'Zurück zum Space',
+  'Set up backup for %{space}': 'Sicherung für %{space} einrichten',
+  'Only editors and managers of this space can set up backup.':
+    'Nur Personen, die diesen Space bearbeiten oder verwalten, können die Sicherung einrichten.',
+  'Where should backups go?': 'Wohin sollen die Sicherungen gehen?',
+  'Backup destination': 'Sicherungsziel',
+  'Saving…': 'Wird gespeichert…',
+  Continue: 'Weiter',
+  'The backup destination is chosen. Creating the Recovery Key needs a manager of this space.':
+    'Das Sicherungsziel ist ausgewählt. Den Wiederherstellungsschlüssel muss eine verwaltende Person dieses Space erstellen.',
+  'Your Recovery Key': 'Ihr Wiederherstellungsschlüssel',
+  'The Recovery Key shown before was not taken into use. Throw away any copy of it; a new one will be created.':
+    'Der zuvor angezeigte Wiederherstellungsschlüssel wurde nicht übernommen. Vernichten Sie jede Kopie davon; es wird ein neuer erstellt.',
+  'Creating the Recovery Key did not work. Nothing was saved. Please try again.':
+    'Der Wiederherstellungsschlüssel konnte nicht erstellt werden. Es wurde nichts gespeichert. Bitte versuchen Sie es erneut.',
+  'Your backups are locked with a key. Next, a Recovery Key is created for you. You need it to read your backups if this server is ever lost, and nobody else can give it back to you.':
+    'Ihre Sicherungen werden mit einem Schlüssel verschlossen. Als Nächstes wird ein Wiederherstellungsschlüssel für Sie erstellt. Sie brauchen ihn, um Ihre Sicherungen zu lesen, falls dieser Server einmal verloren geht, und niemand sonst kann ihn Ihnen zurückgeben.',
+  'Creating it takes a few seconds, and the page may not respond while it does.':
+    'Das Erstellen dauert einige Sekunden, und die Seite reagiert währenddessen eventuell nicht.',
+  'Create my Recovery Key': 'Meinen Wiederherstellungsschlüssel erstellen',
+  'Creating your Recovery Key. This takes a moment…':
+    'Ihr Wiederherstellungsschlüssel wird erstellt. Das dauert einen Moment…',
+  'Save your Recovery Key now': 'Speichern Sie jetzt Ihren Wiederherstellungsschlüssel',
+  'This is the only time it is shown. Save it in your password manager, or write it down and keep it somewhere safe.':
+    'Er wird nur dieses eine Mal angezeigt. Speichern Sie ihn in Ihrem Passwortmanager, oder schreiben Sie ihn auf und bewahren Sie ihn an einem sicheren Ort auf.',
+  'Without it, nobody — not even your administrator — can read your backups if this server is lost.':
+    'Ohne ihn kann niemand – auch nicht Ihre Administration – Ihre Sicherungen lesen, falls dieser Server verloren geht.',
+  'Recovery Key': 'Wiederherstellungsschlüssel',
+  Copy: 'Kopieren',
+  Copied: 'Kopiert',
+  'I have saved it': 'Ich habe ihn gespeichert',
+  'Check that you saved it': 'Prüfen, ob Sie ihn gespeichert haben',
+  'Type two groups from your saved Recovery Key. This makes sure you can find it when you need it.':
+    'Geben Sie zwei Gruppen aus Ihrem gespeicherten Wiederherstellungsschlüssel ein. So ist sichergestellt, dass Sie ihn finden, wenn Sie ihn brauchen.',
+  'Group %{number}': 'Gruppe %{number}',
+  'That does not match. Look at your saved copy and try again.':
+    'Das stimmt nicht überein. Sehen Sie in Ihrer gespeicherten Kopie nach und versuchen Sie es erneut.',
+  'Show the key again': 'Schlüssel erneut anzeigen',
+  'Protect this space': 'Diesen Space schützen',
+  'It is not clear whether setup finished.':
+    'Es ist unklar, ob die Einrichtung abgeschlossen wurde.',
+  'Keep the Recovery Key you saved. Checking again finds out whether this space now uses it.':
+    'Behalten Sie den gespeicherten Wiederherstellungsschlüssel. Eine erneute Prüfung zeigt, ob dieser Space ihn jetzt verwendet.',
+  'Check again': 'Erneut prüfen',
+  'This space is already protected': 'Dieser Space ist bereits geschützt',
+  'Its backups are already locked with a Recovery Key. Setting it up again would make every existing backup unreadable, so that is not possible.':
+    'Seine Sicherungen sind bereits mit einem Wiederherstellungsschlüssel verschlossen. Eine erneute Einrichtung würde alle vorhandenen Sicherungen unlesbar machen, deshalb ist sie nicht möglich.',
+  'When should backups run?': 'Wann sollen Sicherungen laufen?',
+  'How often': 'Wie oft',
+  'Every day': 'Jeden Tag',
+  'Once a week': 'Einmal pro Woche',
+  Day: 'Tag',
+  Time: 'Uhrzeit',
+  'Times are in the server’s time zone (%{zone}).':
+    'Zeiten gelten in der Zeitzone des Servers (%{zone}).',
+  'Times are in the server’s time zone.': 'Zeiten gelten in der Zeitzone des Servers.',
+  'Turn on backups': 'Sicherungen einschalten',
+  'Backup is set up': 'Die Sicherung ist eingerichtet',
+  'Backups run automatically. You can check on them at any time.':
+    'Sicherungen laufen automatisch. Sie können jederzeit nachsehen, wie es um sie steht.',
+  'First backup: %{when}': 'Erste Sicherung: %{when}',
+  'The first backup runs at the next scheduled time.':
+    'Die erste Sicherung läuft zum nächsten geplanten Zeitpunkt.',
+  'Keep your Recovery Key safe. It is the only way to read these backups if this server is lost.':
+    'Bewahren Sie Ihren Wiederherstellungsschlüssel sicher auf. Nur mit ihm lassen sich diese Sicherungen lesen, falls dieser Server verloren geht.'
 }
 
 export const translations: Translations = { de }

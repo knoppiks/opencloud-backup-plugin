@@ -58,6 +58,15 @@ export default defineWebApplication({
         component: () => import('./views/SpaceStatus.vue'),
         props: true,
         meta: { authContext: 'user', title: $gettext('Backup Vault') }
+      },
+      {
+        // The wizard resumes from the server's state, so this route carries
+        // the Space id and nothing else: no step, and never key material.
+        path: '/space/:spaceId/setup',
+        name: 'backup-vault-setup',
+        component: () => import('./views/SetupWizard.vue'),
+        props: true,
+        meta: { authContext: 'user', title: $gettext('Backup Vault') }
       }
     ]
 

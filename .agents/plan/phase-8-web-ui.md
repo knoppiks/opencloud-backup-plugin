@@ -482,6 +482,142 @@ papered over in TypeScript:
 | 8d.3 | Restore | snapshot picker, confirm, progress, link to `restore_folder` |
 | 8d.4 | Recovery Key | replacement flow, "Check my Recovery Key", envelope download |
 
+### Sub-phase 8d.2 plan — decisions taken before implementation
+
+Only what the 8d decisions above leave open. Settled with the user before any
+code.
+
+1. **`enabled` becomes true at the schedule step, and not before.** Measured:
+   the scheduler's eligibility is `Enabled && TargetID != ""` and never looks at
+   keys. A Space bound and enabled without keys therefore creates a failed job
+   at every due time ("backup is not configured for this space"), fires a
+   `run_failed` notification each time (that kind has no repeat limit), and goes
+   stale after 48h. So the target step sends `enabled: false`, and the schedule
+   step — reachable only once keys exist — sends `enabled: true`. That PUT is
+   what "setup complete" means. The resume rule follows: `configured &&
+   keys_configured && !enabled` resumes at the schedule step. A Space that is
+   all three is set up; the wizard shows the done screen, not a form.
+2. **An editor stops at the key step.** They bind the target and meet "a
+   manager of this Space has to finish setup". They do not reach the schedule
+   step, because that is where `enabled` turns on (1). The manager who opens the
+   wizard later resumes at the key step and continues to the schedule.
+3. **The service's timezone is exposed by the API.** `GET /backup/status` and
+   `GET`/`PUT /backup/schedule` gain `timezone`: the IANA name the scheduler
+   reads presets in. It is omitted when the service cannot name it (no `TZ`,
+   no `SCHEDULE_TIMEZONE`, only `/etc/localtime`) or runs no scheduler; the UI
+   then says "server time" without a name. The rejected alternative — generic
+   wording only — would have left `next_run` (UTC) and the preset hour (service
+   zone) in two zones with nothing on screen saying which.
+4. **Argon2id stays on the main thread, behind a busy state.** The wizard
+   renders "Creating your Recovery Key…" and yields a frame before the ceremony
+   starts, so the page says why it froze. A Web Worker is deferred: resolving a
+   worker URL from inside the federated `.mjs` the host loads is unverified, and
+   the default parameters stay. Never below the floor (#19).
+5. **An ambiguous setup failure is resolved by testing the saved key, not by
+   guessing.** The Data Key is zeroized when the POST settles, either way, so a
+   retry cannot resend it. For offline, timeout and 5xx the POST may have
+   landed. The Recovery Key — which the user has already proven they saved —
+   stays in component state, and "Try again" re-reads status:
+   - no keys: a new ceremony, and the user is told to discard the key they saved;
+   - keys: fetch the recovery envelope and unwrap it locally with the saved
+     key. It opens: the POST landed, continue to the schedule. It does not:
+     someone else set the Space up, which is the "already protected" state.
+   Nothing extra crosses the network; the envelope is ciphertext any member may
+   read.
+6. **The wizard's machine is pure TypeScript in `web/src/wizard/`**, driven by
+   injected dependencies (the API subset, the ceremony, a random source). The
+   Recovery Key lives in the machine's state, and the machine is owned by one
+   component instance: never a store, a route or storage. It is cleared on
+   completion and on unmount.
+7. **Found during the survey, fixed here:** `PUT /backup/schedule` accepted
+   unknown fields and read an absent `enabled` as false. The role table's own
+   row sent `{"schedule": …}`, which passed authorization while resetting the
+   cron and disabling the Space. The endpoint now refuses unknown fields, as
+   `PATCH /backup/config` does, and the row sends a real preset.
+
+### Sub-phase 8d.2 outcome (implemented, issue #35)
+
+The wizard landed as planned: target, then key ceremony and gate, then
+schedule, then the done screen, resuming from `/backup/status`. The machine
+lives in `web/src/wizard/machine.ts` and `views/SetupWizard.vue` renders it.
+The board and the overview card link into it. Notes on what the plan did not
+say:
+
+- **Deviation — there is no "pick space" step.** The flow list begins with
+  "pick space (personal preselected)". The wizard is opened from a Space's card
+  or board instead, at `/space/:spaceId/setup`, so the Space is already chosen.
+  The route carries the id and nothing else: no step, and never key material.
+- **The entry point is one rule, shared.** `status/setupaction.ts` decides what
+  a Space offers: "Set up backup", "Finish setup", "Turn on scheduled backups",
+  or, for an editor at the key step, the sentence that a manager has to finish.
+  It is built on the wizard's own resume rule (`status/setupstep.ts`), so the
+  link and the page it opens cannot disagree. The card never shows the
+  needs-a-manager case as a link, because a link to a page that says "you
+  can't" would be a dead end. A Space whose runs are off gets "Turn on scheduled
+  backups". That covers a wizard left at its last step and also a Space someone
+  paused on purpose. For both, turning it on is exactly what the wizard's last
+  step does.
+- **The resume rule is not in the machine, and that is about bundle size.** It
+  started out in `wizard/machine.ts`. That put the whole ceremony (hash-wasm,
+  noble) into the overview's chunk, because the card imports the rule. Now it
+  is in `status/`. Measured: the crypto ships only in the wizard's chunk
+  (26.7 kB gzip), and the overview (1.9 kB) and the board (3.8 kB) carry none
+  of it.
+- **The gate matches with decode's tolerance, and the matcher is in
+  `src/crypto`.** `normalizeRecoveryKeyInput` and `recoveryKeyGroups` share one
+  character mapping with `decodeRecoveryKey`. A gate stricter than decode
+  would refuse a copy that recovery accepts; one looser than decode would pass
+  a copy that recovery refuses. A test checks that a lower-cased key with
+  look-alikes normalizes to what decode reads.
+- **`recoveryKeyOpens` is new in `src/crypto`.** It answers decision 5's "does
+  the saved key open what the server stored" and zeroizes the recovered Data
+  Key before returning. A stored envelope that is not an envelope at all is
+  thrown, not reported as "no": that tells us nothing about the key, so the
+  wizard stays uncertain rather than declaring the Space someone else's. 8d.4's
+  "Check my Recovery Key" can use the same function.
+- **Storage is banned by lint, not by care.** `src/wizard/**` and
+  `SetupWizard.vue` may not touch `localStorage`, `sessionStorage` or
+  `indexedDB`, either as globals or as properties. `src/wizard` may not import
+  Vue or OpenCloud. Verified by mutation.
+- **The clipboard is the one place the key leaves the page.** The plan asks for
+  a copy button. The OS clipboard is local, but it outlives the page. That is
+  accepted as what "copy" means, and nothing in the wizard reads the clipboard
+  back.
+- **`Scheduler.Timezone()` reports what Go can name.** With `TZ` or
+  `SCHEDULE_TIMEZONE` set, that is the IANA name. With only `/etc/localtime`,
+  Go calls the zone `Local`, which tells a user nothing, so the field is left
+  out. Without a scheduler (the pipeline is disabled) it is left out too.
+  `next_run` stays UTC on the wire and is shown in the browser's zone. It is an
+  instant, so that is correct; the zone label applies to the preset's hour.
+- **Findings, not fixed (for the user to decide):**
+  - The scheduler still does not check keys. The wizard never enables a Space
+    that has none (decision 1). A client going straight to the API still can,
+    and that Space then fails every night. A backend guard (skip Spaces without
+    keys, with no job and no notification) would close this. It was offered
+    and not chosen for this slice.
+  - `performSetupCeremony` zeroizes the Recovery Key's secret when
+    self-verification fails, but not the Data Key. It never returns it, so the
+    key is unreachable, but it is not wiped.
+  - The board still renders its inline action failures by hand. The new
+    `ActionError.vue` could replace them.
+- **Verified against the fixture:** `make test-opencloud` passes and
+  `make web-install-fixture` registers and serves the new bundle. Not verified:
+  the wizard in a browser against a real backend and a real token (8f), and how
+  long Argon2id at the default parameters holds a slow device's main thread.
+- **Tests:** 326 web tests (was 236), in 21 files, including:
+  - the machine: step order, resume from every server state, the target cases,
+    the gate, 409, ceremony failure, the ambiguous-failure resolution, and Data
+    Key zeroization on success, on every failure class and on dispose;
+  - component tests for roles, the picker, the done screen, German and weekly
+    schedules;
+  - two "the Recovery Key reaches no API call" sweeps, which check the whole
+    key, its bare form and every group.
+
+  Mutation checks confirmed that a skipped gate and a Data Key that is not
+  wiped both fail the suite. On the Go side there are tests for the timezone
+  field (named, unnamed, no scheduler) and for PUT schedule refusing unknown
+  fields. The role-table row now sends a real preset.
+
 ### Sub-phase 8d.1 outcome (implemented, issue #35)
 
 The backend gaps are closed. The overview has per-Space cards, and there is a

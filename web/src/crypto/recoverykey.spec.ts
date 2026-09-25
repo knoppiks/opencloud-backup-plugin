@@ -11,7 +11,11 @@ import {
   decodeRecoveryKey,
   encodeRecoveryKey,
   generateRecoveryKey,
+  normalizeRecoveryKeyInput,
+  RecoveryKeyError,
+  recoveryKeyGroups,
   RK_ENTROPY_BYTES,
+  RK_GROUP_COUNT,
   RK_PREFIX
 } from './recoverykey'
 
@@ -153,5 +157,46 @@ describe('recovery key rejection', () => {
     expect(() => encodeRecoveryKey(new Uint8Array(RK_ENTROPY_BYTES - 1))).toThrowError(
       expect.objectContaining({ reason: 'length' })
     )
+  })
+})
+
+// The confirmation gate compares fragments of a key with the same tolerance a
+// full key gets on decode; a gate stricter than decode would refuse a copy
+// the recovery path accepts.
+describe('recovery key fragments', () => {
+  it('splits a display string into its seven groups', () => {
+    const { display } = generateRecoveryKey()
+    const groups = recoveryKeyGroups(display)
+
+    expect(groups).toHaveLength(RK_GROUP_COUNT)
+    expect(groups.map((group) => group.length)).toEqual(GROUP_SIZES)
+    expect(`${RK_PREFIX}-${groups.join('-')}`).toBe(display)
+  })
+
+  it('refuses something that is not a display string', () => {
+    expect(() => recoveryKeyGroups('ocbk1-ABCDE')).toThrow(RecoveryKeyError)
+    expect(() => recoveryKeyGroups('nope-1-2-3-4-5-6-7')).toThrow(RecoveryKeyError)
+  })
+
+  it('normalizes a fragment the way decode reads a key', () => {
+    expect(normalizeRecoveryKeyInput(' ab-c d ')).toBe('ABCD')
+    expect(normalizeRecoveryKeyInput('iLo')).toBe('110')
+    expect(normalizeRecoveryKeyInput('7x9z0')).toBe('7X9Z0')
+  })
+
+  it('keeps an impossible character, so the fragment cannot match', () => {
+    expect(normalizeRecoveryKeyInput('AB!D')).toBe('AB!D')
+    expect(normalizeRecoveryKeyInput('ABUD')).toBe('ABUD')
+  })
+
+  it('agrees with decode on every group of a real key', () => {
+    const { display } = generateRecoveryKey()
+    const mangled = recoveryKeyGroups(display)
+      .map((group) => group.toLowerCase().replaceAll('1', 'l').replaceAll('0', 'o'))
+      .join(' ')
+    const normalized = normalizeRecoveryKeyInput(mangled)
+
+    expect(normalized).toBe(recoveryKeyGroups(display).join(''))
+    expect(equalBytes(decodeRecoveryKey(mangled), decodeRecoveryKey(display))).toBe(true)
   })
 })

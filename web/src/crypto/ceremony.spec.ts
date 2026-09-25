@@ -27,7 +27,8 @@ import {
   DK_SIZE,
   performRecoveryKeyRotation,
   performSetupCeremony,
-  recoverDataKey
+  recoverDataKey,
+  recoveryKeyOpens
 } from './ceremony'
 
 const sealMock = vi.mocked(seal)
@@ -207,5 +208,31 @@ describe('recoverDataKey', () => {
 
     const recovered = await recoverDataKey(ceremony.envelope, retyped)
     expect(equalBytes(recovered, ceremony.dataKey)).toBe(true)
+  })
+})
+
+// The wizard's answer to "did my setup land?" after an ambiguous failure: the
+// key the user saved either opens what the server stored, or it does not.
+describe('recoveryKeyOpens', () => {
+  it('says yes for the key the envelope was made with, however it was typed', async () => {
+    const ceremony = await performSetupCeremony(params)
+    expect(await recoveryKeyOpens(ceremony.envelope, ceremony.recoveryKey)).toBe(true)
+    expect(await recoveryKeyOpens(ceremony.envelope, ceremony.recoveryKey.toLowerCase())).toBe(true)
+  })
+
+  it('says no for another key, a mistyped key and garbage', async () => {
+    const ceremony = await performSetupCeremony(params)
+    const other = generateRecoveryKey().display
+    const mistyped =
+      ceremony.recoveryKey.slice(0, -1) + (ceremony.recoveryKey.endsWith('0') ? '2' : '0')
+
+    expect(await recoveryKeyOpens(ceremony.envelope, other)).toBe(false)
+    expect(await recoveryKeyOpens(ceremony.envelope, mistyped)).toBe(false)
+    expect(await recoveryKeyOpens(ceremony.envelope, 'not a key')).toBe(false)
+  })
+
+  it('throws for an envelope that is not an envelope', async () => {
+    const { recoveryKey } = await performSetupCeremony(params)
+    await expect(recoveryKeyOpens(new Uint8Array(8), recoveryKey)).rejects.toThrow()
   })
 })

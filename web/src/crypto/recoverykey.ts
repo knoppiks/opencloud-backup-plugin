@@ -114,27 +114,12 @@ export function decodeRecoveryKey(input: string): Uint8Array {
   }
 
   let symbols = ''
-  for (const character of cleaned.toUpperCase()) {
-    switch (character) {
-      case '-':
-      case ' ':
-      case '\t':
-      case '\n':
-      case '\r':
-        continue
-      case 'I':
-      case 'L':
-        symbols += '1'
-        break
-      case 'O':
-        symbols += '0'
-        break
-      default:
-        if (!CROCKFORD.includes(character)) {
-          throw new RecoveryKeyError('charset', 'recovery key contains an illegal character')
-        }
-        symbols += character
+  for (const character of cleaned) {
+    const symbol = canonicalSymbol(character)
+    if (symbol === undefined) {
+      throw new RecoveryKeyError('charset', 'recovery key contains an illegal character')
     }
+    symbols += symbol
   }
 
   const payload = base32Decode(symbols)
@@ -147,6 +132,59 @@ export function decodeRecoveryKey(input: string): Uint8Array {
     throw new RecoveryKeyError('checksum', 'recovery key checksum mismatch (mistyped?)')
   }
   return Uint8Array.from(entropy)
+}
+
+/** RK_GROUP_COUNT is the number of dash-separated groups after the prefix. */
+export const RK_GROUP_COUNT = 7
+
+/**
+ * recoveryKeyGroups splits a display string into its seven groups, prefix
+ * dropped. Group 0 here is the one a person calls "group 1".
+ */
+export function recoveryKeyGroups(display: string): string[] {
+  const groups = display.split('-')
+  if (groups[0]?.toLowerCase() !== RK_PREFIX || groups.length !== RK_GROUP_COUNT + 1) {
+    throw new RecoveryKeyError('length', 'not a recovery key display string')
+  }
+  return groups.slice(1)
+}
+
+/**
+ * normalizeRecoveryKeyInput applies decodeRecoveryKey's tolerance to a
+ * fragment of a key: case, spaces and dashes are ignored and the Crockford
+ * look-alikes I/L and O are read as 1 and 0. It never throws; a character that
+ * cannot be in a key is kept, so the fragment simply fails to match.
+ */
+export function normalizeRecoveryKeyInput(input: string): string {
+  let out = ''
+  for (const character of input.trim()) {
+    out += canonicalSymbol(character) ?? character
+  }
+  return out
+}
+
+/**
+ * canonicalSymbol maps one typed character to the alphabet: '' for a
+ * separator, the canonical symbol for a legal or look-alike character, and
+ * undefined for anything that cannot appear in a key.
+ */
+function canonicalSymbol(character: string): string | undefined {
+  const upper = character.toUpperCase()
+  switch (upper) {
+    case '-':
+    case ' ':
+    case '\t':
+    case '\n':
+    case '\r':
+      return ''
+    case 'I':
+    case 'L':
+      return '1'
+    case 'O':
+      return '0'
+    default:
+      return CROCKFORD.includes(upper) ? upper : undefined
+  }
 }
 
 /** checksumByte is a truncated SHA-256 over the entropy: a typo detector. */

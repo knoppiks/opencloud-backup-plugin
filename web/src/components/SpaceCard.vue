@@ -10,6 +10,7 @@ import { useGettext } from 'vue3-gettext'
 import type { ApiError, BackupStatus, Space } from '../api'
 import { errorTitle } from '../api/errortext'
 import { useFormat } from '../composables/useFormat'
+import { setupAction, setupActionLabel } from '../status/setupaction'
 import { needsAttention, spaceState } from '../status/spacestate'
 import { stateAdvice, stateLabel } from '../status/statetext'
 
@@ -61,6 +62,12 @@ const summary = computed(() => {
 })
 
 const attention = computed(() => (state.value ? needsAttention(state.value) : false))
+
+/** action is the setup link, if any; "needs a manager" stays on the board. */
+const action = computed(() => {
+  const found = props.status ? setupAction(props.status, props.space.role) : undefined
+  return found === 'needs_manager' ? undefined : found
+})
 </script>
 
 <template>
@@ -88,6 +95,14 @@ const attention = computed(() => (state.value ? needsAttention(state.value) : fa
         {{ stateLabel(state, $gettext) }}
       </p>
       <p v-if="summary" class="ext:text-sm" data-testid="state-summary">{{ summary }}</p>
+      <router-link
+        v-if="action"
+        :to="{ name: 'backup-vault-setup', params: { spaceId: space.id } }"
+        class="ext:mt-2 ext:inline-block ext:text-sm ext:font-medium"
+        data-testid="setup-action"
+      >
+        {{ setupActionLabel(action, $gettext) }}
+      </router-link>
     </div>
     <p v-else-if="error" class="ext:mt-2 ext:text-sm" role="alert">
       {{ errorTitle(error.code, $gettext) }}

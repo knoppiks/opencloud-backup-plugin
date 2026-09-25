@@ -125,6 +125,48 @@ describe('SpaceStatus roles', () => {
   })
 })
 
+describe('SpaceStatus setup entry', () => {
+  const link = (wrapper: Awaited<ReturnType<typeof mountBoard>>) =>
+    wrapper.find('[data-testid="setup-action"] a')
+
+  it('offers an editor "Set up backup" for a Space nobody has set up', async () => {
+    given(status({ configured: false, keys_configured: false, enabled: false }), 'editor')
+    const wrapper = await mountBoard()
+    expect(link(wrapper).text()).toBe('Set up backup')
+    expect(JSON.parse(link(wrapper).attributes('data-to') as string)).toEqual({
+      name: 'backup-vault-setup',
+      params: { spaceId: SPACE_ID }
+    })
+  })
+
+  it('offers a manager "Finish setup" when only the keys are missing', async () => {
+    given(status({ keys_configured: false, enabled: false }), 'manager')
+    const wrapper = await mountBoard()
+    expect(link(wrapper).text()).toBe('Finish setup')
+  })
+
+  it('tells an editor a manager has to finish, without a link', async () => {
+    given(status({ keys_configured: false, enabled: false }), 'editor')
+    const wrapper = await mountBoard()
+    expect(wrapper.find('[data-testid="setup-action"]').text()).toBe(
+      'A manager of this space has to finish setup.'
+    )
+    expect(link(wrapper).exists()).toBe(false)
+  })
+
+  it('offers a viewer nothing', async () => {
+    given(status({ configured: false, keys_configured: false, enabled: false }), 'viewer')
+    const wrapper = await mountBoard()
+    expect(wrapper.find('[data-testid="setup-action"]').exists()).toBe(false)
+  })
+
+  it('offers nothing for a Space that is set up and on', async () => {
+    given(status(), 'manager')
+    const wrapper = await mountBoard()
+    expect(wrapper.find('[data-testid="setup-action"]').exists()).toBe(false)
+  })
+})
+
 describe('SpaceStatus "Back up now"', () => {
   it('starts a run and follows it until it finishes', async () => {
     vi.useFakeTimers()

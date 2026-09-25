@@ -19,6 +19,7 @@ import { useBackupApi } from '../composables/useBackupApi'
 import { useFormat } from '../composables/useFormat'
 import { usePolling } from '../composables/usePolling'
 import { canOperate } from '../status/roles'
+import { setupAction, setupActionLabel } from '../status/setupaction'
 import { needsAttention, spaceState } from '../status/spacestate'
 import { stateAdvice, stateLabel } from '../status/statetext'
 
@@ -48,6 +49,9 @@ const isSetUp = computed(
   () => status.value?.configured === true && status.value?.keys_configured === true
 )
 const mayOperate = computed(() => (space.value ? canOperate(space.value.role) : false))
+const action = computed(() =>
+  status.value && space.value ? setupAction(status.value, space.value.role) : undefined
+)
 
 const poller = usePolling(refresh, {
   intervalMs: POLL_INTERVAL_MS,
@@ -177,6 +181,17 @@ onMounted(load)
             {{ stateAdvice(state, $gettext) }}
           </p>
         </header>
+
+        <div v-if="action" data-testid="setup-action">
+          <p v-if="action === 'needs_manager'">{{ setupActionLabel(action, $gettext) }}</p>
+          <router-link
+            v-else
+            :to="{ name: 'backup-vault-setup', params: { spaceId } }"
+            class="ext:font-medium"
+          >
+            {{ setupActionLabel(action, $gettext) }}
+          </router-link>
+        </div>
 
         <section
           v-if="status.running && status.current_job"

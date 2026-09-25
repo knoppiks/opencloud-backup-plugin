@@ -135,6 +135,8 @@ export interface Schedule {
   cron: string
   /** preset reads "custom" when the cron expression is not one a preset emits. */
   preset: SchedulePreset
+  /** timezone is the IANA zone preset times are in; absent when unnamed. */
+  timezone?: string
 }
 
 /** JobState is where a run got to. */
@@ -192,6 +194,8 @@ export interface BackupStatus {
   enabled: boolean
   cron?: string
   preset?: SchedulePreset
+  /** timezone is the IANA zone preset times are in; absent when unnamed. */
+  timezone?: string
   running: boolean
   current_job?: Job
   last_run?: Job
