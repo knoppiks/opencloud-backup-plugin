@@ -1,11 +1,25 @@
-import { describe, expect, it } from 'vitest'
-import { job } from '../test/fixtures'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { job, SPACE_ID } from '../test/fixtures'
 import { mountWithHost } from '../test/host'
 import RunHistory from './RunHistory.vue'
 
+const link = vi.hoisted(() => ({ to: vi.fn() }))
+vi.mock('../composables/useRestoreFolderLink', () => ({
+  useRestoreFolderLink: () => link.to
+}))
+
+const FOLDER = 'Restore/2026-09-25T03-00-00Z'
+
 function history(runs: Parameters<typeof job>[0][]) {
-  return mountWithHost(RunHistory, { props: { runs: runs.map((r) => job(r)) } })
+  return mountWithHost(RunHistory, {
+    props: { spaceId: SPACE_ID, runs: runs.map((r) => job(r)) }
+  })
 }
+
+beforeEach(() => {
+  link.to.mockReset()
+  link.to.mockReturnValue({ name: 'files-spaces-generic', params: { driveAliasAndItem: 'x' } })
+})
 
 describe('RunHistory', () => {
   it('says when nothing has run', () => {
@@ -44,5 +58,44 @@ describe('RunHistory', () => {
         .find('li')
         .text()
     ).toMatch(/^Restore/)
+  })
+
+  it('links a restore to the folder it wrote into', () => {
+    const item = history([{ kind: 'restore', restore_folder: FOLDER }]).find('li')
+    const folder = item.find('[data-testid="history-folder"]')
+    expect(folder.text()).toBe(`Restored into: ${FOLDER}`)
+    expect(folder.find('[data-testid="folder-link"]').exists()).toBe(true)
+    expect(link.to).toHaveBeenCalledWith(SPACE_ID, FOLDER)
+  })
+
+  // A failed restore can leave a partial copy behind; the history is where it
+  // is found again (8d.3 decision 5).
+  it('names the folder of a failed restore as a partial copy', () => {
+    const item = history([
+      { kind: 'restore', state: 'failed', error: 'the restore run failed', restore_folder: FOLDER }
+    ]).find('li')
+    expect(item.find('[data-testid="history-folder"]').text()).toBe(
+      `Anything restored before it stopped is in: ${FOLDER}`
+    )
+  })
+
+  it('names the folder as text when the host cannot link it', () => {
+    link.to.mockReturnValue(undefined)
+    const folder = history([{ kind: 'restore', restore_folder: FOLDER }]).find(
+      '[data-testid="history-folder"]'
+    )
+    expect(folder.find('[data-testid="folder-link"]').exists()).toBe(false)
+    expect(folder.find('[data-testid="folder-path"]').text()).toBe(FOLDER)
+  })
+
+  it('shows no folder for a path outside the restore area', () => {
+    const item = history([{ kind: 'restore', restore_folder: 'Restore/../Photos' }]).find('li')
+    expect(item.find('[data-testid="history-folder"]').exists()).toBe(false)
+    expect(link.to).not.toHaveBeenCalled()
+  })
+
+  it('shows no folder for a backup', () => {
+    const item = history([{ kind: 'backup', restore_folder: FOLDER }]).find('li')
+    expect(item.find('[data-testid="history-folder"]').exists()).toBe(false)
   })
 })

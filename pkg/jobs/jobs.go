@@ -124,6 +124,14 @@ type Store interface {
 	Create(ctx context.Context, j Job) (Job, error)
 	// Get returns one job by id, or ErrNotFound.
 	Get(ctx context.Context, id string) (Job, error)
+	// GetInSpace returns one job of one Space, or ErrNotFound — including for
+	// a job that exists but belongs to another Space, so a caller scoped to a
+	// Space cannot tell the two apart.
+	//
+	// Unlike Get it answers from the Space's own history rather than from any
+	// process-wide index, so it finds a job another process created a moment
+	// ago. It is the lookup to serve a member following their own run.
+	GetInSpace(ctx context.Context, spaceID, id string) (Job, error)
 	// List returns a Space's jobs, newest first.
 	List(ctx context.Context, spaceID string) ([]Job, error)
 	// ListRecent returns at most limit of a Space's jobs, newest first. A limit

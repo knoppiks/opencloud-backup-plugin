@@ -365,10 +365,17 @@ The user picks a backup and confirms; the files appear in a new
 overwritten or deleted. Only members of a Space can do this; an administrator
 cannot restore into someone else's Space, by design.
 
-Until the web UI lands this is two API calls with the user's own session:
+In Backup Vault this is "Restore files from a backup" on the Space's page. Any
+member can use it, viewers included. The page follows the restore to its end
+and then links to the folder. The folder is also listed under the Space's
+recent activity, including after a failed restore that left part of the files
+behind.
+
+The same flow over the API, with the user's own session:
 `GET /api/v1/spaces/{id}/snapshots` lists the backups,
 `POST /api/v1/spaces/{id}/restore` with `{"snapshot_id":"…"}` starts the restore
-as a background job.
+as a background job, and `GET /api/v1/spaces/{id}/backup/runs/{job_id}` follows
+that job until it is done.
 
 ### Replacing a key
 

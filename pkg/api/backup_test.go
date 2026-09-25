@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,6 +201,7 @@ func TestBackupRoutes_EnforceSpaceMembership(t *testing.T) {
 		{http.MethodPut, "/api/v1/spaces/space-bob/backup/config", []byte(`{"target_id":"t-granted"}`)},
 		{http.MethodPost, "/api/v1/spaces/space-bob/backup/run", nil},
 		{http.MethodGet, "/api/v1/spaces/space-bob/backup/runs", nil},
+		{http.MethodGet, "/api/v1/spaces/space-bob/backup/runs/0123abcd", nil},
 		// An entirely unknown space must be indistinguishable from a foreign one.
 		{http.MethodPost, "/api/v1/spaces/space-nope/backup/run", nil},
 	}
@@ -219,6 +221,7 @@ func TestBackupRoutes_RequireAuthentication(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/spaces/space-alice/backup/config",
 		"/api/v1/spaces/space-alice/backup/runs",
+		"/api/v1/spaces/space-alice/backup/runs/0123abcd",
 	} {
 		if rec := doJSON(env.srv, http.MethodGet, path, "", nil); rec.Code != http.StatusUnauthorized {
 			t.Fatalf("%s: status = %d, want 401", path, rec.Code)
@@ -311,6 +314,70 @@ func TestListRuns_ReturnsHistoryNewestFirst(t *testing.T) {
 	}
 }
 
+// A member follows their own run by id. The restore folder travels with it,
+// because it is what the UI links to when the run ends.
+func TestGetRun_ReturnsTheSpacesRun(t *testing.T) {
+	ctx := context.Background()
+	env := newBackupTestEnv(t)
+
+	j, err := env.jobs.Create(ctx, jobs.Job{
+		SpaceID: "space-alice", Kind: jobs.KindRestore, State: jobs.StateRunning,
+		SnapshotID: "snap-1", RestoreFolder: "Restore/2026-09-25T03-00-00Z",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := env.jobs.Finish(ctx, j.ID, jobs.Outcome{State: jobs.StateSucceeded, FileCount: 7, TotalBytes: 700}); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	rec := doJSON(env.srv, http.MethodGet, "/api/v1/spaces/space-alice/backup/runs/"+j.ID, "alice-tok", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	var got jobResponse
+	decodeBody(t, rec.Body, &got)
+	if got.ID != j.ID || got.Kind != string(jobs.KindRestore) || got.State != string(jobs.StateSucceeded) {
+		t.Fatalf("run = %+v", got)
+	}
+	if got.RestoreFolder != "Restore/2026-09-25T03-00-00Z" || got.FileCount != 7 || got.TotalBytes != 700 {
+		t.Fatalf("run = %+v", got)
+	}
+}
+
+// Another Space's job id, an id that never existed and an id that is not an id
+// at all must produce the same answer, or the route enumerates other Spaces'
+// runs for anyone who is a member of one Space.
+func TestGetRun_UniformNotFound(t *testing.T) {
+	ctx := context.Background()
+	env := newBackupTestEnv(t)
+
+	theirs, err := env.jobs.Create(ctx, jobs.Job{SpaceID: "space-bob", Kind: jobs.KindBackup, State: jobs.StateRunning})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var bodies []string
+	for name, id := range map[string]string{
+		"another space's run": theirs.ID,
+		"never existed":       "0123456789abcdef0123456789abcdef",
+		"not hex":             "job-1",
+		"upper-case hex":      "ABCDEF",
+		"too long":            strings.Repeat("a", maxJobIDLength+1),
+	} {
+		rec := doJSON(env.srv, http.MethodGet, "/api/v1/spaces/space-alice/backup/runs/"+id, "alice-tok", nil)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: status = %d, want 404", name, rec.Code)
+		}
+		bodies = append(bodies, rec.Body.String())
+	}
+	for _, b := range bodies[1:] {
+		if b != bodies[0] {
+			t.Fatalf("404 bodies differ: %q vs %q", bodies[0], b)
+		}
+	}
+}
+
 func TestBackupRoutes_UnavailableWithoutBackends(t *testing.T) {
 	val := fakeValidator{tokens: map[string]string{"alice-tok": "alice"}}
 	reader := fakeSpaceReader{spaces: []cs3.Space{
@@ -323,6 +390,7 @@ func TestBackupRoutes_UnavailableWithoutBackends(t *testing.T) {
 		{http.MethodPut, "/api/v1/spaces/space-alice/backup/config"},
 		{http.MethodPost, "/api/v1/spaces/space-alice/backup/run"},
 		{http.MethodGet, "/api/v1/spaces/space-alice/backup/runs"},
+		{http.MethodGet, "/api/v1/spaces/space-alice/backup/runs/0123abcd"},
 	}
 	for _, c := range cases {
 		rec := doJSON(srv, c.method, c.path, "alice-tok", []byte(`{"target_id":"t"}`))

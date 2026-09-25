@@ -271,9 +271,21 @@ onMounted(load)
           </div>
         </div>
 
+        <div v-if="isSetUp">
+          <!-- Every member, viewers included: restore is a member capability
+               (decisions.md #7), and it never overwrites anything. -->
+          <router-link
+            :to="{ name: 'backup-vault-restore', params: { spaceId } }"
+            class="ext:font-medium"
+            data-testid="restore-link"
+          >
+            {{ $gettext('Restore files from a backup') }}
+          </router-link>
+        </div>
+
         <section>
           <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Recent activity') }}</h2>
-          <RunHistory :runs="runs" />
+          <RunHistory :space-id="spaceId" :runs="runs" />
         </section>
       </template>
     </RequestState>

@@ -67,6 +67,15 @@ export default defineWebApplication({
         component: () => import('./views/SetupWizard.vue'),
         props: true,
         meta: { authContext: 'user', title: $gettext('Backup Vault') }
+      },
+      {
+        // Same shape as the wizard: the Space id and nothing else, so a reload
+        // lands on the picker, or on the restore already running.
+        path: '/space/:spaceId/restore',
+        name: 'backup-vault-restore',
+        component: () => import('./views/RestoreView.vue'),
+        props: true,
+        meta: { authContext: 'user', title: $gettext('Backup Vault') }
       }
     ]
 

@@ -334,6 +334,57 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"runs": out})
 }
 
+// maxJobIDLength bounds a job id path segment. Ids are server-generated hex, so
+// anything longer is refused before it reaches the store.
+const maxJobIDLength = 64
+
+// handleGetRun returns one run of a Space, so a member who started a restore
+// can follow that run — and not whichever run happens to be current — to its
+// end. A job of another Space answers exactly like one that never existed: the
+// id is not a way to learn about Spaces the caller is not a member of.
+func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
+	if !ok {
+		return
+	}
+	if s.jobStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "run history not available")
+		return
+	}
+
+	jobID := r.PathValue("jobId")
+	if !isJobID(jobID) {
+		writeError(w, http.StatusNotFound, "not_found", "no such run")
+		return
+	}
+
+	j, err := s.jobStore.GetInSpace(r.Context(), spaceID, jobID)
+	if err != nil {
+		var notFound jobs.ErrNotFound
+		if errors.As(err, &notFound) {
+			writeError(w, http.StatusNotFound, "not_found", "no such run")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
+		return
+	}
+	writeJSON(w, http.StatusOK, toJobResponse(j))
+}
+
+// isJobID reports whether s has the shape of a job id: non-empty lowercase hex
+// of bounded length.
+func isJobID(s string) bool {
+	if s == "" || len(s) > maxJobIDLength {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // toJobResponse projects a job record for the client. Everything it carries is
 // metadata the caller is already entitled to: no paths, no key material, and
 // only the sanitized error the runner recorded.

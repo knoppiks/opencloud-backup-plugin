@@ -2,7 +2,7 @@
 // sends rather than its own idea of them.
 
 import { vi } from 'vitest'
-import type { BackupApi, BackupStatus, Job, Space } from '../api'
+import type { BackupApi, BackupStatus, Job, Snapshot, Space } from '../api'
 
 export const SPACE_ID = 'storage$space-1!space-1'
 
@@ -19,6 +19,16 @@ export function job(overrides: Partial<Job> = {}): Job {
     created_at: '2026-09-23T01:30:00Z',
     updated_at: '2026-09-23T01:40:00Z',
     finished_at: '2026-09-23T01:40:00Z',
+    file_count: 1200,
+    total_bytes: 3_400_000_000,
+    ...overrides
+  }
+}
+
+export function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
+  return {
+    id: 'k0123456789abcdef',
+    taken_at: '2026-09-23T01:30:00Z',
     file_count: 1200,
     total_bytes: 3_400_000_000,
     ...overrides
@@ -63,6 +73,7 @@ export function fakeApi(): FakeApi {
     'status',
     'runBackup',
     'listRuns',
+    'run',
     'listNotifications',
     'listSnapshots',
     'restore'

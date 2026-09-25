@@ -206,7 +206,43 @@ const de: Record<string, string> = {
   'The first backup runs at the next scheduled time.':
     'Die erste Sicherung läuft zum nächsten geplanten Zeitpunkt.',
   'Keep your Recovery Key safe. It is the only way to read these backups if this server is lost.':
-    'Bewahren Sie Ihren Wiederherstellungsschlüssel sicher auf. Nur mit ihm lassen sich diese Sicherungen lesen, falls dieser Server verloren geht.'
+    'Bewahren Sie Ihren Wiederherstellungsschlüssel sicher auf. Nur mit ihm lassen sich diese Sicherungen lesen, falls dieser Server verloren geht.',
+  // Restore (8d.3)
+  'Restore files': 'Dateien wiederherstellen',
+  'Restore files in %{space}': 'Dateien in %{space} wiederherstellen',
+  'Restore files from a backup': 'Dateien aus einer Sicherung wiederherstellen',
+  'Backups are not set up for this space yet, so there is nothing to restore.':
+    'Für diesen Space ist noch keine Sicherung eingerichtet, daher gibt es nichts wiederherzustellen.',
+  'That backup is no longer available. Older backups are removed as they reach the end of the keep period. Please choose another one.':
+    'Diese Sicherung ist nicht mehr vorhanden. Ältere Sicherungen werden entfernt, sobald ihre Aufbewahrungszeit abgelaufen ist. Bitte wählen Sie eine andere.',
+  'There are no backups to restore yet. The first one appears after the first backup has run.':
+    'Es gibt noch keine Sicherung zum Wiederherstellen. Die erste erscheint, sobald die erste Sicherung gelaufen ist.',
+  'Which backup do you want back?': 'Welche Sicherung möchten Sie zurückholen?',
+  'Restore the backup from %{when}?': 'Die Sicherung von %{when} wiederherstellen?',
+  'The files are copied into a new folder inside “Restore” in this space. Nothing in the space is changed or overwritten.':
+    'Die Dateien werden in einen neuen Ordner innerhalb von „Restore“ in diesem Space kopiert. Im Space wird nichts verändert oder überschrieben.',
+  'The copy takes up %{size} of this space’s storage.':
+    'Die Kopie belegt %{size} vom Speicherplatz dieses Spaces.',
+  'Choose another backup': 'Andere Sicherung wählen',
+  'Another backup or restore is running for this space':
+    'Für diesen Space läuft bereits eine Sicherung oder Wiederherstellung',
+  'Try again when it has finished.': 'Versuchen Sie es erneut, wenn sie abgeschlossen ist.',
+  'Restoring the backup from %{when}…': 'Die Sicherung von %{when} wird wiederhergestellt…',
+  'A restore is running for this space.': 'Für diesen Space läuft eine Wiederherstellung.',
+  'The files are being copied into:': 'Die Dateien werden kopiert nach:',
+  'You can leave this page. The restore carries on, and the space’s recent activity shows when it has finished.':
+    'Sie können diese Seite verlassen. Die Wiederherstellung läuft weiter, und die letzten Aktivitäten des Spaces zeigen, wann sie abgeschlossen ist.',
+  'Restore finished': 'Wiederherstellung abgeschlossen',
+  'Your files are in:': 'Ihre Dateien liegen in:',
+  'Restore another backup': 'Eine weitere Sicherung wiederherstellen',
+  'The restore did not finish': 'Die Wiederherstellung wurde nicht abgeschlossen',
+  'Your backups are unaffected.': 'Ihre Sicherungen sind davon nicht betroffen.',
+  'Anything restored before it stopped is in:':
+    'Was bis zum Abbruch wiederhergestellt wurde, liegt in:',
+  'This restore can no longer be followed here. The space’s recent activity shows how it ended.':
+    'Diese Wiederherstellung lässt sich hier nicht mehr verfolgen. Die letzten Aktivitäten des Spaces zeigen, wie sie ausgegangen ist.',
+  'Restored into:': 'Wiederhergestellt nach:',
+  'Restoring into:': 'Wird wiederhergestellt nach:'
 }
 
 export const translations: Translations = { de }

@@ -216,6 +216,105 @@ func TestStoreContract_RestoreFolderSurvivesFinish(t *testing.T) {
 	}
 }
 
+// GetInSpace is the lookup a member's UI follows a run with, so a job of another
+// Space must be indistinguishable from one that never existed.
+func TestStoreContract_GetInSpaceIsScopedToTheSpace(t *testing.T) {
+	implementations := map[string]func(Clock) Store{
+		"memory": func(c Clock) Store { return NewMemoryStoreWithClock(c) },
+		"state":  func(c Clock) Store { return NewStateStore(state.NewMemoryStore(), c) },
+	}
+
+	for name, newImpl := range implementations {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			clock := testutil.NewFakeClock(epoch)
+			store := newImpl(clock)
+
+			mine, err := store.Create(ctx, Job{
+				SpaceID: "space$a!a", Kind: KindRestore, State: StateRunning,
+				RestoreFolder: "Restore/2026-05-06T07-08-09Z",
+			})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			clock.Advance(time.Minute)
+			theirs, err := store.Create(ctx, Job{SpaceID: "space$b!b", Kind: KindBackup, State: StateRunning})
+			if err != nil {
+				t.Fatalf("Create other: %v", err)
+			}
+
+			got, err := store.GetInSpace(ctx, "space$a!a", mine.ID)
+			if err != nil {
+				t.Fatalf("GetInSpace: %v", err)
+			}
+			if got.ID != mine.ID || got.RestoreFolder != mine.RestoreFolder {
+				t.Fatalf("GetInSpace: %+v", got)
+			}
+
+			var nf ErrNotFound
+			for _, tc := range []struct{ name, space, id string }{
+				{"another space's job", "space$a!a", theirs.ID},
+				{"my job asked for from another space", "space$b!b", mine.ID},
+				{"an id that never existed", "space$a!a", "absent"},
+				{"an empty id", "space$a!a", ""},
+				{"an empty space", "", mine.ID},
+			} {
+				if _, err := store.GetInSpace(ctx, tc.space, tc.id); !errors.As(err, &nf) {
+					t.Errorf("%s: err = %v, want ErrNotFound", tc.name, err)
+				}
+			}
+		})
+	}
+}
+
+// A job created by another process after this one built its id index must
+// still be found: the member polling a restore may be served by a replica that
+// did not start it.
+func TestStateStore_GetInSpaceFindsAJobAnotherProcessCreated(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+
+	reader := NewStateStore(backing, clock)
+	// Build the reader's index before the job exists.
+	if _, err := reader.Get(ctx, "absent"); err == nil {
+		t.Fatal("Get absent: want an error")
+	}
+
+	writer := NewStateStore(backing, clock)
+	j, err := writer.Create(ctx, Job{SpaceID: "s1", Kind: KindRestore, State: StateRunning})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := reader.GetInSpace(ctx, "s1", j.ID)
+	if err != nil {
+		t.Fatalf("GetInSpace on a stale index: %v", err)
+	}
+	if got.ID != j.ID {
+		t.Fatalf("GetInSpace: %+v", got)
+	}
+}
+
+// A document filed under one Space that claims another is not served for
+// either: the key and the record must agree.
+func TestStateStore_GetInSpaceRefusesARecordFiledUnderTheWrongSpace(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	store := NewStateStore(backing, testutil.NewFakeClock(epoch))
+
+	docs := state.NewDocuments[Job](backing, jobsPrefix)
+	key := docs.Key("s1", documentName(epoch, KindRestore, "abc123"))
+	if err := docs.CreateKey(ctx, key, Job{ID: "abc123", SpaceID: "s2", Kind: KindRestore}); err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	var nf ErrNotFound
+	if _, err := store.GetInSpace(ctx, "s1", "abc123"); !errors.As(err, &nf) {
+		t.Fatalf("GetInSpace = %v, want ErrNotFound", err)
+	}
+}
+
 func TestStateStore_SurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	backing := state.NewMemoryStore()

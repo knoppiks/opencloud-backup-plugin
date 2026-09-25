@@ -206,6 +206,17 @@ export class BackupApi {
     return body.runs ?? []
   }
 
+  /**
+   * run reads one run of a Space by its id. Answers 404 (`not_found`) for an
+   * id that is not a run of *this* Space, however it came to be asked for.
+   *
+   * It is how a started restore is followed to its end: `status().current_job`
+   * is whatever runs now, which may be a backup that began a moment later.
+   */
+  run(spaceId: string, jobId: string): Promise<Job> {
+    return this.request<Job>(this.space(spaceId, `/backup/runs/${encodeURIComponent(jobId)}`))
+  }
+
   /** listNotifications returns member-facing events for a Space. */
   async listNotifications(spaceId: string, limit?: number): Promise<Notification[]> {
     const body = await this.request<{ notifications?: Notification[] }>(

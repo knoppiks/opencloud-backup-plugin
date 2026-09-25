@@ -155,6 +155,16 @@ describe('BackupApi requests', () => {
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ snapshot_id: 'snap' })
   })
 
+  it('reads one run by id, both ids encoded', async () => {
+    const { calls, fetchImpl } = stub(200, { id: 'abc', kind: 'restore', state: 'running' })
+    const got = await client(fetchImpl).run(SPACE, 'abc/../x')
+
+    expect(calls[0]!.url).toBe(
+      `${BASE}/spaces/${encodeURIComponent(SPACE)}/backup/runs/abc%2F..%2Fx`
+    )
+    expect(got).toMatchObject({ id: 'abc', kind: 'restore' })
+  })
+
   it('accepts a 202 body for a started run', async () => {
     const { fetchImpl } = stub(202, { job_id: 'job-1', space_id: SPACE, state: 'running' })
     expect(await client(fetchImpl).runBackup(SPACE)).toMatchObject({ job_id: 'job-1' })

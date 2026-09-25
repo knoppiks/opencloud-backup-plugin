@@ -125,6 +125,31 @@ describe('SpaceStatus roles', () => {
   })
 })
 
+describe('SpaceStatus restore entry', () => {
+  const restoreLink = (wrapper: Awaited<ReturnType<typeof mountBoard>>) =>
+    wrapper.find('[data-testid="restore-link"]')
+
+  // Restore is a member capability (decisions.md #7): a viewer who can do
+  // nothing else on the board can still get their files back.
+  it('offers a viewer the restore page of a set-up Space', async () => {
+    given(status(), 'viewer')
+    const wrapper = await mountBoard()
+    expect(JSON.parse(restoreLink(wrapper).attributes('data-to') as string)).toEqual({
+      name: 'backup-vault-restore',
+      params: { spaceId: SPACE_ID }
+    })
+  })
+
+  it.each([
+    ['no binding', { configured: false, keys_configured: false }],
+    ['no keys', { keys_configured: false }]
+  ])('offers no restore with %s', async (_, overrides) => {
+    given(status(overrides), 'manager')
+    const wrapper = await mountBoard()
+    expect(restoreLink(wrapper).exists()).toBe(false)
+  })
+})
+
 describe('SpaceStatus setup entry', () => {
   const link = (wrapper: Awaited<ReturnType<typeof mountBoard>>) =>
     wrapper.find('[data-testid="setup-action"] a')

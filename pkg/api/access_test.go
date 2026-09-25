@@ -196,6 +196,7 @@ func roleTable() []route {
 	return []route{
 		{"get config", http.MethodGet, "/backup/config", nil, cs3.RoleViewer},
 		{"list runs", http.MethodGet, "/backup/runs", nil, cs3.RoleViewer},
+		{"get run", http.MethodGet, "/backup/runs/0123abcd", nil, cs3.RoleViewer},
 		{"backup status", http.MethodGet, "/backup/status", nil, cs3.RoleViewer},
 		{"get schedule", http.MethodGet, "/backup/schedule", nil, cs3.RoleViewer},
 		{"notifications", http.MethodGet, "/backup/notifications", nil, cs3.RoleViewer},

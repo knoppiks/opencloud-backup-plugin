@@ -482,6 +482,117 @@ papered over in TypeScript:
 | 8d.3 | Restore | snapshot picker, confirm, progress, link to `restore_folder` |
 | 8d.4 | Recovery Key | replacement flow, "Check my Recovery Key", envelope download |
 
+### Sub-phase 8d.3 plan — decisions taken before implementation
+
+Only what the 8d decisions leave open. Settled with the user before any code.
+
+1. **One job can be read by id, and only within its own Space.** Nothing in
+   the API reads a single job, so a view that started a restore could follow
+   it only through `/backup/status`. But `current_job` is whatever runs *now*,
+   and that may be a backup that started straight after. So the backend gains
+   `GET /spaces/{id}/backup/runs/{jobId}` for viewers and up. A job from
+   another Space answers the same 404 as an id that never existed.
+   The lookup goes through the Space's own history listing, not the store's
+   process-wide id index. That way it is scoped by construction, and it cannot
+   miss a job that a different process created after its index was built.
+   The rejected alternative was to poll status and then search `/backup/runs`
+   for the id. It works until a scheduled backup starts at the wrong moment,
+   and then the page shows someone else's run as theirs.
+2. **The folder is linked through the host's own route helpers, with the path
+   as text when that is not possible.** `useSpacesStore().getSpace(id)`,
+   `createFileRouteOptions` and `createLocationSpaces` come from `web-pkg`,
+   which is a host singleton, so they cost the bundle nothing. If the host has
+   not loaded that Space, the page names the folder in words instead of
+   linking to it. It does not make up a URL. Whether the link opens the right
+   folder in a real browser is 8f's to prove.
+3. **Restore has its own route, `/space/:spaceId/restore`.** It is a lazy
+   chunk like the wizard. The board links to it for every member once the
+   Space is set up, viewers included (decisions.md #7; the owner kept restore
+   at viewer in R2). The page goes: pick a backup, confirm, watch progress,
+   then open the folder. The route carries the Space id and nothing else, so
+   a reload lands on the picker and a running restore still shows on the
+   board.
+4. **The confirm step states the cost.** It shows the file count and size of
+   the chosen backup. It says the copy goes into a new folder, that nothing is
+   overwritten, and that the copy uses the Space's storage.
+5. **Run history links each restore to its folder, failed ones included.**
+   `restore_folder` is written when the job starts because a failed restore
+   can leave a partial folder behind (8d.1). The history is where someone who
+   left the page finds it again.
+6. **A 409 reads as "another backup or restore is running" on the restore
+   page.** The shared wording, "a backup is already running", is wrong when
+   the run in the way is a restore.
+
+### Sub-phase 8d.3 outcome (implemented, issue #35)
+
+The restore flow landed as planned: pick, confirm, follow, then a link to the
+folder. The machine is in `web/src/restore/flow.ts` and
+`views/RestoreView.vue` renders it at `/space/:spaceId/restore`. The board
+links there for every member of a Space that is set up. The plan left some
+things open:
+
+- **`jobs.Store` gained `GetInSpace`.** Plan decision 1 says the lookup goes
+  through the Space's history. That became a store method rather than a filter
+  in the handler. The state store lists the Space's keys, matches the id in
+  the key name, and reads one document. Before serving it, it checks that the
+  record's own `SpaceID` matches the Space it is filed under. The memory store
+  checks the same field. A contract test runs both stores. A second test
+  builds the reader's id index first, then creates the job through a second
+  store over the same state. `Get` misses that job and `GetInSpace` finds it.
+- **The handler refuses anything that is not lowercase hex of at most 64
+  characters before calling the store.** It answers with the same 404 body as
+  a job that does not exist, and a test compares the bodies. This is defence
+  in depth only: the store's lookup is by key name, not by path. The role
+  table gained a row, so the credential and role sweeps cover the route.
+- **The flow never offers a second restore while one is running.** The plan
+  only covered a reload. Three more cases do the same thing:
+  - A 409 on the POST.
+  - A POST that got no answer, or a 5xx.
+  - A status read that shows a restore already running.
+
+  In each case the page re-reads status and follows the running restore,
+  whether this request started it or another tab did. The run lock already
+  prevents two restores at the same time. This prevents a second full copy
+  afterwards, which would cost the member's storage a second time. It is the
+  same reasoning as the wizard's ambiguous-setup rule (8d.2 decision 5).
+- **The backup that no longer exists.** A 404 on the POST means retention
+  removed the backup between the listing and the click. The page lists the
+  backups again and explains why. It does not branch on the server's message:
+  `not_found` from this route can only be the Space or the snapshot, and the
+  caller has just read the Space.
+- **Deviation — a run whose record goes missing becomes `lost`.** The page
+  stops polling and points to the recent activity. It does not retry the
+  lookup every five seconds for as long as the page stays open. The plan
+  did not cover this. In practice the job store only removes finished runs
+  older than a year.
+- **The folder is checked before it is linked.** `isRestoreFolder` accepts
+  exactly `Restore/<name>`. Anything else is not linked and not shown: `..`,
+  a nested path, an absolute path, a backslash, or a different root. The
+  server is the only writer of that field, but the value turns into a link
+  inside someone's Files app. The route builder is tested against web-pkg's
+  real `createFileRouteOptions` and `createLocationSpaces`, so a change in how
+  the host builds Files routes breaks a test here rather than producing a
+  dead link.
+- **`ActionError` takes optional wording.** `restoreErrorTitle` and
+  `restoreErrorAdvice` in `api/errortext.ts` change only `run_in_progress`.
+  Every other code keeps the shared text.
+- **Bundle:** the restore page is its own 3.6 kB gzip chunk with no crypto in
+  it. The spaces store and route helpers are loaded through the host's shared
+  `web-pkg`, as `useAuthStore` already is.
+- **Mutation checks.** Each of these made the suite fail:
+  - dropping the Space check in either store;
+  - reading through the id index;
+  - dropping the check that the record matches the Space it is filed under;
+  - skipping the status re-read after an ambiguous POST;
+  - not following a restore that is already running at load;
+  - accepting any folder path.
+- **Verified:** `go test ./...`, and web lint, typecheck, tests (397, was 326)
+  and build. **Not verified:** that the Files link opens the right folder in a
+  real browser. That needs a loaded host spaces store and a real Space id, and
+  both are 8f's to provide. The one assumption is that the service's Space id
+  equals the host's drive id. The fixture's `seed.sh` already relies on this,
+  because it passes the graph drive id to the service as the Space id.
+
 ### Sub-phase 8d.2 plan — decisions taken before implementation
 
 Only what the 8d decisions above leave open. Settled with the user before any

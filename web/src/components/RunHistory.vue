@@ -5,11 +5,17 @@
 // "what has this service been doing with my Space" is the question the list
 // answers. Counts are only shown where they mean something to a person:
 // files and size for a backup or restore, snapshots removed for a clean-up.
+//
+// A restore row names the folder it wrote into, linked where the host allows,
+// and so does a failed one: it may have left a partial copy behind (8d.3
+// decision 5).
 import { useGettext } from 'vue3-gettext'
 import type { Job } from '../api'
 import { useFormat } from '../composables/useFormat'
+import { isRestoreFolder } from '../restore/folderlink'
+import RestoreFolderLink from './RestoreFolderLink.vue'
 
-defineProps<{ runs: Job[] }>()
+defineProps<{ spaceId: string; runs: Job[] }>()
 
 const { $gettext } = useGettext()
 const format = useFormat()
@@ -50,6 +56,18 @@ function triggerLabel(job: Job): string {
       return $gettext('scheduled')
     default:
       return ''
+  }
+}
+
+/** folderLabel introduces a restore's folder by how the run got on. */
+function folderLabel(job: Job): string {
+  switch (job.state) {
+    case 'succeeded':
+      return $gettext('Restored into:')
+    case 'failed':
+      return $gettext('Anything restored before it stopped is in:')
+    default:
+      return $gettext('Restoring into:')
   }
 }
 
@@ -100,6 +118,14 @@ function details(job: Job): string {
         {{ details(run) }}
       </p>
       <p v-if="run.error" class="ext:text-sm ext:text-role-error">{{ run.error }}</p>
+      <p
+        v-if="run.kind === 'restore' && run.restore_folder && isRestoreFolder(run.restore_folder)"
+        class="ext:text-sm"
+        data-testid="history-folder"
+      >
+        {{ folderLabel(run) }}
+        <RestoreFolderLink :space-id="spaceId" :folder="run.restore_folder" />
+      </p>
     </li>
   </ul>
 </template>

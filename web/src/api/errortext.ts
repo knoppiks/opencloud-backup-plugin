@@ -60,3 +60,23 @@ export function errorAdvice(code: ApiFailureCode, $gettext: Gettext): string {
       return ''
   }
 }
+
+/**
+ * restoreErrorTitle is errorTitle as the restore page says it. The shared
+ * wording for run_in_progress names a backup, and on this page the run in the
+ * way is as likely to be a restore (8d.3 decision 6).
+ */
+export function restoreErrorTitle(code: ApiFailureCode, $gettext: Gettext): string {
+  if (code === 'run_in_progress') {
+    return $gettext('Another backup or restore is running for this space')
+  }
+  return errorTitle(code, $gettext)
+}
+
+/** restoreErrorAdvice is errorAdvice as the restore page says it. */
+export function restoreErrorAdvice(code: ApiFailureCode, $gettext: Gettext): string {
+  if (code === 'run_in_progress') {
+    return $gettext('Try again when it has finished.')
+  }
+  return errorAdvice(code, $gettext)
+}

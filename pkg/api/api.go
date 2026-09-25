@@ -217,6 +217,7 @@ func (s *Server) routes() {
 	s.mux.Handle("PATCH /api/v1/spaces/{id}/backup/config", authed(s.handlePatchBackupConfig))
 	s.mux.Handle("POST /api/v1/spaces/{id}/backup/run", authed(s.handleRunBackup))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs", authed(s.handleListRuns))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs/{jobId}", authed(s.handleGetRun))
 
 	// Scheduling and status (Phase 6). Same role gate as the config routes; a
 	// schedule is only accepted for a Space already bound to a granted target,

@@ -996,6 +996,19 @@ is listed here so the corrections are themselves on the record:
 - **`PUT /backup/schedule` refuses unknown fields.** `enabled` is a plain bool,
   so a misspelt body used to answer 200 while switching backups off.
 
+### Amendments from Phase 8 — 8d.3 (following a restore)
+
+- **Any member can read a single run of their Space**, through
+  `GET /spaces/{id}/backup/runs/{jobId}`. It returns the same record the
+  history list already gives a viewer, so it discloses nothing new. For a
+  run of another Space it answers the same 404 as for an id that never
+  existed, so a member of one Space cannot use it to probe the runs of
+  another.
+  The lookup is scoped by the Space's own history (`jobs.Store.GetInSpace`)
+  and not by the process-wide id index. The index can be stale in a process
+  that did not create the job, and there a stale index would report the
+  restore as gone.
+
 ---
 
 ## Trust & key model
