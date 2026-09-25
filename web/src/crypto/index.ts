@@ -50,6 +50,7 @@ export {
 export {
   CeremonyError,
   DK_SIZE,
+  envelopeDigest,
   performRecoveryKeyRotation,
   performSetupCeremony,
   recoverDataKey,

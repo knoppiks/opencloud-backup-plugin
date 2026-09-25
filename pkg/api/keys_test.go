@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"opencloud-backup-plugin/pkg/cs3"
@@ -458,7 +459,8 @@ func TestRotateRecoveryKeyKeepsTheDataKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotateBody, err := json.Marshal(rotateRecoveryKeyRequest{
-		WrappedDKRK: base64.StdEncoding.EncodeToString(rotated.Blob),
+		WrappedDKRK:    base64.StdEncoding.EncodeToString(rotated.Blob),
+		ReplacesSHA256: envelopeDigest(current.Blob),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -514,6 +516,16 @@ func TestRotateRecoveryKeyRejectsBadRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	current, err := env.store.GetRK("space-shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaces := envelopeDigest(current.Blob)
+	good, err := keys.WrapWithRK(dk, rk, apiTestArgon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goodEnv := base64.StdEncoding.EncodeToString(good.Blob)
 
 	cases := map[string]struct {
 		space, token string
@@ -522,32 +534,47 @@ func TestRotateRecoveryKeyRejectsBadRequests(t *testing.T) {
 	}{
 		"non-member": {
 			space: "space-alice", token: "bob-tok",
-			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString(weakEnv.Blob)},
+			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString(weakEnv.Blob), ReplacesSHA256: replaces},
 			want:    http.StatusForbidden,
 		},
 		"space that was never set up": {
 			space: "space-alice", token: "alice-tok",
-			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString(weakEnv.Blob)},
+			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString(weakEnv.Blob), ReplacesSHA256: replaces},
 			want:    http.StatusNotFound,
 		},
 		"weak envelope": {
 			space: "space-shared", token: "alice-tok",
-			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString(weakEnv.Blob)},
+			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString(weakEnv.Blob), ReplacesSHA256: replaces},
 			want:    http.StatusBadRequest,
 		},
 		"server envelope instead of a recovery one": {
 			space: "space-shared", token: "alice-tok",
-			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString(srwEnv.Blob)},
+			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString(srwEnv.Blob), ReplacesSHA256: replaces},
 			want:    http.StatusBadRequest,
 		},
 		"not an envelope": {
 			space: "space-shared", token: "alice-tok",
-			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString([]byte("garbage"))},
+			payload: rotateRecoveryKeyRequest{WrappedDKRK: base64.StdEncoding.EncodeToString([]byte("garbage")), ReplacesSHA256: replaces},
 			want:    http.StatusBadRequest,
 		},
 		"empty": {
 			space: "space-shared", token: "alice-tok",
 			want: http.StatusBadRequest,
+		},
+		"no precondition": {
+			space: "space-shared", token: "alice-tok",
+			payload: rotateRecoveryKeyRequest{WrappedDKRK: goodEnv},
+			want:    http.StatusBadRequest,
+		},
+		"precondition not a digest": {
+			space: "space-shared", token: "alice-tok",
+			payload: rotateRecoveryKeyRequest{WrappedDKRK: goodEnv, ReplacesSHA256: strings.ToUpper(replaces)},
+			want:    http.StatusBadRequest,
+		},
+		"precondition names another envelope": {
+			space: "space-shared", token: "alice-tok",
+			payload: rotateRecoveryKeyRequest{WrappedDKRK: goodEnv, ReplacesSHA256: envelopeDigest(good.Blob)},
+			want:    http.StatusConflict,
 		},
 	}
 	for name, c := range cases {
@@ -572,6 +599,75 @@ func TestRotateRecoveryKeyRejectsBadRequests(t *testing.T) {
 	}
 	if _, err := keys.UnwrapRK(stored, rk); err != nil {
 		t.Fatalf("a refused rotation disturbed the stored envelope: %v", err)
+	}
+	if !bytes.Equal(stored.Blob, current.Blob) {
+		t.Fatal("a refused rotation replaced the stored envelope")
+	}
+}
+
+// Two managers who prepared a rotation against the same envelope: exactly one
+// lands, and the other is told so instead of being handed a key that opens
+// nothing.
+func TestRotateRecoveryKeyConcurrentRotationsOneWins(t *testing.T) {
+	env := newKeyTestEnv(t)
+	body, dk, rk := clientSetup(t)
+	if rec := doJSON(env.srv, http.MethodPost, "/api/v1/spaces/space-shared/backup/setup", "alice-tok", body); rec.Code != http.StatusCreated {
+		t.Fatalf("setup = %d", rec.Code)
+	}
+	current, err := env.store.GetRK("space-shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaces := envelopeDigest(current.Blob)
+
+	const racers = 8
+	blobs := make([][]byte, racers)
+	for i := range blobs {
+		wrapped, err := keys.WrapWithRK(dk, rk, apiTestArgon)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blobs[i] = wrapped.Blob
+	}
+
+	codes := make([]int, racers)
+	var wg sync.WaitGroup
+	for i := range blobs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			payload, _ := json.Marshal(rotateRecoveryKeyRequest{
+				WrappedDKRK:    base64.StdEncoding.EncodeToString(blobs[i]),
+				ReplacesSHA256: replaces,
+			})
+			codes[i] = doJSON(env.srv, http.MethodPost,
+				"/api/v1/spaces/space-shared/backup/recovery-key/rotate", "alice-tok", payload).Code
+		}(i)
+	}
+	wg.Wait()
+
+	winner := -1
+	for i, code := range codes {
+		switch code {
+		case http.StatusOK:
+			if winner >= 0 {
+				t.Fatalf("two rotations of the same envelope both landed (%d and %d)", winner, i)
+			}
+			winner = i
+		case http.StatusConflict:
+		default:
+			t.Fatalf("rotation %d = %d, want 200 or 409", i, code)
+		}
+	}
+	if winner < 0 {
+		t.Fatal("no rotation landed")
+	}
+	stored, err := env.store.GetRK("space-shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored.Blob, blobs[winner]) {
+		t.Fatal("the stored envelope is not the one whose rotation was answered 200")
 	}
 }
 

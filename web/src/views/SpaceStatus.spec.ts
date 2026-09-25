@@ -150,6 +150,28 @@ describe('SpaceStatus restore entry', () => {
   })
 })
 
+describe('SpaceStatus Recovery Key entry', () => {
+  const keyLink = (wrapper: Awaited<ReturnType<typeof mountBoard>>) =>
+    wrapper.find('[data-testid="recovery-key-link"]')
+
+  // Checking the key and keeping the key file are member capabilities
+  // (decisions.md #7); replacement is offered on that page, to managers.
+  it.each(['viewer', 'editor', 'manager'])('offers a %s the Recovery Key page', async (role) => {
+    given(status(), role)
+    const wrapper = await mountBoard()
+    expect(JSON.parse(keyLink(wrapper).attributes('data-to') as string)).toEqual({
+      name: 'backup-vault-recovery-key',
+      params: { spaceId: SPACE_ID }
+    })
+  })
+
+  it('offers no Recovery Key page before the Space has keys', async () => {
+    given(status({ keys_configured: false }), 'manager')
+    const wrapper = await mountBoard()
+    expect(keyLink(wrapper).exists()).toBe(false)
+  })
+})
+
 describe('SpaceStatus setup entry', () => {
   const link = (wrapper: Awaited<ReturnType<typeof mountBoard>>) =>
     wrapper.find('[data-testid="setup-action"] a')

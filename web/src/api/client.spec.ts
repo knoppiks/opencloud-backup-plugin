@@ -293,10 +293,13 @@ describe('BackupApi never echoes a request body', () => {
 
   it('sends no data key on the rotation path', async () => {
     const { calls, fetchImpl } = stub(200, { space_id: SPACE, configured: true })
-    await client(fetchImpl).rotateRecoveryKey(SPACE, { wrapped_dk_rk: 'new-envelope' })
+    await client(fetchImpl).rotateRecoveryKey(SPACE, {
+      wrapped_dk_rk: 'new-envelope',
+      replaces_sha256: 'digest-of-the-old-one'
+    })
 
     const body = JSON.parse(calls[0]!.init.body as string) as Record<string, unknown>
-    expect(Object.keys(body)).toEqual(['wrapped_dk_rk'])
+    expect(Object.keys(body).sort()).toEqual(['replaces_sha256', 'wrapped_dk_rk'])
     expect(body.data_key).toBeUndefined()
   })
 })

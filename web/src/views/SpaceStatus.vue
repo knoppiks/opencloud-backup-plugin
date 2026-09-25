@@ -283,6 +283,19 @@ onMounted(load)
           </router-link>
         </div>
 
+        <div v-if="isSetUp">
+          <!-- Every member: the recovery envelope is theirs to check and keep
+               (decisions.md #7). Replacement is linked from there, for
+               managers. -->
+          <router-link
+            :to="{ name: 'backup-vault-recovery-key', params: { spaceId } }"
+            class="ext:font-medium"
+            data-testid="recovery-key-link"
+          >
+            {{ $gettext('Recovery Key') }}
+          </router-link>
+        </div>
+
         <section>
           <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Recent activity') }}</h2>
           <RunHistory :space-id="spaceId" :runs="runs" />

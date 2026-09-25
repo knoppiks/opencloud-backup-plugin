@@ -482,6 +482,202 @@ papered over in TypeScript:
 | 8d.3 | Restore | snapshot picker, confirm, progress, link to `restore_folder` |
 | 8d.4 | Recovery Key | replacement flow, "Check my Recovery Key", envelope download |
 
+### Sub-phase 8d.4 plan — decisions taken before implementation
+
+Only what the 8d decisions leave open. Settled with the user before any code.
+Three things the survey found shaped the options:
+
+- `cmd/decrypt` reads a Take-Out directory and nothing else. It has no way to
+  take an envelope from anywhere but the Take-Out's own `recovery.ocbke`, and a
+  Take-Out forced without an envelope ignores one dropped in later. Before this
+  slice, a downloaded envelope would have had no consumer.
+- Rotation writes the state store only. The target's copy of the envelope, and
+  so every Take-Out, is refreshed at the **next backup run**. Until then the
+  old key still opens a fresh Take-Out and the new one does not.
+- The state store has no compare-and-set (#16), but the service is a single
+  instance (#16), so a lock inside the process makes a compare-then-write real.
+
+1. **An ambiguous rotate failure is resolved by testing both keys against what
+   the server stored.** For offline, timeout and 5xx, the old and the new key
+   stay in component state, and "Check again" re-fetches the envelope:
+   - the new key opens it: the rotation landed; continue to the done screen;
+   - the old key opens it: nothing landed; the new key is discarded, the user
+     is told to throw it away, both keys are forgotten, and the flow starts
+     again;
+   - neither opens it: someone else replaced the key; both are forgotten and
+     the page says so.
+   A fetch that fails, or an envelope that is not one, leaves the state
+   uncertain. It is never read as an answer about a key. Same reasoning as
+   8d.2 decision 5.
+2. **Rotation carries a precondition.** The rotate body gains a required
+   `replaces_sha256`: the hex SHA-256 of the envelope the browser unwrapped.
+   That is a hash of ciphertext every member may already read, not key
+   material. The handler holds a per-Space lock, compares the hash with the
+   stored envelope, and answers 409 `conflict` if they differ. The page reads
+   that as "someone else replaced the Recovery Key". Without it, two managers
+   rotating at once both get 200 and the loser keeps a key that opens nothing.
+   The rejected alternative, re-fetching after the POST, detects the race only
+   after the winner's envelope has been overwritten.
+3. **Two routes.**
+   - `/space/:spaceId/recovery-key` is for any member: "Check my Recovery
+     Key", the download, and the lost-key wording. For a manager it links to
+     the replacement.
+   - `/space/:spaceId/recovery-key/replace` is the rotation. Below manager it
+     says that a manager has to do this.
+   The board links to the first for every member once the Space is set up.
+   Both are lazy chunks. The crypto stays out of the overview and board chunks.
+4. **The download is the raw envelope, named `recovery.ocbke`, and
+   `cmd/decrypt` gains `-envelope <file>`.** The flag overrides the Take-Out's
+   own envelope and gets the same checks: it must be an envelope, from a
+   version this build reads, and an RK wrap. It covers a Take-Out made between
+   a rotation and the next run, and a Take-Out forced without an envelope. The
+   file is built as a `Blob` with an object URL that is created and revoked
+   locally. Nothing crosses the network except the existing GET. The name
+   matches the Take-Out's, so the file also drops into one as it is.
+5. **After a rotation the done screen states the delay and offers "Back up
+   now".** It says that existing backups stay readable and nothing is
+   re-uploaded, and that the old key stops working once the next backup has
+   run, which the button starts. After that, the old copy should be destroyed.
+   The rejected alternative, republishing from the rotate handler, would put
+   target credentials into the API request path.
+6. **What "Check my Recovery Key" reports:**
+   - decode refuses the input: "this is not a Recovery Key, check for typos";
+   - it decodes but does not open the envelope: "this key does not open this
+     Space's backups", plus the lost-key wording;
+   - the envelope cannot be fetched or parsed: "could not check", never
+     "wrong key".
+   Nothing about the check is sent anywhere.
+7. **The lost-key wording** (there is no escrow, setup cannot be re-run, and a
+   replacement needs the current key) appears on the check page, in the
+   "does not open" result, and at the start of the replacement.
+8. **The replacement has the same gate as setup.** The new key is shown once,
+   and two random groups must be typed back before the POST. The gate logic
+   and the key display move out of the wizard into shared code, because a
+   second caller now needs them.
+9. **Key hygiene, as for the wizard.**
+   - Both machines are pure TypeScript under `src/recoverykey/`.
+   - Lint bans storage there and in both views, and bans Vue and OpenCloud
+     imports from the machines.
+   - The Data Key never reaches the flow. `performRecoveryKeyRotation` recovers
+     it, re-wraps it and zeroizes it internally.
+   - The old key is held only until its purpose is settled: until the
+     rotation succeeds, fails outright, or the ambiguous case is resolved.
+   - Every key is forgotten on dispose.
+
+### Sub-phase 8d.4 outcome (implemented, issue #35)
+
+The Recovery Key page and the replacement landed as planned. The board links
+every member of a set-up Space to `/space/:spaceId/recovery-key`: "Check my
+Recovery Key", the key file and the lost-key facts. Managers get a link from
+there to `/space/:spaceId/recovery-key/replace`. The machines are
+`recoverykey/check.ts` and `recoverykey/rotation.ts`, and the views are
+`RecoveryKeyView.vue` and `ReplaceRecoveryKey.vue`. The plan left some things
+open:
+
+- **The precondition is built by the crypto, not by the view.**
+  - `performRecoveryKeyRotation` now returns a request with `replaces_sha256`,
+    computed from the envelope it unwrapped (`envelopeDigest`, noble's SHA-256,
+    checked against WebCrypto).
+  - The handler refuses anything but 64 lowercase hex characters before it
+    touches the store.
+  - The lock is a `sync.Map` of mutexes keyed by Space id, held only by
+    rotation.
+  - A test sends eight rotations of the same envelope at once. Exactly one gets
+    200, and the stored envelope is the one that was answered 200.
+- **`decrypt -envelope`.**
+  - `takeout/decrypt.Options` gained `EnvelopeFile`.
+  - `ListSnapshots` now takes `Options` too, rather than growing a fifth
+    positional argument. That changed its signature; `cmd/decrypt` was its only
+    caller.
+  - Two new errors: `ErrBadEnvelopeFile` (missing, unreadable, not an RK
+    envelope) and `ErrEnvelopeFileMismatch` (it opens with the key but the
+    repository does not open with what it holds).
+  - Neither error names the file's path.
+  - `cmd/decrypt`'s usage text says when to use the flag.
+- **Shared code, because a second caller arrived:**
+  - The gate (`pickGateGroups`, `gateMatches`), `cryptoRandomInt` and
+    `nextFrame` moved to `recoverykey/gate.ts`. `wizard/machine.ts`
+    re-exports them.
+  - The key display and the gate form are now components
+    (`RecoveryKeyDisplay.vue`, `RecoveryKeyGate.vue`) and the wizard uses them.
+  - `asApiError` and the "may have landed" rule (`mayHaveLanded`) moved to
+    `api/errors.ts`, with the wizard, the restore flow and the rotation as
+    callers.
+  - `LostKeyNotice.vue` holds the lost-key wording once.
+- **The check answers a typo before any request.** Decode is cheap, so
+  "malformed" costs no GET and no Argon2id. The check gets the key as an
+  argument and keeps it nowhere. The typed value lives only in the view's input.
+- **A download is checked before it is saved.** The page refuses to save bytes
+  that are not a Recovery Key envelope: the base64 must decode, the header must
+  parse, and the kind must be RK. A broken file would otherwise be found out on
+  the day it is needed.
+- **Deviation — the object URL is revoked 30 seconds after the click, not
+  immediately.** Some browsers start reading the Blob after `click()` returns
+  and fail the download if the URL is already gone. The Blob is ciphertext any
+  member may read.
+- **Deviation — the lost-key wording appears once per screen.** On the check
+  page it is a block of its own. When the answer is "does not open", the block
+  moves into that answer instead of appearing twice.
+- **The current key is kept in the input while it may need correcting.** For a
+  typo or a wrong key the user fixes it in place. Once it has opened the
+  envelope, the input is cleared, and the machine holds the key until the
+  rotation is settled.
+- **Bundle.**
+  - The crypto is now one shared chunk (`gate-*.mjs`, 21.5 kB gzip), used by
+    the wizard, the check page and the replacement page. Before this slice it
+    was inside the wizard's chunk (26.7 kB).
+  - The pages themselves: wizard 4.9 kB, check page 2.9 kB, replacement
+    4.0 kB.
+  - The overview (1.9 kB), the board (4.0 kB) and the restore page (3.6 kB)
+    import none of it. This was checked in the built chunks' imports.
+- **Lint.** The storage ban now covers `src/recoverykey/**`, both new views
+  and both key components. The Vue/OpenCloud import ban covers
+  `src/recoverykey/**`. Both were verified by mutation, in every covered file.
+- **Mutation checks.** Each of these made the suite fail:
+  - skipping the gate;
+  - keeping the keys after settling;
+  - reading an ambiguous POST as success;
+  - putting the old key into the request;
+  - reading "neither key opens" as "nothing landed";
+  - reading an unwrap that throws as "wrong key";
+  - not checking the envelope kind before a download;
+  - keeping the checked key in state;
+  - hashing the new envelope instead of the old one;
+  - offering replacement to viewers.
+
+  On the Go side, removing the lock or the comparison each failed the
+  concurrent-rotation test, and ignoring `EnvelopeFile` failed four tests.
+- **gitleaks.** `dir .` flagged the minified `web/dist` output, which is
+  gitignored. A minified assignment of the two key fields in the rotation
+  machine matches the generic-api-key rule. CI's history scan never sees `dist/`. With `dist/`
+  removed, both `dir` and `git` scans are clean. Nothing was allowlisted.
+- **Tests:** 486 web tests (was 397), in 32 files. Among them:
+  - "the Recovery Key reaches no API call" sweeps for the check machine, the
+    rotation machine and both views, covering the old key and every new key,
+    whole, bare and per group;
+  - checks that the old key never appears in any state the machine emits.
+
+  Go: the precondition (missing, malformed, stale, concurrent), and `decrypt`
+  with an envelope file after a rotation, for a Take-Out without an envelope,
+  for bad files and for a file from another Space.
+- **Not verified:** the pages in a real browser against a real backend (8f).
+  Also not verified: the download in real browsers, and the clipboard.
+- **Findings, not fixed (for the user to decide):**
+  - **Setup has the race rotation had.** Two concurrent `POST
+    .../backup/setup` calls can both pass `assertNotConfigured` and both write.
+    The Space could then end up with one caller's recovery envelope and the
+    other's server envelope, which is #17's orphaning failure through a race.
+    The same per-Space lock around "check, write both" would close it.
+  - **`README.md`'s status paragraph is stale.** It still says "There is no
+    user interface yet", although 8c–8d have landed.
+  - The known leftovers are unchanged:
+    - the scheduler does not check keys;
+    - `performSetupCeremony` does not wipe the Data Key when self-verification
+      fails;
+    - the board's inline errors are not `ActionError`;
+    - restore folders are named after the restore's start time, not the
+      snapshot's.
+
 ### Sub-phase 8d.3 plan — decisions taken before implementation
 
 Only what the 8d decisions leave open. Settled with the user before any code.

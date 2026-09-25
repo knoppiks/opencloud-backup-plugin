@@ -1009,6 +1009,36 @@ is listed here so the corrections are themselves on the record:
   that did not create the job, and there a stale index would report the
   restore as gone.
 
+### Amendments from Phase 8 — 8d.4 (replacing and checking the Recovery Key)
+
+- **A rotation names the envelope it replaces, and lands only if that is still
+  the stored one.** `POST .../backup/recovery-key/rotate` requires
+  `replaces_sha256`, the lowercase hex SHA-256 of the envelope the browser
+  unwrapped. The field is refused with 400 when it is missing or malformed, and
+  with 409 `conflict` when it no longer matches.
+  The handler holds a lock per Space across "read, compare, write". #16 still
+  gives the store no compare-and-set, but it also makes the service a single
+  instance, and within that one process the lock is a real compare-and-set.
+  Rationale: without it, two managers rotating at once both got 200, and the
+  one whose write lost kept a Recovery Key that opened nothing. The response
+  gave no hint of that. The digest is a hash of ciphertext any member may
+  already read, so it discloses nothing new.
+- **"The old Recovery Key stops working" is true once the next backup has run,
+  not when the rotation returns.** The rotation writes the state Space. The
+  copy on the target, which every Take-Out is made from, is refreshed by the
+  next run. Until then a new Take-Out still opens with the old key only. A
+  Take-Out made *before* the rotation keeps the old envelope for good. The UI
+  says so and offers "Back up now".
+- **`decrypt` accepts the envelope from outside the Take-Out** (`-envelope
+  <file>`, the `recovery.ocbke` any member can download). The Data Key never
+  changes, so the Space's current envelope opens every Take-Out of that Space
+  with the current key. That includes one made before a rotation and one
+  forced without an envelope. The Take-Out layout promise is unchanged: this
+  is an extra input, and the CLI still reads every Take-Out it ever read. The
+  file gets the same checks as the Take-Out's own envelope. A file that opens
+  with the key but does not open the repository is reported as belonging to
+  another Space, not as damage.
+
 ---
 
 ## Trust & key model

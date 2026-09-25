@@ -120,6 +120,24 @@ export function isApiError(err: unknown): err is ApiError {
   return err instanceof ApiError
 }
 
+/**
+ * asApiError is what a flow keeps of any thrown value: the ApiError itself,
+ * or a generic one. The generic one carries no text from the thrown value,
+ * which may have come from anywhere.
+ */
+export function asApiError(err: unknown): ApiError {
+  return isApiError(err) ? err : new ApiError('unknown', 'something went wrong')
+}
+
+/**
+ * mayHaveLanded reports a write whose outcome is unknown: nothing answered, or
+ * the server failed after it may already have acted. A flow must find out
+ * what happened before it repeats such a write (8d.2 decision 5).
+ */
+export function mayHaveLanded(error: ApiError): boolean {
+  return error.status === undefined || error.status >= 500
+}
+
 /** errorEnvelope is the service's error body. */
 interface ErrorEnvelope {
   error?: {

@@ -127,44 +127,70 @@ export default tseslint.config(
   },
 
   {
-    // The setup wizard's machine holds the Recovery Key between the ceremony
-    // and the setup POST. It is plain TypeScript so it can be tested without
-    // Vue, and it must never persist anything: a key in browser storage
-    // outlives the tab, the session and the person's intention (8d decision 3).
-    // SetupWizard.vue renders that key, so it is held to the storage ban too.
-    files: ['src/wizard/**/*.ts', 'src/views/SetupWizard.vue'],
+    // Everything that holds a Recovery Key must never persist anything: a key
+    // in browser storage outlives the tab, the session and the person's
+    // intention (8d decision 3).
+    //   - The setup wizard's machine holds the new key between the ceremony
+    //     and the setup POST; SetupWizard.vue renders it.
+    //   - src/recoverykey holds the replacement's old and new keys and the
+    //     gate; its views and the shared key components render or collect them.
+    files: [
+      'src/wizard/**/*.ts',
+      'src/recoverykey/**/*.ts',
+      'src/views/SetupWizard.vue',
+      'src/views/RecoveryKeyView.vue',
+      'src/views/ReplaceRecoveryKey.vue',
+      'src/components/RecoveryKeyDisplay.vue',
+      'src/components/RecoveryKeyGate.vue'
+    ],
     rules: {
       'no-restricted-globals': [
         'error',
-        { name: 'localStorage', message: 'The setup wizard must not persist anything.' },
-        { name: 'sessionStorage', message: 'The setup wizard must not persist anything.' },
-        { name: 'indexedDB', message: 'The setup wizard must not persist anything.' }
+        {
+          name: 'localStorage',
+          message: 'Code that holds a Recovery Key must not persist anything.'
+        },
+        {
+          name: 'sessionStorage',
+          message: 'Code that holds a Recovery Key must not persist anything.'
+        },
+        { name: 'indexedDB', message: 'Code that holds a Recovery Key must not persist anything.' }
       ],
       'no-restricted-properties': [
         'error',
-        { property: 'localStorage', message: 'The setup wizard must not persist anything.' },
-        { property: 'sessionStorage', message: 'The setup wizard must not persist anything.' },
-        { property: 'indexedDB', message: 'The setup wizard must not persist anything.' }
+        {
+          property: 'localStorage',
+          message: 'Code that holds a Recovery Key must not persist anything.'
+        },
+        {
+          property: 'sessionStorage',
+          message: 'Code that holds a Recovery Key must not persist anything.'
+        },
+        {
+          property: 'indexedDB',
+          message: 'Code that holds a Recovery Key must not persist anything.'
+        }
       ]
     }
   },
 
   {
-    files: ['src/wizard/**/*.ts'],
-    ignores: ['src/wizard/**/*.spec.ts'],
+    // The machines are plain TypeScript so they can be tested without Vue.
+    files: ['src/wizard/**/*.ts', 'src/recoverykey/**/*.ts'],
+    ignores: ['src/wizard/**/*.spec.ts', 'src/recoverykey/**/*.spec.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
         {
           paths: [
-            { name: 'vue', message: 'src/wizard is the machine, not the view: keep Vue out.' },
-            { name: 'vue3-gettext', message: 'src/wizard is the machine, not the view.' },
-            { name: 'vue-router', message: 'src/wizard is the machine, not the view.' }
+            { name: 'vue', message: 'This is a machine, not a view: keep Vue out.' },
+            { name: 'vue3-gettext', message: 'This is a machine, not a view.' },
+            { name: 'vue-router', message: 'This is a machine, not a view.' }
           ],
           patterns: [
             {
               group: ['@opencloud-eu/*'],
-              message: 'src/wizard is the machine, not the view.'
+              message: 'This is a machine, not a view.'
             }
           ]
         }

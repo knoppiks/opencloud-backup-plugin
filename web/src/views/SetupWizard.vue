@@ -6,13 +6,15 @@
 // unmount, which is what keeps the Recovery Key in component state only: it is
 // never in a store, a route, the URL or browser storage (8d decision 3; lint
 // bans storage here), and it is gone when the page is left.
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, shallowRef } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import ActionError from '../components/ActionError.vue'
+import RecoveryKeyDisplay from '../components/RecoveryKeyDisplay.vue'
+import RecoveryKeyGate from '../components/RecoveryKeyGate.vue'
 import RequestState from '../components/RequestState.vue'
 import { useBackupApi } from '../composables/useBackupApi'
 import { useFormat } from '../composables/useFormat'
-import { performSetupCeremony, recoveryKeyGroups, recoveryKeyOpens } from '../crypto'
+import { performSetupCeremony, recoveryKeyOpens } from '../crypto'
 import {
   cryptoRandomInt,
   nextFrame,
@@ -39,44 +41,9 @@ const wizard = new SetupWizard(props.spaceId, {
   }
 })
 
-/** answers are the gate's inputs; reset whenever new groups are asked for. */
-const answers = ref<string[]>([])
-const copied = ref(false)
-
-watch(
-  () => (state.value.step === 'confirm' ? state.value.groups.join() : ''),
-  (groups) => {
-    answers.value = groups === '' ? [] : groups.split(',').map(() => '')
-  }
-)
-watch(
-  () => state.value.step,
-  () => {
-    copied.value = false
-  }
-)
-
-const keyGroups = computed(() =>
-  'recoveryKey' in state.value ? recoveryKeyGroups(state.value.recoveryKey) : []
-)
-
 const loadError = computed(() =>
   state.value.step === 'load_failed' ? state.value.error : undefined
 )
-
-async function copyKey(): Promise<void> {
-  const s = state.value
-  if (s.step !== 'show_key') {
-    return
-  }
-  try {
-    // The clipboard is local to this device; nothing crosses the network.
-    await globalThis.navigator.clipboard.writeText(s.recoveryKey)
-    copied.value = true
-  } catch {
-    copied.value = false
-  }
-}
 
 function onTimeChange(choice: ScheduleChoice, value: string): void {
   const [hour, minute] = value.split(':').map(Number)
@@ -100,10 +67,7 @@ const weekdays = computed(() => {
 })
 
 onMounted(() => wizard.start())
-onBeforeUnmount(() => {
-  wizard.dispose()
-  answers.value = []
-})
+onBeforeUnmount(() => wizard.dispose())
 </script>
 
 <template>
@@ -256,76 +220,24 @@ onBeforeUnmount(() => {
             )
           }}
         </p>
-        <ol
-          class="ext:my-3 ext:grid ext:grid-cols-4 ext:gap-2 ext:font-mono ext:text-lg"
-          data-testid="recovery-key"
-          :aria-label="$gettext('Recovery Key')"
-        >
-          <li
-            v-for="(group, index) in keyGroups"
-            :key="index"
-            class="ext:flex ext:flex-col ext:items-center"
-          >
-            <span class="ext:text-xs ext:text-role-on-surface-variant">{{ index + 1 }}</span>
-            <span>{{ group }}</span>
-          </li>
-        </ol>
-        <div class="ext:flex ext:gap-2">
-          <oc-button appearance="outline" data-testid="copy-key" @click="copyKey()">
-            {{ copied ? $gettext('Copied') : $gettext('Copy') }}
-          </oc-button>
+        <RecoveryKeyDisplay :recovery-key="state.recoveryKey">
           <oc-button appearance="filled" data-testid="key-saved" @click="wizard.keySaved()">
             {{ $gettext('I have saved it') }}
           </oc-button>
-        </div>
+        </RecoveryKeyDisplay>
       </section>
 
       <!-- Step 2: the confirmation gate -->
-      <form
+      <RecoveryKeyGate
         v-else-if="state.step === 'confirm'"
         data-step="confirm"
-        class="ext:flex ext:flex-col ext:gap-2"
-        @submit.prevent="wizard.confirmKey(answers)"
-      >
-        <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Check that you saved it') }}</h2>
-        <p>
-          {{
-            $gettext(
-              'Type two groups from your saved Recovery Key. This makes sure you can find it when you need it.'
-            )
-          }}
-        </p>
-        <oc-text-input
-          v-for="(group, index) in state.groups"
-          :key="group"
-          v-model="answers[index]"
-          :label="$gettext('Group %{number}', { number: String(group + 1) })"
-          :disabled="state.submitting"
-          :data-testid="`gate-${group + 1}`"
-        />
-        <p v-if="state.mismatch" role="alert" data-testid="gate-mismatch">
-          {{ $gettext('That does not match. Look at your saved copy and try again.') }}
-        </p>
-        <div class="ext:flex ext:gap-2">
-          <oc-button
-            appearance="outline"
-            :disabled="state.submitting"
-            data-testid="show-again"
-            @click="wizard.showKeyAgain()"
-          >
-            {{ $gettext('Show the key again') }}
-          </oc-button>
-          <oc-button
-            submit="submit"
-            appearance="filled"
-            :disabled="state.submitting"
-            :show-spinner="state.submitting"
-            data-testid="gate-submit"
-          >
-            {{ $gettext('Protect this space') }}
-          </oc-button>
-        </div>
-      </form>
+        :groups="state.groups"
+        :mismatch="state.mismatch"
+        :submitting="state.submitting"
+        :submit-label="$gettext('Protect this space')"
+        @submit="(answers) => wizard.confirmKey(answers)"
+        @show-again="wizard.showKeyAgain()"
+      />
 
       <!-- Setup may or may not have landed -->
       <section v-else-if="state.step === 'setup_uncertain'" data-step="setup_uncertain">

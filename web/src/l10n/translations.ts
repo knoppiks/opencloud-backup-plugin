@@ -242,7 +242,82 @@ const de: Record<string, string> = {
   'This restore can no longer be followed here. The space’s recent activity shows how it ended.':
     'Diese Wiederherstellung lässt sich hier nicht mehr verfolgen. Die letzten Aktivitäten des Spaces zeigen, wie sie ausgegangen ist.',
   'Restored into:': 'Wiederhergestellt nach:',
-  'Restoring into:': 'Wird wiederhergestellt nach:'
+  'Restoring into:': 'Wird wiederhergestellt nach:',
+
+  // Recovery Key: check, key file and replacement (8d.4).
+  'Recovery Key for %{space}': 'Wiederherstellungsschlüssel für %{space}',
+  'This space has no Recovery Key yet. It is created when backup is set up.':
+    'Dieser Space hat noch keinen Wiederherstellungsschlüssel. Er wird beim Einrichten der Sicherung erstellt.',
+  'Check my Recovery Key': 'Meinen Wiederherstellungsschlüssel prüfen',
+  'Make sure the Recovery Key you saved still opens this space’s backups. It is checked on this device only and is not sent anywhere.':
+    'Prüfen Sie, ob Ihr gespeicherter Wiederherstellungsschlüssel die Sicherungen dieses Spaces noch öffnet. Die Prüfung findet nur auf diesem Gerät statt; der Schlüssel wird nirgendwohin gesendet.',
+  Check: 'Prüfen',
+  'Checking. This takes a moment…': 'Wird geprüft. Das dauert einen Moment…',
+  'This Recovery Key opens this space’s backups. Keep it safe.':
+    'Dieser Wiederherstellungsschlüssel öffnet die Sicherungen dieses Spaces. Bewahren Sie ihn sicher auf.',
+  'This is not a Recovery Key. Check it for typing mistakes: a Recovery Key has seven groups of letters and numbers.':
+    'Das ist kein Wiederherstellungsschlüssel. Prüfen Sie ihn auf Tippfehler: Ein Wiederherstellungsschlüssel besteht aus sieben Gruppen aus Buchstaben und Ziffern.',
+  'This Recovery Key does not open this space’s backups.':
+    'Dieser Wiederherstellungsschlüssel öffnet die Sicherungen dieses Spaces nicht.',
+  'Check that it is the key for this space and that it was copied in full.':
+    'Prüfen Sie, ob es der Schlüssel für diesen Space ist und ob er vollständig kopiert wurde.',
+  'The key could not be checked. This says nothing about whether it is right.':
+    'Der Schlüssel konnte nicht geprüft werden. Das sagt nichts darüber aus, ob er richtig ist.',
+  'Key file': 'Schlüsseldatei',
+  'If this server is ever lost, your administrator can give you a copy of your backups, and the decrypt program restores it with your Recovery Key. Keep this key file with your Recovery Key: it is locked, and useless without it.':
+    'Falls dieser Server einmal verloren geht, kann Ihre Administration Ihnen eine Kopie Ihrer Sicherungen geben, und das Programm „decrypt“ stellt sie mit Ihrem Wiederherstellungsschlüssel wieder her. Bewahren Sie diese Schlüsseldatei zusammen mit Ihrem Wiederherstellungsschlüssel auf: Sie ist verschlossen und ohne ihn nutzlos.',
+  'Download recovery.ocbke': 'recovery.ocbke herunterladen',
+  'Downloaded. Download it again after the Recovery Key is replaced.':
+    'Heruntergeladen. Laden Sie die Datei erneut herunter, nachdem der Wiederherstellungsschlüssel ersetzt wurde.',
+  'Replace the Recovery Key': 'Wiederherstellungsschlüssel ersetzen',
+  'Replace the Recovery Key for %{space}': 'Wiederherstellungsschlüssel für %{space} ersetzen',
+  'If the Recovery Key is lost': 'Wenn der Wiederherstellungsschlüssel verloren ist',
+  'Nobody can give it back. There is no copy anywhere, not even with your administrator.':
+    'Niemand kann ihn zurückgeben. Es gibt nirgendwo eine Kopie, auch nicht bei Ihrer Administration.',
+  'Backups and restores here keep working without it. It is needed only if this server is lost.':
+    'Sicherungen und Wiederherstellungen hier funktionieren auch ohne ihn weiter. Gebraucht wird er nur, wenn dieser Server verloren geht.',
+  'Setting up backup again is not possible, because that would make every existing backup unreadable. A new Recovery Key can only be made with the current one.':
+    'Die Sicherung erneut einzurichten ist nicht möglich, weil das alle vorhandenen Sicherungen unlesbar machen würde. Ein neuer Wiederherstellungsschlüssel lässt sich nur mit dem aktuellen erstellen.',
+  'Back to the Recovery Key': 'Zurück zum Wiederherstellungsschlüssel',
+  'Only a manager of this space can replace its Recovery Key, because every member who kept the old one would need the new one.':
+    'Nur eine verwaltende Person dieses Spaces kann seinen Wiederherstellungsschlüssel ersetzen, denn alle Mitglieder, die den alten aufbewahrt haben, bräuchten dann den neuen.',
+  'The new Recovery Key shown before was not taken into use. Throw away any copy of it. The current Recovery Key still works.':
+    'Der zuvor angezeigte neue Wiederherstellungsschlüssel wurde nicht übernommen. Vernichten Sie jede Kopie davon. Der aktuelle Wiederherstellungsschlüssel gilt weiterhin.',
+  'A new Recovery Key replaces the current one. Existing backups stay readable, and nothing is uploaded again.':
+    'Ein neuer Wiederherstellungsschlüssel ersetzt den aktuellen. Vorhandene Sicherungen bleiben lesbar, und nichts wird erneut hochgeladen.',
+  'To make the new key, enter the current Recovery Key.':
+    'Geben Sie den aktuellen Wiederherstellungsschlüssel ein, um den neuen zu erstellen.',
+  'Current Recovery Key': 'Aktueller Wiederherstellungsschlüssel',
+  'Creating the new Recovery Key did not work. Nothing was changed. Please try again.':
+    'Der neue Wiederherstellungsschlüssel konnte nicht erstellt werden. Es wurde nichts geändert. Bitte versuchen Sie es erneut.',
+  'The stored key file could not be read, so the key could not be tried. Nothing was changed.':
+    'Die gespeicherte Schlüsseldatei konnte nicht gelesen werden, deshalb ließ sich der Schlüssel nicht prüfen. Es wurde nichts geändert.',
+  'This takes a few seconds, and the page may not respond while it does.':
+    'Das dauert einige Sekunden, und die Seite reagiert währenddessen möglicherweise nicht.',
+  'Creating your new Recovery Key. This takes a moment…':
+    'Ihr neuer Wiederherstellungsschlüssel wird erstellt. Das dauert einen Moment…',
+  'Save your new Recovery Key now': 'Speichern Sie jetzt Ihren neuen Wiederherstellungsschlüssel',
+  'Nothing has changed yet. The current Recovery Key still works.':
+    'Noch hat sich nichts geändert. Der aktuelle Wiederherstellungsschlüssel gilt weiterhin.',
+  'It is not clear whether the Recovery Key was replaced.':
+    'Es ist unklar, ob der Wiederherstellungsschlüssel ersetzt wurde.',
+  'Keep both the current and the new Recovery Key for now. Checking again finds out which one this space uses.':
+    'Behalten Sie vorerst sowohl den aktuellen als auch den neuen Wiederherstellungsschlüssel. Eine erneute Prüfung zeigt, welchen dieser Space verwendet.',
+  'Someone else replaced the Recovery Key':
+    'Jemand anderes hat den Wiederherstellungsschlüssel ersetzt',
+  'The Recovery Key of this space was replaced by someone else while you were doing the same. The key shown to you here was not taken into use: throw away any copy of it.':
+    'Der Wiederherstellungsschlüssel dieses Spaces wurde von jemand anderem ersetzt, während Sie dasselbe getan haben. Der Ihnen hier angezeigte Schlüssel wurde nicht übernommen: Vernichten Sie jede Kopie davon.',
+  'Ask the other managers of this space for the new Recovery Key.':
+    'Fragen Sie die anderen verwaltenden Personen dieses Spaces nach dem neuen Wiederherstellungsschlüssel.',
+  'The Recovery Key is replaced': 'Der Wiederherstellungsschlüssel ist ersetzt',
+  'Existing backups stay readable with the new key, and nothing was uploaded again.':
+    'Vorhandene Sicherungen bleiben mit dem neuen Schlüssel lesbar, und nichts wurde erneut hochgeladen.',
+  'The old Recovery Key stops working once the next backup has run. After that, destroy every copy of it.':
+    'Der alte Wiederherstellungsschlüssel verliert seine Gültigkeit, sobald die nächste Sicherung gelaufen ist. Vernichten Sie danach jede Kopie davon.',
+  'Other members of this space who kept the old Recovery Key need the new one. If you downloaded the key file before, download it again.':
+    'Andere Mitglieder dieses Spaces, die den alten Wiederherstellungsschlüssel aufbewahrt haben, brauchen den neuen. Falls Sie die Schlüsseldatei schon einmal heruntergeladen haben, laden Sie sie erneut herunter.',
+  'A backup is running. When it has finished, the old Recovery Key stops working.':
+    'Eine Sicherung läuft. Wenn sie abgeschlossen ist, verliert der alte Wiederherstellungsschlüssel seine Gültigkeit.'
 }
 
 export const translations: Translations = { de }

@@ -76,6 +76,24 @@ export default defineWebApplication({
         component: () => import('./views/RestoreView.vue'),
         props: true,
         meta: { authContext: 'user', title: $gettext('Backup Vault') }
+      },
+      {
+        // "Check my Recovery Key" and the key file, for any member. Like every
+        // route here it carries the Space id and nothing else: a Recovery Key
+        // never goes into a URL.
+        path: '/space/:spaceId/recovery-key',
+        name: 'backup-vault-recovery-key',
+        component: () => import('./views/RecoveryKeyView.vue'),
+        props: true,
+        meta: { authContext: 'user', title: $gettext('Backup Vault') }
+      },
+      {
+        // Replacement, for managers. A reload starts over at the current key.
+        path: '/space/:spaceId/recovery-key/replace',
+        name: 'backup-vault-recovery-key-replace',
+        component: () => import('./views/ReplaceRecoveryKey.vue'),
+        props: true,
+        meta: { authContext: 'user', title: $gettext('Backup Vault') }
       }
     ]
 

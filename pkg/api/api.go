@@ -48,6 +48,9 @@ type Server struct {
 	// plaintext DK or RK is ever stored or returned (decisions.md, Phase 3).
 	keyStore keys.Store
 	srw      srwWrapper
+	// rkLocks makes a Recovery Key rotation's precondition check and its
+	// write one step (see handleRotateRecoveryKey).
+	rkLocks spaceLocks
 
 	// spaceConfigs holds each Space's target binding and retention window;
 	// runner triggers backup runs; jobStore serves the run history (Phase 4).

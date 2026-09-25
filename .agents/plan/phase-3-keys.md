@@ -46,7 +46,10 @@ fully unit-testable.
    - `POST /api/v1/spaces/{id}/backup/recovery-key/rotate` — added by the R2
      remediation. Takes a new RK envelope and **no Data Key**; appends it and
      leaves the DK, the SRW envelope and every existing snapshot untouched.
-     Requires the Space to be configured (404 otherwise).
+     Requires the Space to be configured (404 otherwise). Since 8d.4 it also
+     requires `replaces_sha256`, the digest of the envelope being replaced,
+     and answers 409 when that is no longer the stored one (decisions.md,
+     "Amendments from Phase 8 — 8d.4").
    - Setup is **once-only**: a Space that already has both envelopes gets 409
      with no override. Re-running the ceremony would install a new DK and orphan
      every existing snapshot. A half-finished setup (one envelope) can still be

@@ -127,12 +127,14 @@ func TestVerifyOnNonTakeOutDirectory(t *testing.T) {
 
 func TestExplainSpeaksPlainly(t *testing.T) {
 	cases := map[error]string{
-		takeoutdecrypt.ErrWrongRecoveryKey:    "key does not match",
-		takeout.ErrNoTakeOut:                  "not a take-out",
-		takeout.ErrNoEnvelope:                 "cannot be decrypted",
-		takeoutdecrypt.ErrUnsupportedEnvelope: "newer",
-		takeout.ErrCorrupt:                    "damaged",
-		snapshot.ErrSnapshotNotFound:          "-list",
+		takeoutdecrypt.ErrWrongRecoveryKey:     "key does not match",
+		takeout.ErrNoTakeOut:                   "not a take-out",
+		takeout.ErrNoEnvelope:                  "cannot be decrypted",
+		takeoutdecrypt.ErrUnsupportedEnvelope:  "newer",
+		takeoutdecrypt.ErrBadEnvelopeFile:      "-envelope",
+		takeoutdecrypt.ErrEnvelopeFileMismatch: "same space",
+		takeout.ErrCorrupt:                     "damaged",
+		snapshot.ErrSnapshotNotFound:           "-list",
 	}
 	for in, want := range cases {
 		got := explain(in)
@@ -144,6 +146,15 @@ func TestExplainSpeaksPlainly(t *testing.T) {
 	other := errors.New("disk full")
 	if got := explain(other); !errors.Is(got, other) {
 		t.Errorf("explain must pass unknown errors through, got %v", got)
+	}
+}
+
+func TestEnvelopeFlagReachesTheLibrary(t *testing.T) {
+	cfg := config{in: "in", out: "out", snapshotID: "s", workDir: "w", envelope: "e"}
+	opts := cfg.options([]byte{1})
+	if opts.Dir != "in" || opts.OutDir != "out" || opts.SnapshotID != "s" ||
+		opts.WorkDir != "w" || opts.EnvelopeFile != "e" || len(opts.RecoveryKey) != 1 {
+		t.Fatalf("options = %+v", opts)
 	}
 }
 

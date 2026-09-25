@@ -358,6 +358,19 @@ wrong it says so and writes nothing.
 `decrypt -in ./takeout-alice -verify` checks a Take-Out against its manifest and
 needs no key at all.
 
+A Take-Out carries the key envelope the target held when it was made. After a
+Recovery Key replacement the target's copy is refreshed by the next backup run,
+so a Take-Out made in between still wants the *old* key. Any member can
+download the Space's current envelope as `recovery.ocbke` from the Space's
+"Recovery Key" page in Backup Vault and hand it to `decrypt`:
+
+```sh
+decrypt -in ./takeout-alice -envelope ./recovery.ocbke -out ./my-files
+```
+
+The same works for a Take-Out that was forced without an envelope. The file is
+ciphertext, as useless without the Recovery Key as the Take-Out itself.
+
 ### The normal case: OpenCloud is running (Path B)
 
 The user picks a backup and confirms; the files appear in a new
@@ -385,11 +398,25 @@ protects, so no data is re-uploaded and no existing backup stops working.
 **A user's Recovery Key** (lost paper, a key that was photographed or shared):
 the current key unwraps the envelope on the user's own device, a new key is
 generated there, and only the re-wrapped envelope is sent back
-(`POST /api/v1/spaces/{id}/backup/recovery-key/rotate`). The old key stops
-working; the plaintext of neither key ever reaches the server, and no backup is
-re-uploaded. A user who has *lost* their Recovery Key cannot do this — there is
-no escrow, by design. **The client that performs this in a browser is the next
-phase**; the server side is in place.
+(`POST /api/v1/spaces/{id}/backup/recovery-key/rotate`). The plaintext of
+neither key ever reaches the server, and no backup is re-uploaded. A user who has
+*lost* their Recovery Key cannot do this — there is no escrow, by design.
+
+In Backup Vault this is "Replace the Recovery Key", reached from the Space's
+"Recovery Key" page, for managers and owners. The new key is shown once and two
+of its groups must be typed back before anything is sent. The old key stops
+working once the next backup has run, because that run refreshes the envelope
+copy on the target; the page offers "Back up now" for that reason. After that,
+destroy the old key. Other members of a shared Space need the new one.
+
+The request names the envelope it replaces (`replaces_sha256`, a hash of the
+ciphertext). If someone else replaced the key in the meantime, the service
+answers 409 instead of silently discarding one of the two new keys.
+
+The same page offers every member "Check my Recovery Key". It tries a key
+against the Space's envelope in the browser and says whether it opens the
+backups; nothing is sent. It is the way to find out that a key is lost before
+it is needed.
 
 Setting up a Space again is **not** a way to fix a lost key. The service refuses
 it, on purpose: a second setup would install a new Data Key and every existing

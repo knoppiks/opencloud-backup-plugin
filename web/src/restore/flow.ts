@@ -19,7 +19,7 @@
 //     at once; this prevents a second one *afterwards*, which would be a
 //     second full copy in the member's storage.
 
-import { ApiError, isApiError } from '../api'
+import { ApiError, asApiError, isApiError, mayHaveLanded } from '../api'
 import type { BackupStatus, Job, RestoreAccepted, Snapshot, Space } from '../api'
 
 /** RestoreApi is the slice of the client the flow uses. */
@@ -265,7 +265,7 @@ export class RestoreFlow {
       await this.loadSnapshots('snapshot_gone')
       return
     }
-    if (error.code === 'run_in_progress' || isAmbiguous(error)) {
+    if (error.code === 'run_in_progress' || mayHaveLanded(error)) {
       const running = await this.runningRestoreNow()
       if (this.current.step === 'closed') {
         return
@@ -312,13 +312,4 @@ function runningRestore(status: BackupStatus): string | undefined {
 
 function isTerminal(state: string): boolean {
   return state === 'succeeded' || state === 'failed'
-}
-
-/** isAmbiguous: a failure after which the request may still have landed. */
-function isAmbiguous(error: ApiError): boolean {
-  return error.status === undefined || error.status >= 500
-}
-
-function asApiError(err: unknown): ApiError {
-  return isApiError(err) ? err : new ApiError('unknown', 'something went wrong')
 }

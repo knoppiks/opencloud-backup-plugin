@@ -14,7 +14,8 @@
 //    cannot check this: it answers 201, the status turns green, backups run —
 //    and the key the user filed away opens nothing. See
 //    key-envelope-format.md §5.
-import { base64Encode, equalBytes, randomBytes, zeroize } from './bytes'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { base64Encode, bytesToHex, equalBytes, randomBytes, zeroize } from './bytes'
 import {
   checkRecoveryEnvelope,
   DEFAULT_ARGON_PARAMS,
@@ -67,6 +68,20 @@ export interface SetupRequest {
 export interface RotateRecoveryKeyRequest {
   /** wrapped_dk_rk is the new envelope around the *same* Data Key. */
   wrapped_dk_rk: string
+  /**
+   * replaces_sha256 names the envelope that was unwrapped (envelopeDigest).
+   * The server refuses the rotation with 409 when that is no longer the
+   * stored one, so two concurrent replacements cannot both "succeed".
+   */
+  replaces_sha256: string
+}
+
+/**
+ * envelopeDigest is the lowercase hex SHA-256 of an envelope: how a rotation
+ * names the envelope it replaces. It hashes ciphertext, not key material.
+ */
+export function envelopeDigest(envelope: Uint8Array): string {
+  return bytesToHex(sha256(envelope))
 }
 
 /** SetupCeremony is the result of a completed, self-verified setup ceremony. */
@@ -170,7 +185,10 @@ export async function performRecoveryKeyRotation(
     return {
       recoveryKey: recoveryKey.display,
       envelope,
-      request: { wrapped_dk_rk: base64Encode(envelope) }
+      request: {
+        wrapped_dk_rk: base64Encode(envelope),
+        replaces_sha256: envelopeDigest(options.currentEnvelope)
+      }
     }
   } finally {
     zeroize(recoveryKey.secret)

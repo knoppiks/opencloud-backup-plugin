@@ -9,8 +9,10 @@ export { ApiPathError, DEFAULT_API_PATH, resolveApiBase } from './baseurl'
 export {
   ApiError,
   apiErrorFromResponse,
+  asApiError,
   isApiError,
   isKnownApiErrorCode,
+  mayHaveLanded,
   type ApiErrorCode,
   type ApiFailureCode,
   type TransportErrorCode

@@ -25,6 +25,7 @@ import { decodeRecoveryKey, generateRecoveryKey, RecoveryKeyError } from './reco
 import {
   CeremonyError,
   DK_SIZE,
+  envelopeDigest,
   performRecoveryKeyRotation,
   performSetupCeremony,
   recoverDataKey,
@@ -113,6 +114,17 @@ describe('setup ceremony', () => {
   })
 })
 
+describe('envelopeDigest', () => {
+  it('is the lowercase hex SHA-256 the server compares', async () => {
+    const envelope = randomBytes(120)
+    const platform = new Uint8Array(
+      await globalThis.crypto.subtle.digest('SHA-256', Uint8Array.from(envelope))
+    )
+    expect(envelopeDigest(envelope)).toBe(bytesToHex(platform))
+    expect(envelopeDigest(envelope)).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
 describe('recovery key rotation', () => {
   it('re-wraps the same data key under a new key', async () => {
     const setup = await performSetupCeremony(params)
@@ -138,8 +150,20 @@ describe('recovery key rotation', () => {
       params
     })
 
-    expect(Object.keys(rotation.request)).toEqual(['wrapped_dk_rk'])
+    expect(Object.keys(rotation.request).sort()).toEqual(['replaces_sha256', 'wrapped_dk_rk'])
     expect(JSON.stringify(rotation.request)).not.toContain(bytesToHex(setup.dataKey))
+  })
+
+  it('names the envelope it replaces, by its digest', async () => {
+    const setup = await performSetupCeremony(params)
+    const rotation = await performRecoveryKeyRotation({
+      currentEnvelope: setup.envelope,
+      currentRecoveryKey: setup.recoveryKey,
+      params
+    })
+
+    expect(rotation.request.replaces_sha256).toBe(envelopeDigest(setup.envelope))
+    expect(rotation.request.replaces_sha256).not.toBe(envelopeDigest(rotation.envelope))
   })
 
   it('retires the old recovery key', async () => {

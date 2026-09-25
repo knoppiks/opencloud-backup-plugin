@@ -20,7 +20,7 @@
 //   - A 409 from setup is "already protected" and there is no path back to the
 //     ceremony from it (decisions.md #17).
 
-import { ApiError, isApiError } from '../api'
+import { ApiError, asApiError, mayHaveLanded } from '../api'
 import type {
   BackupConfig,
   BackupConfigRequest,
@@ -33,19 +33,19 @@ import type {
   Space,
   Target
 } from '../api'
-import {
-  base64Decode,
-  normalizeRecoveryKeyInput,
-  recoveryKeyGroups,
-  RK_GROUP_COUNT,
-  zeroize,
-  type SetupCeremony,
-  type SetupRequest
-} from '../crypto'
+import { base64Decode, zeroize, type SetupCeremony, type SetupRequest } from '../crypto'
+import { gateMatches, pickGateGroups } from '../recoverykey/gate'
 import { canManageKeys, canOperate } from '../status/roles'
 import { nextStep } from '../status/setupstep'
 
 export { nextStep, type Step } from '../status/setupstep'
+export {
+  cryptoRandomInt,
+  GATE_GROUPS,
+  gateMatches,
+  nextFrame,
+  pickGateGroups
+} from '../recoverykey/gate'
 
 /** WizardApi is the slice of the client the wizard uses. */
 export interface WizardApi {
@@ -86,9 +86,6 @@ export interface ScheduleChoice {
 
 /** DEFAULT_SCHEDULE is daily at 02:30 in the service's zone (8d decision 5). */
 export const DEFAULT_SCHEDULE: ScheduleChoice = { kind: 'daily', hour: 2, minute: 30, weekday: 0 }
-
-/** GATE_GROUPS is how many groups of the key the confirmation gate asks for. */
-export const GATE_GROUPS = 2
 
 /**
  * WizardState is what the wizard shows. `step` is the screen; the rest is what
@@ -151,58 +148,6 @@ export type KeyFailure =
   | { kind: 'ceremony' }
   /** The server refused setup outright (4xx other than 409): nothing landed. */
   | { kind: 'refused'; error: ApiError }
-
-/**
- * pickGateGroups chooses which groups the gate asks for: GATE_GROUPS distinct
- * indices out of seven, ascending so the form reads in key order.
- */
-export function pickGateGroups(randomInt: (bound: number) => number): number[] {
-  const pool = Array.from({ length: RK_GROUP_COUNT }, (_, i) => i)
-  const picked: number[] = []
-  while (picked.length < GATE_GROUPS) {
-    const [index] = pool.splice(randomInt(pool.length), 1)
-    picked.push(index as number)
-  }
-  return picked.sort((a, b) => a - b)
-}
-
-/**
- * gateMatches reports whether every answer matches its group, with the same
- * tolerance decodeRecoveryKey gives a whole key.
- */
-export function gateMatches(recoveryKey: string, groups: number[], answers: string[]): boolean {
-  const expected = recoveryKeyGroups(recoveryKey)
-  if (answers.length !== groups.length) {
-    return false
-  }
-  return groups.every((group, i) => normalizeRecoveryKeyInput(answers[i] ?? '') === expected[group])
-}
-
-/** isAmbiguous: a failure after which the request may still have landed. */
-function isAmbiguous(error: ApiError): boolean {
-  return error.status === undefined || error.status >= 500
-}
-
-/**
- * nextFrame is the production yieldToRender: resolve after the browser has had
- * a chance to paint, so "this takes a moment" is on screen before the
- * ceremony blocks the thread.
- */
-export function nextFrame(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof globalThis.requestAnimationFrame === 'function') {
-      globalThis.requestAnimationFrame(() => setTimeout(resolve, 0))
-    } else {
-      setTimeout(resolve, 0)
-    }
-  })
-}
-
-/** cryptoRandomInt is the production randomInt. */
-export function cryptoRandomInt(bound: number): number {
-  const [value] = globalThis.crypto.getRandomValues(new Uint32Array(1))
-  return (value as number) % bound
-}
 
 /**
  * SetupWizard drives one Space's setup. Create it per mounted wizard, call
@@ -521,7 +466,7 @@ export class SetupWizard {
       this.set({ step: 'already_protected' })
       return
     }
-    if (isAmbiguous(failure)) {
+    if (mayHaveLanded(failure)) {
       this.set({ step: 'setup_uncertain', recoveryKey, error: failure, checking: false })
       return
     }
@@ -551,10 +496,6 @@ export class SetupWizard {
     this.current = state
     this.deps.onChange(state)
   }
-}
-
-function asApiError(err: unknown): ApiError {
-  return isApiError(err) ? err : new ApiError('unknown', 'something went wrong')
 }
 
 /** scheduleFrom preselects what the Space has, or daily at 02:30. */
