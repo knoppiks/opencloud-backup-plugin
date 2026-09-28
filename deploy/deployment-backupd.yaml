@@ -42,16 +42,17 @@ spec:
           type: RuntimeDefault
       containers:
       - name: backupd
-        # Build it from the Dockerfile in the repository root (`make image`) and
-        # push it to your own registry: nothing is published yet. Pin a tag here
-        # rather than tracking :latest — a single-instance service with Recreate
-        # is down while it rolls, so you want to choose when.
+        # Published to ghcr on every `v*` tag (.github/workflows/release.yml),
+        # or build it yourself from the root Dockerfile (`make image`). Pin a
+        # version (ideally by digest) rather than tracking :latest — a
+        # single-instance service with Recreate is down while it rolls, so you
+        # want to choose when.
         #
         # NO `args` HERE, on purpose. The image's entrypoint is the service with
         # an empty argument list; the first argument is read as an operator
         # subcommand (rotate-srw, rotate-tw), so anything set here would run a
         # command instead of the service.
-        image: ghcr.io/knoppiks/opencloud-backupd:latest
+        image: ghcr.io/knoppiks/opencloud-backupd:0.1.0
         imagePullPolicy: IfNotPresent
         ports:
         - name: http
@@ -88,8 +89,11 @@ spec:
         # Every REPLACE_ME below is REFUSED AT STARTUP. A service that comes up
         # and then rejects every token looks like a broken service rather than an
         # unfinished deployment.
+        #
+        # With OpenCloud's built-in IdP the issuer is OpenCloud's own URL and
+        # the browser's client id is `web`.
         - name: OIDC_ISSUER
-          value: "https://cloud.example.org"
+          value: "https://REPLACE_ME_WITH_THE_OPENCLOUD_URL"
         - name: OIDC_AUDIENCE
           value: "REPLACE_ME_WITH_THE_OIDC_CLIENT_ID"
         # Admin detection (decisions.md #13). Preferred: graph appRoleAssignments
@@ -112,7 +116,7 @@ spec:
         # shared with a group answers 503 for the members who reach it through
         # that group. Set it even when using ADMIN_SUBJECT_ALLOWLIST.
         - name: OC_BASE_URL
-          value: "https://cloud.example.org"
+          value: "https://REPLACE_ME_WITH_THE_OPENCLOUD_URL"
         # - name: OC_ADMIN_APP_ROLE_ID
         #   value: "71881883-1768-46bd-a24d-a356a2afdf7f"
         # - name: ADMIN_SUBJECT_ALLOWLIST
@@ -125,6 +129,11 @@ spec:
         # it and the state Space lives behind it. Its secret grants owner scope
         # on every Space in the deployment — the highest-value credential here,
         # ahead of the wrapping keys, because it reaches plaintext.
+        #
+        # OpenCloud binds its gateway to 127.0.0.1:9142 by default. Set
+        # OC_GATEWAY_GRPC_ADDR=0.0.0.0:9142 on OpenCloud and publish the port
+        # on a Service for this address to resolve. The connection is plaintext
+        # gRPC with no TLS option: keep it on the cluster network.
         - name: CS3_GATEWAY_ADDR
           value: "opencloud-gateway:9142"
         - name: OC_SERVICE_ACCOUNT_ID

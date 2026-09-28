@@ -9,15 +9,17 @@ data:
   # OPTIONAL bootstrap/default target metadata.
   #
   # With in-app, admin-managed targets (decisions.md #12) the source of truth is
-  # the app's target store, edited via the UI. This ConfigMap is only a
-  # convenience: on first start, if the target store is empty, the service may
-  # seed a single default target from these values so a fresh deploy is usable
-  # "one click" without the admin first opening the target UI.
+  # the app's target store, edited through the admin API
+  # (/backup/api/v1/admin/targets) or Backup Vault's admin view. This ConfigMap
+  # is only a convenience: on first start, if the target store is empty, the
+  # service may seed a single default target from these values so a fresh
+  # deploy is usable "one click" without the admin first adding one.
   #
   # This holds NON-SECRET metadata only. Bootstrap credentials (if the operator
   # wants a pre-seeded target) are injected separately from a Secret and sealed
   # with the TW key on first start — never placed here. Leave BOOTSTRAP_ENABLE
-  # "false" to skip seeding and require the admin to add targets in the UI.
+  # "false" to skip seeding and require the admin to add targets through the
+  # admin API or view.
   #
   # Garage as of the pinned version has no Object Lock and no versioning
   # (decisions.md #8), and its grants cannot express "may write, may not

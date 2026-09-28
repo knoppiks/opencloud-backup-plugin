@@ -51,7 +51,12 @@ implemented**:
 - the Recovery Key page ("Check my Recovery Key", the `recovery.ocbke`
   download) and the Recovery Key replacement.
 
-8e (the admin view) is next.
+8e (the admin view, #41) is next; 8f (E2E) is #42. Issue #35 was closed by
+the merge of 8a–8d and no longer tracks the rest.
+
+**Deployment readiness:** [deployment-readiness.md](deployment-readiness.md)
+records what stood between 8d and a first real deployment (CSP, publishing,
+ingress, the setup race) and what was decided about each.
 
 **Target management (decisions.md #12–#15):** backup targets are managed in-app
 by an OpenCloud admin, who grants each target to all or specific users. The

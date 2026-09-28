@@ -1,0 +1,44 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opencloud-backupd
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: backupd
+  # Add your controller's annotations here: the TLS issuer, an HTTPS redirect,
+  # and read/write timeouts of at least two minutes (the service's own write
+  # timeout), for the few requests that wait on OpenCloud.
+spec:
+  # ingressClassName: REPLACE_ME_WITH_YOUR_INGRESS_CLASS
+  #
+  # This Ingress must serve THE SAME HOST as OpenCloud's own. The Backup Vault
+  # extension runs inside the OpenCloud SPA and calls this service with the
+  # user's bearer token; there is no CORS here, by design, so a second origin
+  # does not work (README, "Deployment preconditions"). A second Ingress object
+  # for the same host is fine: controllers merge rules per host, and the longer
+  # path below wins over OpenCloud's `/`.
+  #
+  # The path is `/backup/api`, NOT `/backup`. OpenCloud Web routes the
+  # extension's own pages under `/backup-vault/...`, and several controllers
+  # (Traefik among them) match a Prefix path as a plain string prefix, so
+  # `/backup` would capture the extension's page URLs and send them here.
+  #
+  # The prefix is NOT stripped: the service strips it itself, given
+  # BACKUPD_BASE_PATH=/backup. The health probes are not routed at all; the
+  # kubelet reaches them on the pod.
+  rules:
+  - host: REPLACE_ME_WITH_THE_OPENCLOUD_HOST
+    http:
+      paths:
+      - path: /backup/api
+        pathType: Prefix
+        backend:
+          service:
+            name: opencloud-backupd
+            port:
+              name: http
+  tls:
+  - hosts:
+    - REPLACE_ME_WITH_THE_OPENCLOUD_HOST
+    # The certificate OpenCloud's own Ingress already uses for this host.
+    secretName: REPLACE_ME_WITH_THE_OPENCLOUD_TLS_SECRET

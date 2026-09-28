@@ -482,6 +482,45 @@ papered over in TypeScript:
 | 8d.3 | Restore | snapshot picker, confirm, progress, link to `restore_folder` |
 | 8d.4 | Recovery Key | replacement flow, "Check my Recovery Key", envelope download |
 
+### Sub-phase 8e plan — decisions taken before implementation
+
+Settled with the owner before any code. The survey found two identity facts
+that shape the options:
+- a user grant stores the OIDC `sub`, while a graph user search yields the
+  graph user `id`;
+- a space grant stores the CS3 id (`storage$space!opaque`), while graph drive
+  ids have a different shape. Grants compare exactly.
+
+1. **Client gate: `useAbility().can('read-all', 'Setting')`.** It is the rule
+   web-pkg itself uses for admin-only UI, and so does upstream admin-settings.
+   It is measured on the fixture (admin true, normal user false) before it is
+   relied on. The server's 403 stays authoritative. The view handles a 403 as
+   "not an administrator", not as a failure.
+2. **User grants: graph user search, after proving `sub == id`.** A scripted
+   OIDC login on the fixture compares the token's `sub` with
+   `/graph/v1.0/me`'s `id`. Only if they are equal does the picker store the
+   graph id as `user_sub`. If they differ, stop and re-plan. Membership checks
+   rest on the same assumption, so the answer matters beyond 8e.
+   *Measured: they differ* (an opaque `sub` from the built-in IdP versus a UUID
+   from graph). Membership was broken for every real user. It was fixed before
+   8e: the backend now authorizes on the graph id, and the grant field is
+   `user_id` (decisions.md, "Amendments before the first real deployment"). The
+   picker stores the graph id.
+3. **Space grants are deferred, and existing ones are preserved.** The grants
+   `PUT` replaces the whole list. So space grants the UI cannot edit are shown
+   read-only and sent back unchanged on every save. Dropping them silently
+   would be an authorization change the admin never made.
+4. **A route inside Backup Vault**, `/admin/targets`, as a lazy chunk. The
+   overview links to it for admins only. The view re-checks the ability.
+5. **Credentials: an explicit "Replace credentials" section.** It is
+   collapsed on edit and required on create. Fields are never prefilled.
+   Opening it on a target with a maintenance pair warns that saving replaces
+   both pairs, and that leaving the maintenance pair empty removes it.
+6. **Connection check in the form.** It is enabled once a backup pair is
+   typed, and never runs by itself. It shows one outcome word per role.
+7. **Deleting** asks for confirmation. A 409 `target_in_use` shows the count
+   the server sent and says what to do.
+
 ### Sub-phase 8d.4 plan — decisions taken before implementation
 
 Only what the 8d decisions leave open. Settled with the user before any code.
@@ -668,6 +707,9 @@ open:
     The Space could then end up with one caller's recovery envelope and the
     other's server envelope, which is #17's orphaning failure through a race.
     The same per-Space lock around "check, write both" would close it.
+    *Fixed after 8d.4 (deployment-readiness.md):* setup re-checks under the
+    lock rotation uses. `TestKeySetupConcurrentCeremoniesOneWins` races eight
+    ceremonies; removing the locked re-check fails it.
   - **`README.md`'s status paragraph is stale.** It still says "There is no
     user interface yet", although 8c–8d have landed.
   - The known leftovers are unchanged:
