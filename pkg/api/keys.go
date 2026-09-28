@@ -128,6 +128,17 @@ func (s *Server) handleKeySetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The check above answers early and cheaply; this one, under the Space's
+	// lock, is the one that counts. Without it two concurrent ceremonies both
+	// pass the first check and both write, leaving one caller's recovery
+	// envelope beside the other's server envelope: two Data Keys, and a saved
+	// Recovery Key that opens nothing the unattended runs write (#17).
+	unlock := s.rkLocks.lock(spaceID)
+	defer unlock()
+	if !s.assertNotConfigured(w, spaceID) {
+		return
+	}
+
 	srwWrapped, err := s.srw.WrapSRW(dk)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not complete key setup")
@@ -197,7 +208,9 @@ func isEnvelopeDigest(s string) bool {
 	return true
 }
 
-// spaceLocks serialises writes to one Space's recovery envelope. The state
+// spaceLocks serialises writes to one Space's key envelopes: setup and
+// Recovery Key rotation take the same lock, so neither can interleave with
+// another of either kind. The state
 // store has no compare-and-set (decisions.md #16), but the service runs as a
 // single instance (#16 again), so a lock held across "read, compare, write"
 // inside this process is a real compare-and-set for the one writer there is.
