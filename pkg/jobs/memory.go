@@ -75,6 +75,15 @@ func (m *MemoryStore) Get(_ context.Context, id string) (Job, error) {
 	return j, nil
 }
 
+// GetInSpace returns one job of one Space; a job of another Space is not found.
+func (m *MemoryStore) GetInSpace(ctx context.Context, spaceID, id string) (Job, error) {
+	j, err := m.Get(ctx, id)
+	if err != nil || j.SpaceID != spaceID {
+		return Job{}, ErrNotFound{ID: id}
+	}
+	return j, nil
+}
+
 // List returns a Space's jobs, newest first.
 func (m *MemoryStore) List(ctx context.Context, spaceID string) ([]Job, error) {
 	return m.ListRecent(ctx, spaceID, 0)

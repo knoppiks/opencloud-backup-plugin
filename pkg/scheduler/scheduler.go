@@ -475,6 +475,18 @@ func (s *Scheduler) lastRunOf(ctx context.Context, spaceID string, kind jobs.Kin
 	return history[0], true, nil
 }
 
+// Timezone names the zone schedules are read in, as an IANA name, so a UI can
+// say "02:30, Europe/Berlin" rather than imply the browser's zone. It is ""
+// when the zone has no name this process can report: Go calls a zone read from
+// /etc/localtime (no TZ set) "Local", which would tell a user nothing.
+func (s *Scheduler) Timezone() string {
+	name := s.opts.Location.String()
+	if name == "Local" {
+		return ""
+	}
+	return name
+}
+
 // NextRun reports when a Space is next due, so the status board can say "next
 // backup tonight at 02:30" using the scheduler's own arithmetic rather than a
 // second, subtly different copy of it. The zero time means "not scheduled".

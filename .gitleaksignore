@@ -1,0 +1,8 @@
+# Findings already in history that are known not to be secrets. Rewriting
+# published history is worse than listing them here. Each entry needs a reason;
+# new findings are fixed in the source, never added here by default.
+
+# A hand-written, key-shaped test literal in the setup wizard's spec (sub-phase
+# 8d.2). It was never a generated key and opens nothing; the source now builds
+# it from its groups so it no longer matches.
+726cb1df028f9d6b635e5bd2d9822fd1e6b3833a:web/src/wizard/machine.spec.ts:generic-api-key:318

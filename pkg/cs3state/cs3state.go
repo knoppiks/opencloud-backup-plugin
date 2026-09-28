@@ -62,9 +62,10 @@ type SpaceClient interface {
 
 // Store is a state.Store backed by a folder in an OpenCloud Space.
 type Store struct {
-	client  SpaceClient
-	spaceID string
-	prefix  string
+	client           SpaceClient
+	spaceID          string
+	prefix           string
+	serviceAccountID string
 
 	// mu guards space resolution and the created-directory cache. Directory
 	// creation is idempotent, but caching it keeps a Put down to one round trip
@@ -83,6 +84,13 @@ type Options struct {
 	SpaceID string
 	// Prefix is the folder inside that Space; empty uses DefaultPrefix.
 	Prefix string
+	// ServiceAccountID is the principal the store itself reaches the Space
+	// with. Check treats a grant held by exactly this principal as the
+	// service's own access rather than as an end user's, because that is what
+	// it is: creating a project Space over CS3 leaves the creator a manager,
+	// and the creator here is the service. Empty keeps Check strict, so an
+	// unconfigured deployment cannot accidentally widen the predicate.
+	ServiceAccountID string
 }
 
 // New constructs a Store. The Space is resolved lazily on first use, so a
@@ -99,10 +107,11 @@ func New(client SpaceClient, opts Options) (*Store, error) {
 		prefix = DefaultPrefix
 	}
 	return &Store{
-		client:  client,
-		spaceID: opts.SpaceID,
-		prefix:  strings.Trim(prefix, "/"),
-		dirs:    make(map[string]struct{}),
+		client:           client,
+		spaceID:          opts.SpaceID,
+		prefix:           strings.Trim(prefix, "/"),
+		serviceAccountID: strings.TrimSpace(opts.ServiceAccountID),
+		dirs:             make(map[string]struct{}),
 	}, nil
 }
 
@@ -328,6 +337,16 @@ func (s *Store) ensureDir(ctx context.Context, space cs3.Space, dir string) erro
 // It is called at startup so the deployment fails loudly rather than
 // discovering the problem the day the folder disappears. The Space's name is
 // reported to make the misconfiguration fixable; its members never are.
+//
+// The service account's own grant does not count, and that distinction is
+// load-bearing rather than a convenience. OpenCloud 7.3.0 gives every project
+// Space a manager grant at creation and refuses to remove the last one
+// ("cannot remove the last share with manager permissions on a space root"), so
+// a Space with literally zero grants cannot be created at all. The predicate
+// that can be satisfied — and the one decisions.md #16 actually states — is "no
+// *end user* is a member". A grant held by the principal this store
+// authenticates as is the service's access to its own memory; counting it would
+// refuse the only Space that can exist.
 func (s *Store) Check(ctx context.Context) error {
 	space, err := s.resolve(ctx)
 	if err != nil {
@@ -337,11 +356,24 @@ func (s *Store) Check(ctx context.Context) error {
 		return fmt.Errorf("%w: %q is a personal space; service state needs a dedicated space "+
 			"no end user is a member of", ErrUnsafeStateSpace, space.Name)
 	}
-	if len(space.Members) > 0 {
+	if n := s.foreignMemberCount(space); n > 0 {
 		return fmt.Errorf("%w: %q has %d member grant(s); service state needs a dedicated space "+
-			"no end user is a member of", ErrUnsafeStateSpace, space.Name, len(space.Members))
+			"no end user is a member of", ErrUnsafeStateSpace, space.Name, n)
 	}
 	return nil
+}
+
+// foreignMemberCount counts the Space's member grants that are not the service
+// account's own.
+func (s *Store) foreignMemberCount(space cs3.Space) int {
+	n := 0
+	for principal := range space.Members {
+		if s.serviceAccountID != "" && principal == s.serviceAccountID {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // ErrUnsafeStateSpace reports a state Space an end user can reach. It is

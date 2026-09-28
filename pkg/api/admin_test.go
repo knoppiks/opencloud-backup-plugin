@@ -79,6 +79,11 @@ func TestAdminGate(t *testing.T) {
 	})
 	srv := NewServer(WithTokenValidator(val), WithAdminResolver(resolver))
 
+	// An admin path with no handler of its own, so this exercises the gate
+	// rather than whichever endpoint happens to sit behind it. The gate's
+	// behaviour on the real routes is TestAdminRouteTable's job.
+	const unimplemented = "/api/v1/admin/no-such-endpoint"
+
 	cases := []struct {
 		name  string
 		token string
@@ -91,7 +96,7 @@ func TestAdminGate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/targets", nil)
+			req := httptest.NewRequest(http.MethodGet, unimplemented, nil)
 			if tc.token != "" {
 				req.Header.Set("Authorization", "Bearer "+tc.token)
 			}

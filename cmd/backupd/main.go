@@ -103,10 +103,19 @@ func serve(logger *slog.Logger) {
 		os.Exit(1)
 	}
 
+	basePath, err := resolveBasePath()
+	if err != nil {
+		logger.Error("startup failed", "err", err)
+		os.Exit(1)
+	}
+	if basePath != "" {
+		logger.Info("API mounted under a path prefix", "basePath", basePath)
+	}
+
 	addr := envOr("BACKUPD_ADDR", ":8080")
 	httpSrv := &http.Server{
 		Addr:    addr,
-		Handler: svc.api.Handler(),
+		Handler: mountBasePath(svc.api.Handler(), basePath),
 		// A stalled or slow client must not be able to hold a connection open
 		// indefinitely. WriteTimeout is generous because a snapshot listing for
 		// a large Space is served synchronously; backup runs are background jobs
@@ -298,8 +307,16 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	logger.Info("instance registered", "instance", guard.ID())
 
 	// --- target store / authorizer ---------------------------------------
+	// One value, two roles: the authorizer answers what a user may see, the
+	// store backs the admin API that decides it (decisions.md #12).
 	targetStore := targets.NewStateStore(backing)
-	opts = append(opts, api.WithAuthorizer(targetStore))
+	opts = append(opts,
+		api.WithAuthorizer(targetStore),
+		api.WithTargetStore(targetStore),
+		// The admin's connection check. Read-only and coarse by construction;
+		// see pkg/objstore/check.go.
+		api.WithTargetChecker(objstore.S3Checker{}),
+	)
 
 	// --- key service (Phase 3) -------------------------------------------
 	// The SRW key is cluster/KMS custody (decisions.md #1): it arrives via a
@@ -314,12 +331,17 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 
 	var srwWrapper *keys.SRWWrapper
 	keyStore := keys.NewStateStore(backing, nil)
+	// The store holds ciphertext only and is wired regardless of the SRW key:
+	// the status board reads a Space's key state from it, and "is this Space
+	// set up" must not become unanswerable because the key that *adds* a wrap
+	// is missing. Setup itself still refuses without the SRW wrapper.
+	opts = append(opts, api.WithKeyStore(keyStore))
 	if wrapKeys.srw != nil {
 		srwWrapper, err = keys.NewSRWWrapper(wrapKeys.srw)
 		if err != nil {
 			return service{}, cleanup, err
 		}
-		opts = append(opts, api.WithKeyStore(keyStore), api.WithSRWWrapper(srwWrapper))
+		opts = append(opts, api.WithSRWWrapper(srwWrapper))
 		logger.Info("key service enabled")
 	} else {
 		logger.Warn("SRW_KEY unset; backup key endpoints will be unavailable")
@@ -334,6 +356,9 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 		if err != nil {
 			return service{}, cleanup, err
 		}
+		// The API seals with it and never opens: a credential blob is opened
+		// in worker memory at run time and nowhere else (decisions.md #14).
+		opts = append(opts, api.WithCredSealer(credSealer))
 		logger.Info("target credential sealing enabled")
 	} else {
 		logger.Warn("TW_KEY unset; backup runs will be unavailable")
@@ -560,6 +585,12 @@ func buildStateStore(client *cs3.Client, logger *slog.Logger) (state.Store, erro
 	store, err := cs3state.New(client, cs3state.Options{
 		SpaceID: spaceID,
 		Prefix:  envOr("STATE_PREFIX", cs3state.DefaultPrefix),
+		// The state Space is created by the service account (see
+		// `backupd provision-state-space`), which leaves that account a manager
+		// grant OpenCloud will not let anyone remove. Check needs to know which
+		// principal that is in order to tell the service's own access apart
+		// from an end user's.
+		ServiceAccountID: os.Getenv("OC_SERVICE_ACCOUNT_ID"),
 	})
 	if err != nil {
 		return nil, err

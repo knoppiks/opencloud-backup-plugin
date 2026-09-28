@@ -46,7 +46,10 @@ fully unit-testable.
    - `POST /api/v1/spaces/{id}/backup/recovery-key/rotate` — added by the R2
      remediation. Takes a new RK envelope and **no Data Key**; appends it and
      leaves the DK, the SRW envelope and every existing snapshot untouched.
-     Requires the Space to be configured (404 otherwise).
+     Requires the Space to be configured (404 otherwise). Since 8d.4 it also
+     requires `replaces_sha256`, the digest of the envelope being replaced,
+     and answers 409 when that is no longer the stored one (decisions.md,
+     "Amendments from Phase 8 — 8d.4").
    - Setup is **once-only**: a Space that already has both envelopes gets 409
      with no override. Re-running the ceremony would install a new DK and orphan
      every existing snapshot. A half-finished setup (one envelope) can still be
@@ -126,7 +129,9 @@ document for the Phase-5 decrypt CLI.
 Decisions taken while implementing (previously left open in this doc):
 
 - **RK encoding: Crockford base32 + checksum**, `ocbk1-` prefixed, 160 bits of
-  entropy in 7 groups of 5 characters. Chosen over a BIP39-style word list
+  entropy and an 8-bit checksum in 34 characters, grouped 5-5-5-5-5-5-4
+  (the group sizes were documented as seven groups of five until Phase 8 pinned
+  them in a test). Chosen over a BIP39-style word list
   because it needs no 2048-word list shipped to both the browser and the CLI, is
   case-insensitive, excludes ambiguous characters, and is trivial to generate
   with WebCrypto alone.

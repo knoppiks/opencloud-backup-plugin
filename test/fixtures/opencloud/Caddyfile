@@ -1,0 +1,54 @@
+# The fixture's single origin.
+#
+# The web extension shares OpenCloud's origin because the backup API has no CORS
+# and no OPTIONS route, deliberately: a Space's Data Key crosses that listener
+# once at key setup, and a second origin would be one more place it travels to.
+# In production an Ingress with two path rules provides this. Here, Caddy does.
+#
+# Why not OpenCloud's own proxy, which is the obvious candidate: it can do the
+# routing, and an `unprotected: true` route forwards the bearer token verbatim
+# (measured on 7.3.0) — but it has no way to *append* a route. Setting
+# `proxy.policies` replaces its entire default route table, and
+# `additional_policies` are never consulted by the static selector. Using it
+# would mean restating OpenCloud's whole route table here and re-pinning it on
+# every release. See .agents/plan/phase-8-web-ui.md for the measurements.
+#
+# Caddy owns :9200 — the address everything in this fixture already uses — so no
+# environment variable changes and no existing test has to know this exists.
+# OpenCloud itself is published on :9201 for direct debugging.
+
+{
+	# Nothing here needs the admin API, and not opening it keeps the fixture's
+	# surface to the one port it is meant to serve.
+	admin off
+}
+
+https://localhost:9200 {
+	# Caddy's own local CA. up.sh extracts the root certificate to ca.crt and
+	# points SSL_CERT_FILE at it, so a backupd running on the host can verify
+	# the OIDC issuer and the data gateway without disabling verification.
+	tls internal
+
+	# The backup API. `handle` is first-match, so this wins over the catch-all
+	# below for anything under the prefix, and everything else is OpenCloud's.
+	#
+	# The path is forwarded unchanged, which is why backupd needs
+	# BACKUPD_BASE_PATH=/backup: neither this proxy nor OpenCloud's rewrites it.
+	handle /backup/* {
+		reverse_proxy http://host.docker.internal:8080
+	}
+
+	# Everything else is OpenCloud: the SPA, config.json, graph, webdav, OCS,
+	# the konnect IdP and the data gateway. Caddy preserves the original Host
+	# header, so OpenCloud still believes it is localhost:9200.
+	handle {
+		reverse_proxy https://opencloud:9200 {
+			transport http {
+				tls
+				# The fixture's OpenCloud serves its own self-signed
+				# certificate. This hop never leaves the docker network.
+				tls_insecure_skip_verify
+			}
+		}
+	}
+}

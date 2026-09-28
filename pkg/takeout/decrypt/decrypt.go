@@ -40,6 +40,13 @@ var (
 	// ErrUnsupportedEnvelope means the envelope's format version is newer than
 	// this tool understands.
 	ErrUnsupportedEnvelope = errors.New("takeout: unsupported key envelope version")
+	// ErrBadEnvelopeFile means the envelope file given in place of the
+	// Take-Out's own is missing, unreadable or not a recovery-key envelope.
+	ErrBadEnvelopeFile = errors.New("takeout: the envelope file is not a recovery key envelope")
+	// ErrEnvelopeFileMismatch means the envelope file opened with the Recovery
+	// Key but the Take-Out's repository did not open with what it held: the
+	// file most likely belongs to another Space.
+	ErrEnvelopeFileMismatch = errors.New("takeout: the envelope file does not belong to this take-out")
 )
 
 // Snapshot is one restorable snapshot inside a Take-Out.
@@ -73,31 +80,39 @@ type Options struct {
 	// WorkDir is the parent for kopia's throwaway cache. Empty uses the OS temp
 	// directory.
 	WorkDir string
+	// EnvelopeFile, when set, is used instead of the Take-Out's own envelope.
+	// It is what a member downloads from the web UI: the Space's *current*
+	// envelope. A Take-Out copies whatever the target held, which lags a
+	// Recovery Key replacement until the next backup run, and a Take-Out forced
+	// without an envelope holds none at all. The Data Key never changes, so
+	// the current envelope opens every Take-Out of the Space.
+	EnvelopeFile string
 }
 
 // ListSnapshots returns the snapshots inside a Take-Out, newest first. It needs
 // the Recovery Key because snapshot metadata lives inside the encrypted
-// repository — nothing about a backup is readable without it.
-func ListSnapshots(ctx context.Context, dir string, recoveryKey []byte, workDir string) ([]Snapshot, error) {
-	m, err := takeout.ReadManifest(dir)
+// repository — nothing about a backup is readable without it. OutDir and
+// SnapshotID are ignored.
+func ListSnapshots(ctx context.Context, opts Options) ([]Snapshot, error) {
+	m, err := takeout.ReadManifest(opts.Dir)
 	if err != nil {
 		return nil, err
 	}
 
-	dk, err := unwrapDataKey(dir, m, recoveryKey)
+	dk, err := unwrapDataKey(opts, m)
 	if err != nil {
 		return nil, err
 	}
 	defer keys.Zeroize(dk)
 
-	engine, repo, err := openRepo(dir, m, dk, workDir)
+	engine, repo, err := openRepo(opts.Dir, m, dk, opts.WorkDir)
 	if err != nil {
 		return nil, err
 	}
 
 	infos, err := engine.List(ctx, repo)
 	if err != nil {
-		return nil, fmt.Errorf("%w: repository could not be read", takeout.ErrCorrupt)
+		return nil, unreadableRepo(opts)
 	}
 
 	out := make([]Snapshot, 0, len(infos))
@@ -123,7 +138,7 @@ func Decrypt(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	dk, err := unwrapDataKey(opts.Dir, m, opts.RecoveryKey)
+	dk, err := unwrapDataKey(opts, m)
 	if err != nil {
 		return Result{}, err
 	}
@@ -136,7 +151,7 @@ func Decrypt(ctx context.Context, opts Options) (Result, error) {
 
 	infos, err := engine.List(ctx, repo)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: repository could not be read", takeout.ErrCorrupt)
+		return Result{}, unreadableRepo(opts)
 	}
 	chosen, err := selectSnapshot(infos, opts.SnapshotID)
 	if err != nil {
@@ -165,44 +180,85 @@ func Decrypt(ctx context.Context, opts Options) (Result, error) {
 // Failure modes are reported distinctly enough to be actionable — wrong key,
 // damaged file, format from the future — but never reveal key material and never
 // say *why* the AEAD rejected the input.
-func unwrapDataKey(dir string, m takeout.Manifest, recoveryKey []byte) ([]byte, error) {
-	if len(recoveryKey) == 0 {
+func unwrapDataKey(opts Options, m takeout.Manifest) ([]byte, error) {
+	if len(opts.RecoveryKey) == 0 {
 		return nil, fmt.Errorf("takeout: recovery key is required")
 	}
-	if m.EnvelopeRef == "" && m.Envelope == nil {
-		return nil, takeout.ErrNoEnvelope
-	}
-
-	blob, err := os.ReadFile(m.EnvelopePath(dir))
+	blob, err := readEnvelope(opts, m)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, takeout.ErrNoEnvelope
-		}
-		return nil, fmt.Errorf("takeout: read key envelope: %w", err)
+		return nil, err
 	}
 
+	// A damaged envelope in the Take-Out says "ask for a fresh copy"; a bad
+	// file the user supplied says "that is not the file". Same checks either
+	// way, and a version from the future is named in both.
+	damaged := func(detail string) error {
+		if opts.EnvelopeFile != "" {
+			return ErrBadEnvelopeFile
+		}
+		return fmt.Errorf("%w: %s", takeout.ErrCorrupt, detail)
+	}
 	info, err := keys.Inspect(blob)
 	if err != nil {
-		// A version this build does not know is the one case worth naming: the
-		// user needs a newer decrypt tool, not a different key.
 		if errors.Is(err, keys.ErrBadEnvelope) && isFutureVersion(blob) {
 			return nil, ErrUnsupportedEnvelope
 		}
-		return nil, fmt.Errorf("%w: key envelope is unreadable", takeout.ErrCorrupt)
+		return nil, damaged("key envelope is unreadable")
 	}
 	if info.Kind != keys.WrapRK {
-		return nil, fmt.Errorf("%w: stored envelope is not a recovery-key envelope", takeout.ErrCorrupt)
+		return nil, damaged("stored envelope is not a recovery-key envelope")
 	}
 
 	dk, err := keys.UnwrapRK(keys.WrappedDK{
 		Version: info.Version,
 		Kind:    keys.WrapRK,
 		Blob:    blob,
-	}, recoveryKey)
+	}, opts.RecoveryKey)
 	if err != nil {
 		return nil, ErrWrongRecoveryKey
 	}
 	return dk, nil
+}
+
+// readEnvelope reads the envelope file the user named, or else the Take-Out's.
+func readEnvelope(opts Options, m takeout.Manifest) ([]byte, error) {
+	if opts.EnvelopeFile != "" {
+		blob, err := os.ReadFile(opts.EnvelopeFile)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrBadEnvelopeFile, readFailure(err))
+		}
+		return blob, nil
+	}
+
+	if m.EnvelopeRef == "" && m.Envelope == nil {
+		return nil, takeout.ErrNoEnvelope
+	}
+	blob, err := os.ReadFile(m.EnvelopePath(opts.Dir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, takeout.ErrNoEnvelope
+		}
+		return nil, fmt.Errorf("takeout: read key envelope: %w", err)
+	}
+	return blob, nil
+}
+
+// readFailure names why a file could not be read, without its path.
+func readFailure(err error) string {
+	if errors.Is(err, os.ErrNotExist) {
+		return "file not found"
+	}
+	return "file could not be read"
+}
+
+// unreadableRepo is the error for a repository the recovered Data Key does not
+// open. With the Take-Out's own envelope that is damage; with a file the user
+// supplied, the likelier cause is a file from another Space.
+func unreadableRepo(opts Options) error {
+	if opts.EnvelopeFile != "" {
+		return ErrEnvelopeFileMismatch
+	}
+	return fmt.Errorf("%w: repository could not be read", takeout.ErrCorrupt)
 }
 
 // isFutureVersion reports whether a blob looks like a well-formed envelope whose

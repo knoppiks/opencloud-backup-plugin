@@ -102,6 +102,12 @@ func TestListSpaces_MembershipEnforced(t *testing.T) {
 	if ids["personal-bob"] {
 		t.Fatalf("alice must not see bob's space (foreign space): %+v", got.Spaces)
 	}
+	for _, s := range got.Spaces {
+		want := map[string]string{"personal-alice": "owner", "project-x": "manager"}[s.ID]
+		if s.Role != want {
+			t.Fatalf("%s: role = %q, want %q", s.ID, s.Role, want)
+		}
+	}
 }
 
 func TestListSpaces_ForeignUserSeesNothing(t *testing.T) {

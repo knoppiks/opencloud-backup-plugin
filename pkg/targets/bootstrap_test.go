@@ -191,6 +191,28 @@ func TestBootstrap_SeedsBothRoles(t *testing.T) {
 	if !opened.Separated() {
 		t.Fatal("a target seeded with two keys must report as separated")
 	}
+	// The same fact, answerable without the TW key: the admin API has to show
+	// it and may not open the blob to find out (decisions.md #14).
+	if !target.MaintenanceConfigured {
+		t.Fatal("a separated target must record that it is separated")
+	}
+}
+
+// A single-key target is not misconfigured, and must not claim separation it
+// does not have.
+func TestBootstrap_SingleKeyTargetIsNotMarkedSeparated(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	if _, err := Bootstrap(ctx, store, testSealer(t), validBootstrap()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	target, err := store.GetTarget(ctx, DefaultBootstrapID)
+	if err != nil {
+		t.Fatalf("GetTarget: %v", err)
+	}
+	if target.MaintenanceConfigured {
+		t.Fatal("a target seeded with one key reported a maintenance credential")
+	}
 }
 
 func TestBootstrap_ErrorsDoNotEchoCredentials(t *testing.T) {

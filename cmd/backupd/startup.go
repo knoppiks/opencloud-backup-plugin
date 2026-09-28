@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"path"
 	"sort"
 	"strings"
 
@@ -32,7 +34,73 @@ const (
 	// tlsCertVar / tlsKeyVar make the service terminate TLS itself.
 	tlsCertVar = "TLS_CERT_FILE"
 	tlsKeyVar  = "TLS_KEY_FILE"
+	// basePathVar is the path prefix the ingress routes to this service.
+	basePathVar = "BACKUPD_BASE_PATH"
 )
+
+// probePaths are reached directly on the pod and therefore never carry the
+// ingress's path prefix.
+var probePaths = []string{"/healthz", "/readyz"}
+
+// resolveBasePath returns the validated path prefix the routes are mounted
+// under, or "" for none.
+//
+// The service shares an origin with OpenCloud (decisions.md, R5: the listener is
+// plain HTTP behind an ingress, and a Data Key crosses it once at key setup), so
+// `/api/v1/` is a namespace it shares with OpenCloud's own. Nothing collides on
+// 7.3.0, which is a statement about one release of software this project does
+// not control. A prefix retires the whole collision class.
+//
+// This is a *path*, never an origin — the same constraint the browser client
+// enforces on its side. Accepting an absolute URL here would let a deployment
+// place the API somewhere the extension cannot reach it without CORS, which the
+// service deliberately does not implement.
+func resolveBasePath() (string, error) {
+	raw := strings.TrimSpace(os.Getenv(basePathVar))
+	if raw == "" {
+		return "", nil
+	}
+	if strings.Contains(raw, "://") || strings.ContainsAny(raw, "?#") {
+		return "", fmt.Errorf(
+			"%s must be a path such as /backup, not a URL or a query: got %q", basePathVar, raw)
+	}
+	if !strings.HasPrefix(raw, "/") {
+		return "", fmt.Errorf("%s must start with a slash: got %q", basePathVar, raw)
+	}
+	trimmed := strings.TrimRight(raw, "/")
+	if trimmed == "" {
+		// "/" and "//" mean "no prefix". Saying so beats refusing a value that
+		// expresses the default.
+		return "", nil
+	}
+	if path.Clean(trimmed) != trimmed {
+		return "", fmt.Errorf(
+			"%s must be a clean path without empty or relative segments: got %q", basePathVar, raw)
+	}
+	for _, probe := range probePaths {
+		if trimmed == probe {
+			return "", fmt.Errorf("%s must not be %s: the health probes live there", basePathVar, probe)
+		}
+	}
+	return trimmed, nil
+}
+
+// mountBasePath serves h under basePath, keeping the health probes at the root.
+//
+// The probes are hit directly on the pod by the kubelet, which knows nothing
+// about the ingress that adds the prefix; moving them would turn a path prefix
+// into a failing readiness check.
+func mountBasePath(h http.Handler, basePath string) http.Handler {
+	if basePath == "" {
+		return h
+	}
+	mux := http.NewServeMux()
+	for _, probe := range probePaths {
+		mux.Handle(probe, h)
+	}
+	mux.Handle(basePath+"/", http.StripPrefix(basePath, h))
+	return mux
+}
 
 // resolveWorkDir validates the per-run work directory and clears what a previous
 // process left in it, returning the configured value for EngineOptions.

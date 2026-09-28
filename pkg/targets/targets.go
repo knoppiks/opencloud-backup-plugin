@@ -24,6 +24,7 @@ package targets
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -49,6 +50,16 @@ type Target struct {
 	UpdatedAt    time.Time `json:"updated_at,omitzero"`
 	// Version is the WrappedCreds envelope version (compatibility promise).
 	Version int `json:"version,omitempty"`
+	// MaintenanceConfigured records whether WrappedCreds holds a separate
+	// maintenance pair. It is metadata, not key material: a yes/no written at
+	// seal time from what the writer supplied.
+	//
+	// It exists because the admin UI must be able to show whether a target is
+	// credential-separated, and the only other way to answer that is to open
+	// the sealed blob — which the admin path may not do (decisions.md #14).
+	// Records written before this field read as false, which is the right
+	// answer for the single-credential deployment they describe.
+	MaintenanceConfigured bool `json:"maintenance_configured,omitempty"`
 }
 
 // PublicView is the least-disclosure projection returned to end users
@@ -87,6 +98,41 @@ type Grant struct {
 	UserSub string `json:"user_sub,omitempty"`
 	// SpaceID is set when Scope == ScopeSpace.
 	SpaceID string `json:"space_id,omitempty"`
+}
+
+// errTargetIDRequired is returned by store writes that were handed no target.
+var errTargetIDRequired = errors.New("targets: target id required")
+
+// Validate reports whether a grant is well formed: a scope that was actually
+// chosen, carrying exactly the field that scope defines.
+//
+// A grant is an authorization decision, so a malformed one is refused rather
+// than interpreted. In particular the zero Scope is not "all users": it is a
+// caller that never said who this target is for.
+func (g Grant) Validate() error {
+	switch g.Scope {
+	case ScopeAllUsers:
+		if g.UserSub != "" || g.SpaceID != "" {
+			return errors.New("targets: an all-users grant names no user or space")
+		}
+	case ScopeUser:
+		if g.UserSub == "" {
+			return errors.New("targets: a user grant needs a user")
+		}
+		if g.SpaceID != "" {
+			return errors.New("targets: a user grant names no space")
+		}
+	case ScopeSpace:
+		if g.SpaceID == "" {
+			return errors.New("targets: a space grant needs a space")
+		}
+		if g.UserSub != "" {
+			return errors.New("targets: a space grant names no user")
+		}
+	default:
+		return errors.New("targets: grant scope is required")
+	}
+	return nil
 }
 
 // PlainCreds are S3 credentials in plaintext. They exist only transiently:
@@ -191,6 +237,14 @@ type Store interface {
 	DeleteGrant(ctx context.Context, g Grant) error
 	// ListGrants returns the grants for a target.
 	ListGrants(ctx context.Context, targetID string) ([]Grant, error)
+	// ReplaceGrants sets a target's whole audience in one write. The admin API
+	// edits grants as a set, and the durable store keeps them as one document
+	// per version, so applying such an edit as a sequence of PutGrant and
+	// DeleteGrant calls would leave a crash able to stop halfway through — with
+	// a grant list nobody chose. Passing an empty list revokes everything,
+	// which is a decision an admin can legitimately make and is therefore not
+	// the same as deleting the target.
+	ReplaceGrants(ctx context.Context, targetID string, grants []Grant) error
 }
 
 // CredSealer seals and opens S3 credentials using the cluster/KMS Target-Wrap

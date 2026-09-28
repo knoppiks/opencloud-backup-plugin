@@ -202,7 +202,7 @@ func TestDecryptSelectsSnapshot(t *testing.T) {
 	}
 	dir := f.extract(t)
 
-	snaps, err := ListSnapshots(ctx, dir, f.rk, t.TempDir())
+	snaps, err := ListSnapshots(ctx, Options{Dir: dir, RecoveryKey: f.rk, WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("ListSnapshots: %v", err)
 	}
@@ -322,7 +322,162 @@ func TestDecryptRequiresRecoveryKeyAndOutput(t *testing.T) {
 	}
 }
 
+// A Take-Out made after a Recovery Key replacement but before the next backup
+// run holds the old envelope. The Space's current envelope, downloaded from the
+// web UI, opens it with the new key; without it, the new key is "wrong".
+func TestDecryptWithEnvelopeFileAfterRotation(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	dir := f.extract(t)
+
+	_, newRK, err := keys.GenerateRecoveryKey()
+	if err != nil {
+		t.Fatalf("GenerateRecoveryKey: %v", err)
+	}
+	current, err := keys.WrapWithRK(f.dk, newRK, keys.MinArgonParams)
+	if err != nil {
+		t.Fatalf("WrapWithRK: %v", err)
+	}
+	envelopeFile := writeFile(t, current.Blob)
+
+	if _, err := Decrypt(ctx, Options{
+		Dir: dir, RecoveryKey: newRK, OutDir: filepath.Join(t.TempDir(), "out"), WorkDir: t.TempDir(),
+	}); !errors.Is(err, ErrWrongRecoveryKey) {
+		t.Fatalf("new key against the stale take-out: err = %v, want ErrWrongRecoveryKey", err)
+	}
+
+	snaps, err := ListSnapshots(ctx, Options{
+		Dir: dir, RecoveryKey: newRK, WorkDir: t.TempDir(), EnvelopeFile: envelopeFile,
+	})
+	if err != nil || len(snaps) != 1 {
+		t.Fatalf("ListSnapshots(-envelope) = %v, %v", snaps, err)
+	}
+
+	out := filepath.Join(t.TempDir(), "restored")
+	if _, err := Decrypt(ctx, Options{
+		Dir: dir, RecoveryKey: newRK, OutDir: out, WorkDir: t.TempDir(), EnvelopeFile: envelopeFile,
+	}); err != nil {
+		t.Fatalf("Decrypt(-envelope): %v", err)
+	}
+	assertContent(t, filepath.Join(out, "readme.txt"), f.files["readme.txt"])
+
+	// The file replaces the take-out's envelope, it does not add to it.
+	if _, err := Decrypt(ctx, Options{
+		Dir: dir, RecoveryKey: f.rk, OutDir: filepath.Join(t.TempDir(), "old"), WorkDir: t.TempDir(),
+		EnvelopeFile: envelopeFile,
+	}); !errors.Is(err, ErrWrongRecoveryKey) {
+		t.Fatalf("old key with the current envelope file: err = %v, want ErrWrongRecoveryKey", err)
+	}
+}
+
+// A Take-Out forced without an envelope becomes decryptable with the file.
+func TestDecryptWithEnvelopeFileForEnvelopelessTakeOut(t *testing.T) {
+	f := newFixture(t)
+	envelope, err := os.ReadFile(filepath.Join(f.extract(t), takeout.EnvelopeFile))
+	if err != nil {
+		t.Fatalf("read envelope: %v", err)
+	}
+	if err := os.Remove(filepath.Join(f.bucket, snapshot.EnvelopeKey(
+		snapshot.Location{Prefix: testPrefix}, snapshot.SpaceRef{SpaceID: testSpaceID}))); err != nil {
+		t.Fatalf("remove envelope: %v", err)
+	}
+	outDir := filepath.Join(t.TempDir(), "takeout")
+	if _, err := takeout.Extract(context.Background(), takeout.ExtractOptions{
+		Repos:                snapshot.FilesystemOpener{Root: f.bucket},
+		Objects:              objstore.DirStore{Root: f.bucket},
+		Location:             snapshot.Location{Prefix: testPrefix},
+		SpaceID:              testSpaceID,
+		OutDir:               outDir,
+		AllowMissingEnvelope: true,
+	}); err != nil {
+		t.Fatalf("Extract(AllowMissingEnvelope): %v", err)
+	}
+
+	out := filepath.Join(t.TempDir(), "restored")
+	if _, err := Decrypt(context.Background(), Options{
+		Dir: outDir, RecoveryKey: f.rk, OutDir: out, WorkDir: t.TempDir(),
+		EnvelopeFile: writeFile(t, envelope),
+	}); err != nil {
+		t.Fatalf("Decrypt(-envelope): %v", err)
+	}
+	assertContent(t, filepath.Join(out, "readme.txt"), f.files["readme.txt"])
+}
+
+func TestDecryptRejectsBadEnvelopeFiles(t *testing.T) {
+	f := newFixture(t)
+	dir := f.extract(t)
+
+	srw, err := keys.GenerateSRWKey()
+	if err != nil {
+		t.Fatalf("GenerateSRWKey: %v", err)
+	}
+	serverEnvelope, err := keys.WrapWithSRW(f.dk, srw)
+	if err != nil {
+		t.Fatalf("WrapWithSRW: %v", err)
+	}
+
+	cases := map[string]string{
+		"missing":               filepath.Join(t.TempDir(), "recovery.ocbke"),
+		"not an envelope":       writeFile(t, []byte("not an envelope")),
+		"server envelope":       writeFile(t, serverEnvelope.Blob),
+		"a directory, not file": t.TempDir(),
+	}
+	for name, path := range cases {
+		t.Run(name, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "out")
+			_, err := Decrypt(context.Background(), Options{
+				Dir: dir, RecoveryKey: f.rk, OutDir: out, WorkDir: t.TempDir(), EnvelopeFile: path,
+			})
+			if !errors.Is(err, ErrBadEnvelopeFile) {
+				t.Fatalf("err = %v, want ErrBadEnvelopeFile", err)
+			}
+			if strings.Contains(err.Error(), path) {
+				t.Fatalf("error names the path: %v", err)
+			}
+			if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("output directory exists after a refused envelope file: %v", err)
+			}
+		})
+	}
+}
+
+// An envelope from another Space that the key happens to open does not open
+// this repository, and the error says so rather than calling the take-out
+// damaged.
+func TestDecryptEnvelopeFileFromAnotherSpace(t *testing.T) {
+	f := newFixture(t)
+	dir := f.extract(t)
+
+	otherDK, err := keys.GenerateDK()
+	if err != nil {
+		t.Fatalf("GenerateDK: %v", err)
+	}
+	other, err := keys.WrapWithRK(otherDK, f.rk, keys.MinArgonParams)
+	if err != nil {
+		t.Fatalf("WrapWithRK: %v", err)
+	}
+	out := filepath.Join(t.TempDir(), "out")
+	if _, err := Decrypt(context.Background(), Options{
+		Dir: dir, RecoveryKey: f.rk, OutDir: out, WorkDir: t.TempDir(),
+		EnvelopeFile: writeFile(t, other.Blob),
+	}); !errors.Is(err, ErrEnvelopeFileMismatch) {
+		t.Fatalf("err = %v, want ErrEnvelopeFileMismatch", err)
+	}
+	if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("output directory exists after a mismatched envelope file: %v", err)
+	}
+}
+
 // --- helpers ---------------------------------------------------------------
+
+func writeFile(t *testing.T, content []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "recovery.ocbke")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	return path
+}
 
 func assertContent(t *testing.T, path, want string) {
 	t.Helper()

@@ -36,11 +36,13 @@ const (
 	maxHistoryLimit     = 200
 )
 
-// scheduleAdvisor answers when a Space next runs. It is satisfied by
-// *scheduler.Scheduler, so the status board and the scheduler cannot disagree
-// about what "next run" means.
+// scheduleAdvisor answers when a Space next runs, and in which zone its preset
+// times are meant. It is satisfied by *scheduler.Scheduler, so the status board
+// and the scheduler cannot disagree about what "next run" or "02:30" means.
 type scheduleAdvisor interface {
 	NextRun(ctx context.Context, spaceID string) (time.Time, error)
+	// Timezone is the IANA name presets are read in, or "" when unnamed.
+	Timezone() string
 }
 
 // notificationReader serves a Space's notifications. It is satisfied by
@@ -70,6 +72,9 @@ type scheduleResponse struct {
 	Cron    string `json:"cron"`
 	// Preset is "custom" when the cron expression is not one the presets emit.
 	Preset scheduler.Preset `json:"preset"`
+	// Timezone is the IANA zone Preset's hour and minute are in. Omitted when
+	// the service cannot name it; a UI then says "server time" and nothing more.
+	Timezone string `json:"timezone,omitempty"`
 }
 
 // statusResponse is the status board's payload.
@@ -80,6 +85,17 @@ type statusResponse struct {
 	Enabled    bool             `json:"enabled"`
 	Cron       string           `json:"cron,omitempty"`
 	Preset     scheduler.Preset `json:"preset,omitzero"`
+	// Timezone is the IANA zone the preset is read in; see scheduleResponse.
+	Timezone string `json:"timezone,omitempty"`
+	// KeysConfigured reports whether the Space's key ceremony is complete
+	// (both envelopes stored). A Space can be bound to a target without it,
+	// and cannot run until it has it.
+	KeysConfigured bool `json:"keys_configured"`
+	// Stale is notify.StaleRule's verdict — the same rule the monitor uses to
+	// send the backup_stale notification, so the card and the notification
+	// cannot disagree. StaleSince is set only when Stale is.
+	Stale      bool   `json:"stale"`
+	StaleSince string `json:"stale_since,omitempty"`
 	// Running reports whether a run is under way right now, and which.
 	Running      bool         `json:"running"`
 	CurrentJob   *jobResponse `json:"current_job,omitempty"`
@@ -103,6 +119,10 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 
 	var req scheduleRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxScheduleRequestBytes))
+	// Unknown fields are refused, as on PATCH /backup/config. `enabled` is a
+	// plain bool, so a body that misspelt the schedule used to be read as
+	// "default schedule, disabled" — a 200 that switched backups off.
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
 		return
@@ -135,7 +155,7 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not store the schedule")
 		return
 	}
-	writeJSON(w, http.StatusOK, toScheduleResponse(stored))
+	writeJSON(w, http.StatusOK, s.toScheduleResponse(stored))
 }
 
 // handleGetSchedule returns a Space's schedule.
@@ -159,7 +179,7 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not read backup configuration")
 		return
 	}
-	writeJSON(w, http.StatusOK, toScheduleResponse(cfg))
+	writeJSON(w, http.StatusOK, s.toScheduleResponse(cfg))
 }
 
 // handleBackupStatus serves the status board: what happened last, what is
@@ -169,16 +189,25 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.spaceConfigs == nil || s.jobStore == nil {
+	if s.spaceConfigs == nil || s.jobStore == nil || s.keyStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup status not available")
 		return
 	}
 
-	out := statusResponse{SpaceID: spaceID}
+	out := statusResponse{SpaceID: spaceID, Timezone: s.scheduleTimezone()}
+
+	// A key store that cannot answer is an error, not "no keys": the UI would
+	// otherwise offer a setup the server must refuse (decisions.md #17).
+	keyStatus, ok := s.keyStatus(w, spaceID)
+	if !ok {
+		return
+	}
+	out.KeysConfigured = keyStatus.Configured
 
 	cfg, err := s.spaceConfigs.Get(r.Context(), spaceID)
+	configured := err == nil
 	switch {
-	case err == nil:
+	case configured:
 		out.Configured = true
 		out.Enabled = cfg.Enabled
 		out.Cron = cfg.EffectiveSchedule()
@@ -201,12 +230,17 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 	// restores and prunes share that history, and a Space that prunes daily
 	// would otherwise push its own last backup out of the window and report
 	// "never backed up".
-	backups, err := s.jobStore.ListRecentOfKind(r.Context(), spaceID, jobs.KindBackup, defaultHistoryLimit)
+	// The window is the staleness rule's, so this verdict is computed from
+	// exactly what the monitor reads.
+	backups, err := s.jobStore.ListRecentOfKind(r.Context(), spaceID, jobs.KindBackup, notify.StaleLookback)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
 		return
 	}
 	applyHistory(&out, history, backups)
+	if configured {
+		applyStaleness(&out, s.staleRule.Assess(cfg, backups, s.clock()))
+	}
 
 	if s.schedules != nil && out.Enabled {
 		next, err := s.schedules.NextRun(r.Context(), spaceID)
@@ -240,6 +274,14 @@ func applyHistory(out *statusResponse, history, backups []jobs.Job) {
 	if success, ok := jobs.LastOf(backups, jobs.KindBackup, jobs.StateSucceeded); ok {
 		resp := toJobResponse(success)
 		out.LastSuccess = &resp
+	}
+}
+
+// applyStaleness copies the staleness verdict into a status response.
+func applyStaleness(out *statusResponse, verdict notify.Staleness) {
+	out.Stale = verdict.Stale
+	if verdict.Stale {
+		out.StaleSince = formatTime(verdict.Since)
 	}
 }
 
@@ -322,14 +364,24 @@ func parseLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return limit, true
 }
 
-func toScheduleResponse(c spacecfg.Config) scheduleResponse {
+func (s *Server) toScheduleResponse(c spacecfg.Config) scheduleResponse {
 	cron := c.EffectiveSchedule()
 	return scheduleResponse{
-		SpaceID: c.SpaceID,
-		Enabled: c.Enabled,
-		Cron:    cron,
-		Preset:  scheduler.PresetOf(cron),
+		SpaceID:  c.SpaceID,
+		Enabled:  c.Enabled,
+		Cron:     cron,
+		Preset:   scheduler.PresetOf(cron),
+		Timezone: s.scheduleTimezone(),
 	}
+}
+
+// scheduleTimezone is the scheduler's zone name, or "" when there is no
+// scheduler to ask (the pipeline is disabled) or it cannot name its zone.
+func (s *Server) scheduleTimezone() string {
+	if s.schedules == nil {
+		return ""
+	}
+	return s.schedules.Timezone()
 }
 
 func isConfigNotFound(err error) bool {

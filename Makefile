@@ -9,6 +9,10 @@ IMAGE         ?= opencloud-backupd
 IMAGE_TAG     ?= dev
 OPENCLOUD_DIR := test/fixtures/opencloud
 DEV_COMPOSE   := docker-compose.dev.yml
+WEB_DIR       := web
+# Corepack reads the pnpm version from web/package.json, so the toolchain is
+# pinned by the same file CI uses rather than by whatever is on $PATH.
+PNPM          ?= corepack pnpm
 
 # Platforms the offline recovery CLI must build for. It is the family's last
 # resort, so it ships for every desktop OS (phase-5 exit criteria).
@@ -56,6 +60,44 @@ test-opencloud: ## Run the OpenCloud-fixture tests (run dev-up first; failures, 
 	OPENCLOUD_FIXTURE_REQUIRED=1 $(GO) test -tags integration -count=1 \
 		./pkg/cs3/... ./pkg/cs3state/... ./pkg/api/... ./pkg/restore/... ./pkg/backup/...
 
+.PHONY: web-install
+web-install: ## Install the web extension's dependencies (frozen lockfile).
+	cd $(WEB_DIR) && $(PNPM) install --frozen-lockfile
+
+.PHONY: web-lint
+web-lint: ## Lint and format-check the web extension.
+	cd $(WEB_DIR) && $(PNPM) lint
+	cd $(WEB_DIR) && $(PNPM) format:check
+
+.PHONY: web-format
+web-format: ## Reformat the web extension in place (prettier).
+	cd $(WEB_DIR) && $(PNPM) format
+
+.PHONY: web-test
+web-test: ## Run the web extension's unit tests (includes the Go interop vectors).
+	cd $(WEB_DIR) && $(PNPM) test
+
+.PHONY: web-typecheck
+web-typecheck: ## Typecheck the web extension.
+	cd $(WEB_DIR) && $(PNPM) typecheck
+
+.PHONY: web-build
+web-build: ## Build the web extension bundle into $(WEB_DIR)/dist.
+	cd $(WEB_DIR) && $(PNPM) build
+
+.PHONY: web-install-fixture
+web-install-fixture: ## Build the extension into the OpenCloud fixture and verify it loaded.
+	$(OPENCLOUD_DIR)/install-webapp.sh
+
+.PHONY: web-verify-fixture
+web-verify-fixture: ## Re-verify the installed extension without rebuilding it.
+	$(OPENCLOUD_DIR)/install-webapp.sh --no-build
+
+.PHONY: web-vectors
+web-vectors: ## Regenerate the browser-produced interop vectors, then verify Go opens them.
+	cd $(WEB_DIR) && $(PNPM) vectors
+	$(GO) test ./pkg/keys -run TestBrowserVectors -count=1
+
 .PHONY: lint
 lint: ## Run golangci-lint.
 	golangci-lint run ./...
@@ -81,9 +123,14 @@ secret-scan: ## Scan the full git history for committed secrets (gitleaks).
 	gitleaks git . --redact --no-banner
 
 .PHONY: dev-up
-dev-up: ## Start dev Garage, then the test OpenCloud fixture.
+dev-up: ## Start dev Garage, then the test OpenCloud fixture (and seed it).
 	docker compose -f $(DEV_COMPOSE) up -d
 	cd $(OPENCLOUD_DIR) && ./up.sh
+	# up.sh rewrites fixture.env from scratch, so the seeded ids have to be
+	# appended again afterwards or `make test-opencloud` fails on a variable it
+	# reports as "not set" rather than as "not seeded" — which reads like a
+	# broken test rather than an unseeded fixture.
+	cd $(OPENCLOUD_DIR) && ./seed.sh
 
 .PHONY: dev-down
 dev-down: ## Stop the OpenCloud fixture and dev Garage.

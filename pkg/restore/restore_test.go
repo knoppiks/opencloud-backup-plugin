@@ -552,6 +552,11 @@ func TestRunRestore_RecordsJobLifecycle(t *testing.T) {
 	if job.Error != "" {
 		t.Fatalf("successful job carries error %q", job.Error)
 	}
+	// The member's UI links to this folder, so it must be exactly the one the
+	// files went into.
+	if job.RestoreFolder != res.Folder {
+		t.Fatalf("job restore folder = %q, want %q", job.RestoreFolder, res.Folder)
+	}
 }
 
 func TestRunRestore_UnknownSnapshot(t *testing.T) {
@@ -631,6 +636,11 @@ func TestRunRestore_UploadFailureIsRecordedAndSanitized(t *testing.T) {
 	}
 	if strings.Contains(list[0].Error, "notes.txt") || strings.Contains(list[0].Error, "quota") {
 		t.Fatalf("job error leaked detail: %q", list[0].Error)
+	}
+	// A failed restore may still have written part of the snapshot; the member
+	// needs to know where to look for it.
+	if list[0].RestoreFolder != folder {
+		t.Fatalf("failed job restore folder = %q, want %q", list[0].RestoreFolder, folder)
 	}
 }
 

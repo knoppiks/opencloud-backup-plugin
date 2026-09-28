@@ -17,3 +17,15 @@ description = "Throwaway admin:admin credentials for the ephemeral OpenCloud tes
 condition = "AND"
 paths = ['''^test/fixtures/''']
 regexes = ['''^admin:admin$''']
+
+# Golden vectors that pin the Go and browser implementations of the key
+# envelope against each other. Both files are generated (`go test ./pkg/keys
+# -run TestGoldenVectors -update` and `pnpm vectors`) and contain only
+# throwaway keys that exist solely so the other implementation can reproduce
+# the byte-for-byte result. They never unlock anything outside the test suites.
+[[allowlists]]
+description = "Generated key-envelope golden vectors (throwaway test keys only)"
+paths = [
+  '''^pkg/keys/testdata/vectors\.json$''',
+  '''^web/testdata/browser-vectors\.json$''',
+]

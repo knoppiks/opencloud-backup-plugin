@@ -67,6 +67,14 @@ spec:
         #   value: "/etc/backupd-tls/tls.crt"
         # - name: TLS_KEY_FILE
         #   value: "/etc/backupd-tls/tls.key"
+        # The path prefix the ingress routes to this service. The web extension
+        # shares OpenCloud's origin (it has to: there is no CORS here, by
+        # design), so `/api/v1/` would be a namespace shared with OpenCloud's
+        # own. The prefix keeps them apart, and the extension's apiPath must
+        # match it. The health probes below stay at the root either way — the
+        # kubelet reaches them on the pod, not through the ingress.
+        - name: BACKUPD_BASE_PATH
+          value: "/backup"
         # Phase 2 — auth & space enumeration.
         # OIDC: the backend validates OpenCloud IDP bearer tokens (JWKS discovery
         # from the issuer, retried in the background — an IdP that is not up yet

@@ -27,6 +27,43 @@ func TestRecoveryKeyRoundTrip(t *testing.T) {
 	}
 }
 
+// TestRecoveryKeyShape pins the display form down to the character.
+//
+// Until Phase 8 nothing asserted it, and the documentation claimed 35
+// characters in seven groups of five for a value that has always been 34 in
+// six groups of five plus one of four. The browser shows this string in a
+// fixed layout and the decrypt CLI prompts for it, so both would have been
+// built against a shape that does not exist.
+func TestRecoveryKeyShape(t *testing.T) {
+	display, _, err := GenerateRecoveryKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	groups := strings.Split(display, "-")
+	if len(groups) != 8 {
+		t.Fatalf("groups = %d, want prefix + 7 payload groups: %q", len(groups), display)
+	}
+	if groups[0] != RKPrefix {
+		t.Fatalf("prefix = %q, want %q", groups[0], RKPrefix)
+	}
+
+	wantSizes := []int{5, 5, 5, 5, 5, 5, 4}
+	payload := 0
+	for i, size := range wantSizes {
+		if got := len(groups[i+1]); got != size {
+			t.Fatalf("group %d has %d characters, want %d: %q", i+1, got, size, display)
+		}
+		payload += size
+	}
+	if payload != 34 {
+		t.Fatalf("payload = %d characters, want 34", payload)
+	}
+	if len(display) != 46 {
+		t.Fatalf("display = %d characters, want 46: %q", len(display), display)
+	}
+}
+
 func TestRecoveryKeyIsTypable(t *testing.T) {
 	display, _, err := GenerateRecoveryKey()
 	if err != nil {

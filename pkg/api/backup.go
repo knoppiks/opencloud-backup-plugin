@@ -84,6 +84,9 @@ type jobResponse struct {
 	SnapshotsKept    int `json:"snapshots_kept,omitempty"`
 	// Error is the sanitized message the runner recorded.
 	Error string `json:"error,omitempty"`
+	// RestoreFolder is where a restore run writes, relative to the Space's
+	// root. Absent for every other kind of run.
+	RestoreFolder string `json:"restore_folder,omitempty"`
 }
 
 // handleGetBackupConfig returns a Space's backup configuration.
@@ -134,24 +137,10 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "target_id is required")
 		return
 	}
-	// Zero means "use the default". Anything else has a floor: retention depth
-	// is what survives ransomware, and a session is not enough authority to
-	// remove it (decisions.md threat model).
-	if req.RetentionDays < 0 {
-		writeError(w, http.StatusBadRequest, "bad_request", "retention_days must not be negative")
+	if !validRetentionDays(w, req.RetentionDays) {
 		return
 	}
-	if req.RetentionDays > 0 && time.Duration(req.RetentionDays)*24*time.Hour < spacecfg.MinRetentionWindow {
-		writeError(w, http.StatusBadRequest, "bad_request",
-			fmt.Sprintf("retention_days must be at least %d", int(spacecfg.MinRetentionWindow.Hours()/24)))
-		return
-	}
-
-	// The client may name any target id; only a granted one is accepted.
-	allowed, err := s.authorizer.MayUse(r.Context(), id.Subject, spaceID, req.TargetID)
-	if err != nil || !allowed {
-		// Same answer for "not granted" and "no such target": no enumeration.
-		writeError(w, http.StatusForbidden, "forbidden", "target not available for this space")
+	if !s.mayBindTarget(w, r, id.Subject, spaceID, req.TargetID) {
 		return
 	}
 
@@ -177,6 +166,117 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toConfigResponse(cfg))
+}
+
+// configPatch is a partial configuration update. An absent field keeps its
+// stored value; that is the whole point of the route, so a field this type does
+// not know is refused rather than ignored — a client that believes it changed
+// something must not be told "200" when nothing did.
+type configPatch struct {
+	TargetID      *string `json:"target_id"`
+	RetentionDays *int    `json:"retention_days"`
+	Enabled       *bool   `json:"enabled"`
+}
+
+// handlePatchBackupConfig changes some fields of an existing configuration.
+//
+// PUT replaces the whole record, so an edit to one field has to re-send the
+// others as they were read a moment earlier — and two members editing different
+// fields silently undo each other. The state store has no compare-and-set
+// (decisions.md #16), so this narrows that race to the field actually being
+// edited; it does not remove it.
+//
+// The same rules as PUT apply to whatever is present: the retention floor, and
+// the grant re-check for a new target. A Space with no configuration yet is
+// 404: binding a target is PUT's job, where target_id is required.
+func (s *Server) handlePatchBackupConfig(w http.ResponseWriter, r *http.Request) {
+	id, spaceID, ok := s.requireRole(w, r, cs3.RoleEditor)
+	if !ok {
+		return
+	}
+	if s.spaceConfigs == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup configuration not available")
+		return
+	}
+
+	var patch configPatch
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxConfigRequestBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&patch); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+		return
+	}
+	if patch.TargetID != nil && *patch.TargetID == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "target_id must not be empty")
+		return
+	}
+	if patch.RetentionDays != nil && !validRetentionDays(w, *patch.RetentionDays) {
+		return
+	}
+
+	cfg, err := s.spaceConfigs.Get(r.Context(), spaceID)
+	if err != nil {
+		if isConfigNotFound(err) {
+			writeError(w, http.StatusNotFound, "not_found", "backup is not configured for this space")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not read backup configuration")
+		return
+	}
+
+	if patch.TargetID != nil {
+		if s.authorizer == nil {
+			writeError(w, http.StatusServiceUnavailable, "unavailable", "backup configuration not available")
+			return
+		}
+		if !s.mayBindTarget(w, r, id.Subject, spaceID, *patch.TargetID) {
+			return
+		}
+		cfg.TargetID = *patch.TargetID
+	}
+	if patch.RetentionDays != nil {
+		cfg.RetentionWindow = time.Duration(*patch.RetentionDays) * 24 * time.Hour
+	}
+	if patch.Enabled != nil {
+		cfg.Enabled = *patch.Enabled
+	}
+
+	stored, err := s.spaceConfigs.Put(r.Context(), cfg)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not store backup configuration")
+		return
+	}
+	writeJSON(w, http.StatusOK, toConfigResponse(stored))
+}
+
+// validRetentionDays applies the retention rules shared by PUT and PATCH,
+// writing the 400 itself. Zero means "use the default". Anything else has a
+// floor: retention depth is what survives ransomware, and a session is not
+// enough authority to remove it (decisions.md #22).
+func validRetentionDays(w http.ResponseWriter, days int) bool {
+	if days < 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "retention_days must not be negative")
+		return false
+	}
+	if days > 0 && time.Duration(days)*24*time.Hour < spacecfg.MinRetentionWindow {
+		writeError(w, http.StatusBadRequest, "bad_request",
+			fmt.Sprintf("retention_days must be at least %d", int(spacecfg.MinRetentionWindow.Hours()/24)))
+		return false
+	}
+	return true
+}
+
+// mayBindTarget checks server-side that the caller may bind spaceID to
+// targetID, writing the 403 itself. The client may name any target id; only a
+// granted one is accepted, and "not granted" and "no such target" get the same
+// answer so targets cannot be enumerated (decisions.md #12).
+func (s *Server) mayBindTarget(w http.ResponseWriter, r *http.Request, subject, spaceID, targetID string) bool {
+	allowed, err := s.authorizer.MayUse(r.Context(), subject, spaceID, targetID)
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "forbidden", "target not available for this space")
+		return false
+	}
+	return true
 }
 
 // handleRunBackup triggers a backup run ("backup now"). The run executes in the
@@ -234,6 +334,57 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"runs": out})
 }
 
+// maxJobIDLength bounds a job id path segment. Ids are server-generated hex, so
+// anything longer is refused before it reaches the store.
+const maxJobIDLength = 64
+
+// handleGetRun returns one run of a Space, so a member who started a restore
+// can follow that run — and not whichever run happens to be current — to its
+// end. A job of another Space answers exactly like one that never existed: the
+// id is not a way to learn about Spaces the caller is not a member of.
+func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
+	if !ok {
+		return
+	}
+	if s.jobStore == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "run history not available")
+		return
+	}
+
+	jobID := r.PathValue("jobId")
+	if !isJobID(jobID) {
+		writeError(w, http.StatusNotFound, "not_found", "no such run")
+		return
+	}
+
+	j, err := s.jobStore.GetInSpace(r.Context(), spaceID, jobID)
+	if err != nil {
+		var notFound jobs.ErrNotFound
+		if errors.As(err, &notFound) {
+			writeError(w, http.StatusNotFound, "not_found", "no such run")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
+		return
+	}
+	writeJSON(w, http.StatusOK, toJobResponse(j))
+}
+
+// isJobID reports whether s has the shape of a job id: non-empty lowercase hex
+// of bounded length.
+func isJobID(s string) bool {
+	if s == "" || len(s) > maxJobIDLength {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // toJobResponse projects a job record for the client. Everything it carries is
 // metadata the caller is already entitled to: no paths, no key material, and
 // only the sanitized error the runner recorded.
@@ -252,6 +403,7 @@ func toJobResponse(j jobs.Job) jobResponse {
 		SnapshotsDeleted: j.SnapshotsDeleted,
 		SnapshotsKept:    j.SnapshotsKept,
 		Error:            j.Error,
+		RestoreFolder:    j.RestoreFolder,
 	}
 }
 

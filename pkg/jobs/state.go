@@ -102,6 +102,44 @@ func (s *StateStore) Get(ctx context.Context, id string) (Job, error) {
 	return j, nil
 }
 
+// GetInSpace returns one job of one Space.
+//
+// The Space's keys are listed and the one naming the id is read: one listing
+// and at most one document, with no reliance on the id index. That index is
+// built once per process, so a job another process created after it was built
+// would be reported missing by Get — which, for a member polling a restore
+// served by a different replica, would read as "your restore vanished".
+func (s *StateStore) GetInSpace(ctx context.Context, spaceID, id string) (Job, error) {
+	if spaceID == "" || id == "" {
+		return Job{}, ErrNotFound{ID: id}
+	}
+	keys, err := s.docs.Keys(ctx, spaceID)
+	if err != nil {
+		return Job{}, fmt.Errorf("jobs: list history: %w", err)
+	}
+	for i := len(keys) - 1; i >= 0; i-- {
+		key := keys[i]
+		if jobID, ok := idFromKey(key); !ok || jobID != id {
+			continue
+		}
+		j, err := s.docs.GetKey(ctx, key)
+		if err != nil {
+			if state.IsNotFound(err) {
+				return Job{}, ErrNotFound{ID: id}
+			}
+			return Job{}, fmt.Errorf("jobs: read job: %w", err)
+		}
+		// The key says which Space the document is filed under; the document
+		// says which Space it is about. Both must agree before it is served.
+		if j.SpaceID != spaceID {
+			return Job{}, ErrNotFound{ID: id}
+		}
+		s.remember(j.ID, key)
+		return j, nil
+	}
+	return Job{}, ErrNotFound{ID: id}
+}
+
 // List returns a Space's jobs, newest first.
 func (s *StateStore) List(ctx context.Context, spaceID string) ([]Job, error) {
 	return s.ListRecent(ctx, spaceID, 0)

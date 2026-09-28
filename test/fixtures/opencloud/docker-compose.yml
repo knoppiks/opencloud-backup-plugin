@@ -5,9 +5,12 @@
 # one-time `init` (generates secrets into ./config/opencloud.yaml) before the
 # server starts. up.sh handles init + start + secret extraction.
 #
-# Pinned image (Phase 0): opencloudeu/opencloud-rolling:7.3.0
+# Pinned images (Phase 0, Phase 8): opencloudeu/opencloud-rolling:7.3.0,
+# caddy:2.10-alpine
 # Exposed:
-#   9200 -> HTTPS web / graph / webdav / OCS (self-signed; OC_INSECURE)
+#   9200 -> HTTPS single origin, served by the proxy below: OpenCloud plus
+#           /backup/* routed to a backupd on the host (sub-phase 8c)
+#   9201 -> OpenCloud directly, bypassing the proxy, for debugging
 #   9142 -> CS3 gateway gRPC (bound to 0.0.0.0 for out-of-container workers)
 
 services:
@@ -15,8 +18,12 @@ services:
     image: opencloudeu/opencloud-rolling:7.3.0
     container_name: opencloud-fixture
     # `entrypoint: opencloud` + no command == `server`.
+    #
+    # NOTE 9200 is the *proxy's* port now. OpenCloud still listens on 9200
+    # inside its own container — so OC_URL and every self-call below are
+    # unchanged — it is simply published on 9201 instead.
     ports:
-    - "9200:9200"
+    - "9201:9200"
     - "9142:9142"
     environment:
       OC_INSECURE: "true"
@@ -37,3 +44,30 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+
+  # The single origin the web extension needs. See ./Caddyfile for why this is
+  # a container of its own rather than a route in OpenCloud's proxy.
+  proxy:
+    image: caddy:2.10-alpine
+    container_name: opencloud-fixture-proxy
+    ports:
+    - "9200:9200"
+    extra_hosts:
+    # How /backup/* reaches a backupd running on the host. backupd is not a
+    # container here on purpose: the OIDC issuer is https://localhost:9200, and
+    # "localhost" inside a container is that container — so a containerised
+    # backupd could not resolve its own issuer without aliasing localhost,
+    # which is worse than running the binary where every integration test in
+    # this repo already runs.
+    - "host.docker.internal:host-gateway"
+    volumes:
+    - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    # Named volume so Caddy's local CA survives a restart: ca.crt on the host
+    # would otherwise stop matching the certificate being served.
+    - caddy-data:/data
+    depends_on:
+      opencloud:
+        condition: service_started
+
+volumes:
+  caddy-data: {}

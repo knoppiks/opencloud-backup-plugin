@@ -19,6 +19,8 @@ import (
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
+	"opencloud-backup-plugin/pkg/notify"
+	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/spacecfg"
 	"opencloud-backup-plugin/pkg/targets"
 )
@@ -34,11 +36,21 @@ type Server struct {
 	spaces        cs3.SpaceReader
 	authorizer    targets.Authorizer
 
+	// targetStore, credSealer and targetChecker back the admin surface
+	// (decisions.md #12/#15). credSealer only ever seals here — nothing on the
+	// admin path opens a credential blob, which is what keeps #14 exact.
+	targetStore   targets.Store
+	credSealer    targets.CredSealer
+	targetChecker objstore.Checker
+
 	// keyStore persists wrapped Data Keys; srw adds the server-side wrap at
 	// setup time. Both hold ciphertext / server-held key material only — no
 	// plaintext DK or RK is ever stored or returned (decisions.md, Phase 3).
 	keyStore keys.Store
 	srw      srwWrapper
+	// rkLocks makes a Recovery Key rotation's precondition check and its
+	// write one step (see handleRotateRecoveryKey).
+	rkLocks spaceLocks
 
 	// spaceConfigs holds each Space's target binding and retention window;
 	// runner triggers backup runs; jobStore serves the run history (Phase 4).
@@ -55,6 +67,10 @@ type Server struct {
 	// own arithmetic; notifications serves a Space's own event feed (Phase 6).
 	schedules     scheduleAdvisor
 	notifications notificationReader
+
+	// staleRule is the staleness rule the status board reports. It must be
+	// the one the monitor applies; the zero value is the monitor's default.
+	staleRule notify.StaleRule
 
 	// ready reports readiness for GET /readyz; defaults to always-ready.
 	ready func(context.Context) error
@@ -83,6 +99,19 @@ func WithSpaceReader(r cs3.SpaceReader) Option { return func(s *Server) { s.spac
 
 // WithAuthorizer sets the target authorizer backing GET /targets.
 func WithAuthorizer(a targets.Authorizer) Option { return func(s *Server) { s.authorizer = a } }
+
+// WithTargetStore sets the target/grant store backing the admin API. It is
+// satisfied by *targets.StateStore, the same value WithAuthorizer takes.
+func WithTargetStore(st targets.Store) Option { return func(s *Server) { s.targetStore = st } }
+
+// WithCredSealer sets the Target-Wrap sealer used when an admin enters target
+// credentials. The admin API only ever seals with it; opening a credential blob
+// happens in worker memory at run time and nowhere else (decisions.md #14).
+func WithCredSealer(c targets.CredSealer) Option { return func(s *Server) { s.credSealer = c } }
+
+// WithTargetChecker sets the read-only reachability checker backing the admin
+// connection check. It is satisfied by objstore.S3Checker.
+func WithTargetChecker(c objstore.Checker) Option { return func(s *Server) { s.targetChecker = c } }
 
 // WithKeyStore sets the wrapped-key store backing the backup key endpoints.
 func WithKeyStore(st keys.Store) Option { return func(s *Server) { s.keyStore = st } }
@@ -116,6 +145,11 @@ func WithScheduleAdvisor(a scheduleAdvisor) Option { return func(s *Server) { s.
 func WithNotificationStore(n notificationReader) Option {
 	return func(s *Server) { s.notifications = n }
 }
+
+// WithStaleRule sets the staleness rule the status endpoint reports. Pass the
+// same rule the notify.Monitor is built with, or the card and the notification
+// can disagree; the zero rule matches a monitor built with zero options.
+func WithStaleRule(r notify.StaleRule) Option { return func(s *Server) { s.staleRule = r } }
 
 // WithReadiness sets the readiness probe for GET /readyz.
 func WithReadiness(fn func(context.Context) error) Option {
@@ -183,8 +217,10 @@ func (s *Server) routes() {
 	// additionally validated against server-side grants.
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/config", authed(s.handleGetBackupConfig))
 	s.mux.Handle("PUT /api/v1/spaces/{id}/backup/config", authed(s.handlePutBackupConfig))
+	s.mux.Handle("PATCH /api/v1/spaces/{id}/backup/config", authed(s.handlePatchBackupConfig))
 	s.mux.Handle("POST /api/v1/spaces/{id}/backup/run", authed(s.handleRunBackup))
 	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs", authed(s.handleListRuns))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs/{jobId}", authed(s.handleGetRun))
 
 	// Scheduling and status (Phase 6). Same role gate as the config routes; a
 	// schedule is only accepted for a Space already bound to a granted target,
@@ -201,10 +237,25 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/spaces/{id}/snapshots", authed(s.handleListSnapshots))
 	s.mux.Handle("POST /api/v1/spaces/{id}/restore", authed(s.handleRestore))
 
-	// Admin API scaffold: Authenticate -> ResolveAdmin -> RequireAdmin. The
-	// concrete admin target/grant endpoints are added in the target-store phase;
-	// Phase 2 provides the middleware chain and a 404-under-gate default so the
-	// gate itself is testable (admin -> passes gate, non-admin -> 403).
+	// Admin API: Authenticate -> ResolveAdmin -> RequireAdmin, then targets and
+	// grants and nothing else (decisions.md #15). Credentials go in and never
+	// come back out (#14); see admintargets.go.
+	admin := func(h http.HandlerFunc) http.Handler {
+		return s.Authenticate(s.ResolveAdmin(s.RequireAdmin(h)))
+	}
+	s.mux.Handle("GET /api/v1/admin/targets", admin(s.handleAdminListTargets))
+	s.mux.Handle("POST /api/v1/admin/targets", admin(s.handleAdminCreateTarget))
+	// Literal "check" before "{id}" is how the router reads it, and there is no
+	// POST on a single target for it to shadow.
+	s.mux.Handle("POST /api/v1/admin/targets/check", admin(s.handleAdminCheckTarget))
+	s.mux.Handle("GET /api/v1/admin/targets/{id}", admin(s.handleAdminGetTarget))
+	s.mux.Handle("PUT /api/v1/admin/targets/{id}", admin(s.handleAdminUpdateTarget))
+	s.mux.Handle("DELETE /api/v1/admin/targets/{id}", admin(s.handleAdminDeleteTarget))
+	s.mux.Handle("GET /api/v1/admin/targets/{id}/grants", admin(s.handleAdminListGrants))
+	s.mux.Handle("PUT /api/v1/admin/targets/{id}/grants", admin(s.handleAdminReplaceGrants))
+
+	// Everything else under the prefix stays behind the same gate and answers
+	// 404, so a path nobody implemented is still not a way past it.
 	adminGate := s.Authenticate(s.ResolveAdmin(s.RequireAdmin(http.HandlerFunc(s.handleAdminNotImplemented))))
 	s.mux.Handle("/api/v1/admin/", adminGate)
 }
@@ -225,12 +276,36 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 // spaceDTO is the JSON projection of a Space for GET /spaces. It deliberately
-// omits CS3-internal detail beyond what the UI needs; membership is not exposed
-// to the client (it is used server-side for authorization).
+// omits CS3-internal detail beyond what the UI needs; other people's membership
+// is not exposed to the client (it is used server-side for authorization).
+//
+// Role is the caller's *own* role, which is not that disclosure: it is what the
+// caller would learn anyway by attempting an action and reading the 403. The UI
+// uses it to show "a manager of this Space has to finish setup" instead of
+// offering a button that can only fail. It is presentation; every route still
+// enforces its own minimum.
 type spaceDTO struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Type string `json:"type"`
+	Role string `json:"role"`
+}
+
+// roleName is the wire form of a role. cs3.Role.String is for logs and is not
+// a contract; this is, and the web client matches on these exact words.
+func roleName(r cs3.Role) string {
+	switch r {
+	case cs3.RoleOwner:
+		return "owner"
+	case cs3.RoleManager:
+		return "manager"
+	case cs3.RoleEditor:
+		return "editor"
+	case cs3.RoleViewer:
+		return "viewer"
+	default:
+		return "none"
+	}
 }
 
 // handleListSpaces returns the spaces the authenticated user may back up. A user
@@ -256,15 +331,15 @@ func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]spaceDTO, 0, len(all))
 	for _, sp := range all {
-		visible, err := a.permits(r.Context(), sp, cs3.RoleViewer)
+		role, err := a.role(r.Context(), sp)
 		if err != nil {
 			writeAccessError(w, err)
 			return
 		}
-		if !visible {
+		if role < cs3.RoleViewer {
 			continue
 		}
-		out = append(out, spaceDTO{ID: sp.ID, Name: sp.Name, Type: sp.Type})
+		out = append(out, spaceDTO{ID: sp.ID, Name: sp.Name, Type: sp.Type, Role: roleName(role)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"spaces": out})
 }
@@ -319,9 +394,9 @@ func (s *Server) handleListTargets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"targets": out})
 }
 
-// handleAdminNotImplemented is the placeholder body behind the admin gate. It is
-// only ever reached by an authenticated admin; concrete endpoints land with the
-// target store. It exists so the gate (403 for non-admins) is testable now.
+// handleAdminNotImplemented answers any admin path with no handler of its own.
+// It is only ever reached by an authenticated admin, so an unimplemented path
+// is a 404 rather than a hole in the gate.
 func (s *Server) handleAdminNotImplemented(w http.ResponseWriter, _ *http.Request) {
 	writeError(w, http.StatusNotFound, "not_found", "admin endpoint not implemented")
 }

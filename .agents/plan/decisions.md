@@ -116,10 +116,10 @@ than drifting.
     Rationale: a family admin wants to point different people at different buddy
     stores without redeploying the cluster. **Enforcement is server-side** (a
     user sees/uses only granted targets); client input is never trusted.
-    *Status:* the target store, the grant model and the server-side enforcement
-    exist. The **admin API and UI do not** — `/api/v1/admin/` is a placeholder
-    that answers 404, and the only writer today is the optional first-start
-    seeding below. Both land in Phase 8.
+    *Status:* the target store, the grant model, the server-side enforcement and
+    the **admin API** exist — `/api/v1/admin/targets` and `.../grants` are real
+    since sub-phase 8b, so the admin is no longer limited to the optional
+    first-start seeding below. The **admin UI** lands in sub-phase 8e.
 
 13. **The in-app admin identity is the OpenCloud admin role, reused — we do not
     build our own admin user store.** Admin status is derived from OpenCloud
@@ -920,6 +920,124 @@ is listed here so the corrections are themselves on the record:
   `name`/`valueFrom` is not valid. An operator following the comment got a
   rejected Deployment. They are in `env:` now, and `kubeconform` is run over the
   uncommented form as well as the shipped one.
+
+### Amendments from Phase 8 — 8c (the state Space was unobtainable)
+
+- **#16's constraint said "no end user is a member"; the code checked "no
+  member at all", and no Space satisfying the second one can be created.**
+  Measured against the OpenCloud 7.3.0 fixture while standing `backupd` up for
+  the web extension:
+  - A project Space created through graph (the path README's runbook told the
+    operator to use) leaves its **creator** — a real admin user — holding a
+    manager grant.
+  - That grant cannot be removed. Graph answers `403 accessDenied`, *"cannot
+    remove the last share with manager permissions on a space root"*.
+  - So a Space with zero member grants does not exist, `cs3state.Check` refused
+    every candidate, and since R5 made `STATE_SPACE_ID` required, **a default
+    deployment with durable state could not start at all.** The runbook had been
+    impossible to follow since it was written, and nothing caught it because
+    every integration test constructs its own store and never calls `Check`.
+
+  The predicate is what was wrong. A Space created **over CS3 by the service
+  account** carries exactly one grant, held by the service account itself — no
+  end user can reach it, which is the property #16 actually asks for. `Check`
+  now discounts a grant held by that one principal and refuses every other, so
+  an admin's grant is still refused and a personal Space is still refused
+  whoever holds what. With no service-account id configured the check stays
+  strict, because silence must not widen a security predicate.
+
+  *The exemption is for one named principal, not for "a single manager".* The
+  rejected alternative — allow any lone manager grant — permits precisely the
+  case R1 added the check to prevent, since the admin who would hold it is an
+  end user.
+
+- **Provisioning is an operator command, because it cannot be a UI step.**
+  `backupd provision-state-space` creates the Space as the service account,
+  verifies it with the same `Check` startup uses, and prints the id. It refuses
+  to run while `STATE_SPACE_ID` is already set: a second state Space leaves the
+  first holding every wrapped Data Key with nothing pointing at it. Startup
+  deliberately does **not** provision implicitly — on a mistyped
+  `STATE_SPACE_ID` that would quietly create a fresh Space and begin writing to
+  it, which is the same silent-orphaning failure #17 exists to prevent.
+
+- **The general lesson, which is R9's again in a new place.** `Check` was
+  covered by unit tests against a fake Space, and they all passed: the fake
+  agreed with the code's idea of what a Space looks like. Nothing had ever run
+  the predicate against a Space OpenCloud actually produces. A startup check is
+  a claim about the environment, and a claim about the environment tested only
+  against a fake is untested.
+
+### Amendments from Phase 8 — 8d.1 (what the member's UI is told)
+
+- **`GET /spaces` carries the caller's own role.** This is not a disclosure of
+  membership. Other members' grants stay server-side. The caller's own role is
+  what they could learn by trying an action and reading the 403. It is resolved
+  under #20: if a group grant could raise the role and groups cannot be
+  resolved, the listing fails rather than understating the role.
+- **Staleness has one definition** (`notify.StaleRule`). The member
+  notification and the status board both use it, over the same history window,
+  so they cannot disagree.
+- **A job record may carry one path: the restore folder**, which the service
+  names itself. It never carries paths from the user's data, which is what the
+  earlier rule was protecting.
+
+### Amendments from Phase 8 — 8d.2 (setup order and the schedule's zone)
+
+- **A Space is enabled only once it has keys.** The scheduler never looks at
+  keys, so an enabled Space without them fails at every due time and fires a
+  `run_failed` notification each time. The wizard therefore binds the target
+  with `enabled: false` and switches runs on at the schedule step, which is
+  reachable only after the ceremony. Only the client enforces this. The API
+  still lets a caller enable a keyless Space (see the 8d.2 outcome).
+- **The schedule's zone is part of the API.** `/backup/status` and
+  `/backup/schedule` carry `timezone`, the IANA name presets are read in (R6),
+  or omit it when the service cannot name it. A preset hour with no zone
+  beside it is a time the user cannot interpret.
+- **`PUT /backup/schedule` refuses unknown fields.** `enabled` is a plain bool,
+  so a misspelt body used to answer 200 while switching backups off.
+
+### Amendments from Phase 8 — 8d.3 (following a restore)
+
+- **Any member can read a single run of their Space**, through
+  `GET /spaces/{id}/backup/runs/{jobId}`. It returns the same record the
+  history list already gives a viewer, so it discloses nothing new. For a
+  run of another Space it answers the same 404 as for an id that never
+  existed, so a member of one Space cannot use it to probe the runs of
+  another.
+  The lookup is scoped by the Space's own history (`jobs.Store.GetInSpace`)
+  and not by the process-wide id index. The index can be stale in a process
+  that did not create the job, and there a stale index would report the
+  restore as gone.
+
+### Amendments from Phase 8 — 8d.4 (replacing and checking the Recovery Key)
+
+- **A rotation names the envelope it replaces, and lands only if that is still
+  the stored one.** `POST .../backup/recovery-key/rotate` requires
+  `replaces_sha256`, the lowercase hex SHA-256 of the envelope the browser
+  unwrapped. The field is refused with 400 when it is missing or malformed, and
+  with 409 `conflict` when it no longer matches.
+  The handler holds a lock per Space across "read, compare, write". #16 still
+  gives the store no compare-and-set, but it also makes the service a single
+  instance, and within that one process the lock is a real compare-and-set.
+  Rationale: without it, two managers rotating at once both got 200, and the
+  one whose write lost kept a Recovery Key that opened nothing. The response
+  gave no hint of that. The digest is a hash of ciphertext any member may
+  already read, so it discloses nothing new.
+- **"The old Recovery Key stops working" is true once the next backup has run,
+  not when the rotation returns.** The rotation writes the state Space. The
+  copy on the target, which every Take-Out is made from, is refreshed by the
+  next run. Until then a new Take-Out still opens with the old key only. A
+  Take-Out made *before* the rotation keeps the old envelope for good. The UI
+  says so and offers "Back up now".
+- **`decrypt` accepts the envelope from outside the Take-Out** (`-envelope
+  <file>`, the `recovery.ocbke` any member can download). The Data Key never
+  changes, so the Space's current envelope opens every Take-Out of that Space
+  with the current key. That includes one made before a rotation and one
+  forced without an envelope. The Take-Out layout promise is unchanged: this
+  is an extra input, and the CLI still reads every Take-Out it ever read. The
+  file gets the same checks as the Take-Out's own envelope. A file that opens
+  with the key but does not open the repository is reported as belonging to
+  another Space, not as damage.
 
 ---
 

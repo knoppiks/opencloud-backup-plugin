@@ -86,6 +86,21 @@ for required in sa_id sa_secret jwt machine; do
   fi
 done
 
+# Caddy terminates TLS on :9200 with its own local CA (see ./Caddyfile). A
+# backupd running on the host has to verify that certificate to reach the OIDC
+# issuer and the data gateway, and Go reads a CA bundle from SSL_CERT_FILE — so
+# the root is extracted here rather than by disabling verification, which the
+# service offers no switch for and should not.
+echo "extracting the proxy's CA certificate..."
+for i in $(seq 1 30); do
+  if docker compose exec -T proxy \
+    cat /data/caddy/pki/authorities/local/root.crt > ca.crt 2>/dev/null && [ -s ca.crt ]; then
+    break
+  fi
+  sleep 2
+  if [ "$i" = "30" ]; then echo "timed out waiting for the proxy's CA" >&2; exit 1; fi
+done
+
 {
   echo "export CS3_GATEWAY_ADDR=127.0.0.1:9142"
   emit CS3_SERVICE_ACCOUNT_ID "${sa_id}"
@@ -93,9 +108,22 @@ done
   emit OC_JWT_SECRET "${jwt}"
   emit OC_MACHINE_AUTH_API_KEY "${machine}"
   echo "export OC_URL=https://localhost:9200"
+  # The service account under the names backupd itself reads.
+  emit OC_SERVICE_ACCOUNT_ID "${sa_id}"
+  emit OC_SERVICE_ACCOUNT_SECRET "${sa_secret}"
+  # Phase 8: what a host-run backupd needs to sit behind the fixture's origin.
+  echo "export OC_BASE_URL=https://localhost:9200"
+  echo "export OIDC_ISSUER=https://localhost:9200"
+  # Must equal the SPA's client id or every extension request 401s
+  # (decisions.md #21). config.json says "web".
+  echo "export OIDC_AUDIENCE=web"
+  echo "export BACKUPD_BASE_PATH=/backup"
+  emit SSL_CERT_FILE "$(pwd)/ca.crt"
 } > fixture.env
 
 echo "OpenCloud fixture is up."
-echo "  web:          https://localhost:9200  (admin / admin)"
+echo "  web:          https://localhost:9200  (admin / admin)  [via the proxy]"
+echo "  opencloud:    https://localhost:9201  (direct, bypasses the proxy)"
+echo "  backup API:   https://localhost:9200/backup/  -> host port 8080"
 echo "  CS3 gateway:  127.0.0.1:9142"
 echo "  credentials:  written to test/fixtures/opencloud/fixture.env (source it)"
