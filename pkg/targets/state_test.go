@@ -67,7 +67,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatalf("ListTargets = %+v (%v)", list, err)
 			}
 
-			grant := Grant{TargetID: "t1", Scope: ScopeUser, UserSub: "alice"}
+			grant := Grant{TargetID: "t1", Scope: ScopeUser, UserID: "alice"}
 			if err := store.PutGrant(ctx, grant); err != nil {
 				t.Fatalf("PutGrant: %v", err)
 			}

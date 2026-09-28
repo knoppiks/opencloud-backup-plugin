@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -155,4 +156,20 @@ func mustLoad(t *testing.T, name string) *time.Location {
 		t.Skipf("timezone %s unavailable: %v", name, err)
 	}
 	return loc
+}
+
+// A service that authenticates tokens but cannot find out whose OpenCloud user
+// they belong to would answer 503 to everyone. It refuses to start instead.
+func TestBuildService_RequiresOCBaseURLWithOIDC(t *testing.T) {
+	t.Setenv("BACKUP_WORK_DIR_ALLOW_DISK", "true")
+	t.Setenv("BACKUP_WORK_DIR", t.TempDir())
+	t.Setenv("OIDC_ISSUER", "https://issuer.invalid")
+	t.Setenv("OIDC_AUDIENCE", "web")
+	t.Setenv("OC_BASE_URL", "")
+
+	_, cleanup, err := buildService(context.Background(), discardLogger())
+	defer cleanup()
+	if err == nil || !strings.Contains(err.Error(), "OC_BASE_URL is required") {
+		t.Fatalf("err = %v, want a refusal naming OC_BASE_URL", err)
+	}
 }

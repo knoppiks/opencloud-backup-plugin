@@ -5,7 +5,7 @@
 // It upholds the least-disclosure rule: VisibleTargets returns only PublicView
 // projections ({id,name}); credentials never leave the store (decisions.md
 // #12/#14). Grant evaluation is entirely server-side — the caller passes their
-// authenticated subject and the spaces they belong to (derived from CS3
+// OpenCloud user id and the spaces they belong to (derived from CS3
 // membership), never a client-supplied target id.
 package targets
 
@@ -152,7 +152,7 @@ func (m *MemoryStore) ListGrants(_ context.Context, targetID string) ([]Grant, e
 
 // VisibleTargets returns least-disclosure projections of the targets granted to
 // the user, given the spaces they are a member of (server-side check).
-func (m *MemoryStore) VisibleTargets(_ context.Context, userSub string, spaceIDs []string) ([]PublicView, error) {
+func (m *MemoryStore) VisibleTargets(_ context.Context, userID string, spaceIDs []string) ([]PublicView, error) {
 	spaceSet := make(map[string]struct{}, len(spaceIDs))
 	for _, id := range spaceIDs {
 		spaceSet[id] = struct{}{}
@@ -163,7 +163,7 @@ func (m *MemoryStore) VisibleTargets(_ context.Context, userSub string, spaceIDs
 
 	out := make([]PublicView, 0)
 	for id, t := range m.targets {
-		if grantsAllow(m.grants[id], userSub, spaceSet) {
+		if grantsAllow(m.grants[id], userID, spaceSet) {
 			out = append(out, t.Public())
 		}
 	}
@@ -172,7 +172,7 @@ func (m *MemoryStore) VisibleTargets(_ context.Context, userSub string, spaceIDs
 
 // MayUse reports whether the user may use targetID for spaceID. All checks are
 // server-side; a client-supplied targetID that is not granted returns false.
-func (m *MemoryStore) MayUse(_ context.Context, userSub, spaceID, targetID string) (bool, error) {
+func (m *MemoryStore) MayUse(_ context.Context, userID, spaceID, targetID string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if _, ok := m.targets[targetID]; !ok {
@@ -182,17 +182,17 @@ func (m *MemoryStore) MayUse(_ context.Context, userSub, spaceID, targetID strin
 	if spaceID != "" {
 		spaceSet[spaceID] = struct{}{}
 	}
-	return grantsAllow(m.grants[targetID], userSub, spaceSet), nil
+	return grantsAllow(m.grants[targetID], userID, spaceSet), nil
 }
 
-// grantsAllow evaluates whether any grant admits userSub given their spaces.
-func grantsAllow(grants []Grant, userSub string, spaceSet map[string]struct{}) bool {
+// grantsAllow evaluates whether any grant admits userID given their spaces.
+func grantsAllow(grants []Grant, userID string, spaceSet map[string]struct{}) bool {
 	for _, g := range grants {
 		switch g.Scope {
 		case ScopeAllUsers:
 			return true
 		case ScopeUser:
-			if g.UserSub == userSub {
+			if g.UserID == userID {
 				return true
 			}
 		case ScopeSpace:
@@ -233,6 +233,6 @@ func normalizeGrants(targetID string, grants []Grant) ([]Grant, error) {
 func grantEqual(a, b Grant) bool {
 	return a.TargetID == b.TargetID &&
 		a.Scope == b.Scope &&
-		a.UserSub == b.UserSub &&
+		a.UserID == b.UserID &&
 		a.SpaceID == b.SpaceID
 }

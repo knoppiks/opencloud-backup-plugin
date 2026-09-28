@@ -135,6 +135,12 @@ cannot check, so it is on you.
 tokens for several applications, so without it a token minted for something else
 opens this API.
 
+`OC_BASE_URL` is required alongside `OIDC_ISSUER` too. A token's subject is not
+the caller's OpenCloud user id, and every permission is a statement about that
+id, so the service asks OpenCloud's graph API who the caller is (once per
+token). `ADMIN_SUBJECT_ALLOWLIST`, if you use it, lists OpenCloud user ids,
+despite its name.
+
 Set `TZ` to the household's timezone. Schedules are read in the container's zone,
 because "nightly at 02:30" is about the family's night — an unset `TZ` means UTC,
 which in Berlin is 03:30 in winter and 04:30 in summer. `SCHEDULE_TIMEZONE`

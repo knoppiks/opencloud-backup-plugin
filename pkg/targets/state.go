@@ -213,7 +213,7 @@ func (s *StateStore) writeGrants(ctx context.Context, targetID string, list []Gr
 
 // VisibleTargets returns least-disclosure projections of the targets granted to
 // the user, given the spaces they are a member of (server-side check).
-func (s *StateStore) VisibleTargets(ctx context.Context, userSub string, spaceIDs []string) ([]PublicView, error) {
+func (s *StateStore) VisibleTargets(ctx context.Context, userID string, spaceIDs []string) ([]PublicView, error) {
 	all, err := s.ListTargets(ctx)
 	if err != nil {
 		return nil, err
@@ -226,7 +226,7 @@ func (s *StateStore) VisibleTargets(ctx context.Context, userSub string, spaceID
 		if err != nil {
 			return nil, err
 		}
-		if grantsAllow(grants, userSub, spaceSet) {
+		if grantsAllow(grants, userID, spaceSet) {
 			out = append(out, t.Public())
 		}
 	}
@@ -236,7 +236,7 @@ func (s *StateStore) VisibleTargets(ctx context.Context, userSub string, spaceID
 
 // MayUse reports whether the user may use targetID for spaceID. All checks are
 // server-side; a client-supplied targetID that is not granted returns false.
-func (s *StateStore) MayUse(ctx context.Context, userSub, spaceID, targetID string) (bool, error) {
+func (s *StateStore) MayUse(ctx context.Context, userID, spaceID, targetID string) (bool, error) {
 	if _, err := s.GetTarget(ctx, targetID); err != nil {
 		return false, err
 	}
@@ -248,7 +248,7 @@ func (s *StateStore) MayUse(ctx context.Context, userSub, spaceID, targetID stri
 	if spaceID != "" {
 		ids = []string{spaceID}
 	}
-	return grantsAllow(grants, userSub, spaceSetOf(ids)), nil
+	return grantsAllow(grants, userID, spaceSetOf(ids)), nil
 }
 
 func spaceSetOf(ids []string) map[string]struct{} {

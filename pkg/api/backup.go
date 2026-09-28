@@ -140,7 +140,7 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 	if !validRetentionDays(w, req.RetentionDays) {
 		return
 	}
-	if !s.mayBindTarget(w, r, id.Subject, spaceID, req.TargetID) {
+	if !s.mayBindTarget(w, r, id.UserID, spaceID, req.TargetID) {
 		return
 	}
 
@@ -229,7 +229,7 @@ func (s *Server) handlePatchBackupConfig(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusServiceUnavailable, "unavailable", "backup configuration not available")
 			return
 		}
-		if !s.mayBindTarget(w, r, id.Subject, spaceID, *patch.TargetID) {
+		if !s.mayBindTarget(w, r, id.UserID, spaceID, *patch.TargetID) {
 			return
 		}
 		cfg.TargetID = *patch.TargetID

@@ -158,7 +158,7 @@ func TestListTargets_GrantedOnlyAndLeastDisclosure(t *testing.T) {
 	_, _ = store.CreateTarget(ctx, targets.Target{ID: "t-alice", Name: "AliceOnly", WrappedCreds: []byte("sealed")})
 	_, _ = store.CreateTarget(ctx, targets.Target{ID: "t-space", Name: "SharedSpace", WrappedCreds: []byte("sealed")})
 	_ = store.PutGrant(ctx, targets.Grant{TargetID: "t-all", Scope: targets.ScopeAllUsers})
-	_ = store.PutGrant(ctx, targets.Grant{TargetID: "t-alice", Scope: targets.ScopeUser, UserSub: "alice"})
+	_ = store.PutGrant(ctx, targets.Grant{TargetID: "t-alice", Scope: targets.ScopeUser, UserID: "alice"})
 	_ = store.PutGrant(ctx, targets.Grant{TargetID: "t-space", Scope: targets.ScopeSpace, SpaceID: "space-shared"})
 
 	srv := NewServer(WithTokenValidator(val), WithSpaceReader(reader), WithAuthorizer(store))

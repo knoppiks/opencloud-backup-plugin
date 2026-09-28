@@ -28,8 +28,15 @@ import (
 // Identity is the authenticated caller extracted from a validated token. It is
 // placed in the request context and never carries key material.
 type Identity struct {
-	// Subject is the OIDC `sub` claim — the stable user id.
+	// Subject is the OIDC `sub` claim. It identifies the caller to the IdP and
+	// is NOT the OpenCloud user id; nothing here authorizes on it (users.go).
 	Subject string
+	// UserID is the caller's OpenCloud user id, as graph /me reports it. Every
+	// authorization decision that names a user uses this. Authenticate fills
+	// it in; a validator may set it itself when it already knows it.
+	UserID string
+	// Expiry is the token's `exp`, used to bound caches keyed by the token.
+	Expiry time.Time
 	// Username is the preferred human-readable name, if present.
 	Username string
 	// Token is the raw bearer token, retained so downstream calls (CS3 read,
@@ -195,6 +202,7 @@ func (v *oidcValidator) Validate(ctx context.Context, rawToken string) (Identity
 		Subject:  claims.Subject,
 		Username: firstNonEmpty(claims.PreferredUsername, claims.Name, claims.Email),
 		Token:    rawToken,
+		Expiry:   claims.Expiry.Time(),
 	}, nil
 }
 
@@ -227,8 +235,33 @@ func (s *Server) Authenticate(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
 			return
 		}
+		if !s.resolveUserID(w, r, &id) {
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), id)))
 	})
+}
+
+// resolveUserID fills in the caller's OpenCloud user id, writing the error
+// response itself when it cannot. Without the id no user-scoped decision can
+// be taken correctly, so the request stops here rather than falling back to
+// the OIDC subject, which would deny every member and match no user grant.
+func (s *Server) resolveUserID(w http.ResponseWriter, r *http.Request, id *Identity) bool {
+	if id.UserID != "" {
+		return true
+	}
+	if s.userResolver == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "user identity cannot be resolved")
+		return false
+	}
+	userID, err := s.userResolver.UserID(r.Context(), *id)
+	if err != nil || userID == "" {
+		writeError(w, http.StatusServiceUnavailable, "unavailable",
+			"OpenCloud cannot be reached to identify the caller; try again shortly")
+		return false
+	}
+	id.UserID = userID
+	return true
 }
 
 // bearerToken extracts the token from the Authorization header.

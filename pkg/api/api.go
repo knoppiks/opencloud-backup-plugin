@@ -33,6 +33,7 @@ type Server struct {
 	validator     TokenValidator
 	adminResolver AdminResolver
 	groupResolver GroupResolver
+	userResolver  UserResolver
 	spaces        cs3.SpaceReader
 	authorizer    targets.Authorizer
 
@@ -93,6 +94,11 @@ func WithAdminResolver(r AdminResolver) Option { return func(s *Server) { s.admi
 // to, so group grants on a Space are honoured. Without it, a Space that carries
 // a group grant refuses callers who need it (fail closed).
 func WithGroupResolver(r GroupResolver) Option { return func(s *Server) { s.groupResolver = r } }
+
+// WithUserResolver sets how an authenticated caller's OpenCloud user id is
+// found (users.go). Without it, only a validator that supplies the id itself
+// authenticates anyone.
+func WithUserResolver(r UserResolver) Option { return func(s *Server) { s.userResolver = r } }
 
 // WithSpaceReader sets the CS3 space reader backing GET /spaces.
 func WithSpaceReader(r cs3.SpaceReader) Option { return func(s *Server) { s.spaces = r } }
@@ -381,7 +387,7 @@ func (s *Server) handleListTargets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	views, err := s.authorizer.VisibleTargets(r.Context(), id.Subject, spaceIDs)
+	views, err := s.authorizer.VisibleTargets(r.Context(), id.UserID, spaceIDs)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "upstream_error", "could not list targets")
 		return
