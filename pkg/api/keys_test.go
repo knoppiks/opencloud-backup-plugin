@@ -366,6 +366,74 @@ func TestKeySetupIsRefusedOnceTheSpaceIsConfigured(t *testing.T) {
 	}
 }
 
+// Two ceremonies racing for the same Space: exactly one lands, and both stored
+// envelopes wrap that ceremony's Data Key. Without the lock both pass the
+// not-configured check, and the Space can end up with one caller's recovery
+// envelope and the other's server envelope.
+func TestKeySetupConcurrentCeremoniesOneWins(t *testing.T) {
+	env := newKeyTestEnv(t)
+
+	const racers = 8
+	bodies := make([][]byte, racers)
+	dks := make([][]byte, racers)
+	rks := make([][]byte, racers)
+	for i := range bodies {
+		bodies[i], dks[i], rks[i] = clientSetup(t)
+	}
+
+	codes := make([]int, racers)
+	var wg sync.WaitGroup
+	for i := range bodies {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			codes[i] = doJSON(env.srv, http.MethodPost,
+				"/api/v1/spaces/space-shared/backup/setup", "alice-tok", bodies[i]).Code
+		}(i)
+	}
+	wg.Wait()
+
+	winner := -1
+	for i, code := range codes {
+		switch code {
+		case http.StatusCreated:
+			if winner >= 0 {
+				t.Fatalf("two ceremonies for the same space both landed (%d and %d)", winner, i)
+			}
+			winner = i
+		case http.StatusConflict:
+		default:
+			t.Fatalf("setup %d = %d, want 201 or 409", i, code)
+		}
+	}
+	if winner < 0 {
+		t.Fatal("no setup landed")
+	}
+
+	rkEnv, err := env.store.GetRK("space-shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotRK, err := keys.UnwrapRK(rkEnv, rks[winner])
+	if err != nil {
+		t.Fatalf("the winning Recovery Key does not open the stored envelope: %v", err)
+	}
+	if !bytes.Equal(gotRK, dks[winner]) {
+		t.Fatal("the stored recovery envelope wraps another ceremony's data key")
+	}
+	srwEnv, err := env.store.GetSRW("space-shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSRW, err := env.wrapper.UnwrapSRW(srwEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotSRW, dks[winner]) {
+		t.Fatal("the stored server envelope wraps another ceremony's data key")
+	}
+}
+
 // A setup interrupted between the two writes leaves a half-configured Space with
 // no snapshots behind it. Re-running the ceremony there destroys nothing, so it
 // is allowed — the guard is "both envelopes present", not "any".
