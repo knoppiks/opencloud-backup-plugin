@@ -1,0 +1,7 @@
+# The image builds the bundle from source; nothing local belongs in the context.
+node_modules/
+dist/
+.__mf__temp/
+testdata/
+Dockerfile
+.dockerignore

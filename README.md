@@ -13,14 +13,14 @@ backups **without ever seeing the plaintext content** of a user's data.
 > and **both restore paths work**: an admin Take-Out that the user decrypts
 > offline with their Recovery Key (verified with OpenCloud stopped), and a
 > user-triggered restore back into their Space. Unattended scheduling, retention
-> and key rotation have landed since. **There is no user interface yet**: every
-> flow below that mentions one is an HTTP API today. The browser half of the key
-> ceremony now exists under [`web/`](web/) — Recovery Key generation, the
-> envelope format and the self-verification step, tested byte-for-byte against
-> the Go implementation in both directions — but the views that would let a
-> person use it do not. Admin management of backup targets is likewise API-less:
-> targets come from first-start seeding. Both are the current phase. The design
-> and phased roadmap live in [`.agents/plan/`](.agents/plan/).
+> and key rotation have landed since. The user interface, **Backup Vault**, is an
+> OpenCloud Web extension under [`web/`](web/): per-Space overview and status,
+> the setup wizard with the Recovery Key ceremony (tested byte-for-byte against
+> the Go implementation in both directions), restore, and Recovery Key check and
+> replacement. Backup targets are managed through an admin HTTP API or seeded at
+> first start; the admin view for them is the current phase. Nothing has yet
+> been exercised end to end in a real browser. The design and phased roadmap
+> live in [`.agents/plan/`](.agents/plan/).
 
 ## What it does
 
@@ -89,16 +89,17 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
 
 ## Deployment preconditions
 
-The image is built from the `Dockerfile` in this repository (`make image`) and
-pushed to a registry of your own; none is published yet. It contains the service
+The image is published as `ghcr.io/knoppiks/opencloud-backupd` for every
+release tag, or built from the `Dockerfile` in this repository (`make image`). It
+contains the service
 and the admin `takeout` tool, runs as uid 65532, and starts the service with no
 arguments — an argument is an operator subcommand, which is how key rotation
 runs from the same image. The offline `decrypt` CLI is deliberately not in it;
 that one belongs on the user's machine.
 
-Four things the service assumes. Three of them it checks at startup and refuses
-to run rather than working in a way that looks fine and is not. The first it
-cannot check, so it is on you.
+Five things the service assumes. It checks the last three at startup and
+refuses to run rather than working in a way that looks fine and is not. The
+first two it cannot check, so they are on you.
 
 - **TLS in front.** The listener speaks plain HTTP. A Space's Data Key is sent to
   the server once, at key setup — that is the price of unattended backups, and it
@@ -194,6 +195,83 @@ The service **refuses to start** without `STATE_SPACE_ID`. Setting
 `STATE_BACKEND=memory` instead runs it with in-memory state — schedules, history
 and key envelopes then die with the process, which is a smoke-test mode and
 nothing else.
+
+## Deployment: installing Backup Vault
+
+The extension ships as an image, `ghcr.io/knoppiks/opencloud-backup-vault-web`,
+with the same version as the service; run the two at the same version. It
+carries the bundle at the path OpenCloud's own `web-extensions` images use, so
+it drops into the same initContainer pattern:
+
+```yaml
+initContainers:
+- name: init-backup-vault
+  image: ghcr.io/knoppiks/opencloud-backup-vault-web:<version>
+  # The image's default command copies the bundle into /extensions/backup-vault.
+  volumeMounts:
+  - { name: extensions, mountPath: /extensions }
+# ...then copy /extensions/backup-vault/ into
+# <OC_DATA_DIR>/web/assets/apps/ (default /var/lib/opencloud/web/assets/apps/).
+```
+
+OpenCloud scans the apps directory **at startup only**, which an initContainer
+gets for free. Copying into a running pod does nothing until it restarts.
+
+**OpenCloud's Content Security Policy has to allow WebAssembly.** The Recovery
+Key's key derivation (Argon2id) runs in the browser as WebAssembly, and the
+default policy of OpenCloud 7.3.0 (`script-src 'self' 'unsafe-inline'`) blocks
+compiling it. Everything else still works, so the failure shows up late: setup,
+"Check my Recovery Key" and the key replacement all fail in the browser. Add
+`'wasm-unsafe-eval'` to `script-src` in the CSP file OpenCloud reads
+(`PROXY_CSP_CONFIG_FILE_LOCATION`):
+
+```yaml
+directives:
+  script-src:
+  - '''self'''
+  - '''unsafe-inline'''
+  - '''wasm-unsafe-eval'''
+```
+
+OpenCloud uses that file **instead of** its default, so start from your current
+policy and add the one line. [`test/fixtures/opencloud/csp.yaml`](test/fixtures/opencloud/csp.yaml)
+is the 7.3.0 default plus that line. `'wasm-unsafe-eval'` allows WebAssembly
+compilation only. It is not `'unsafe-eval'`: `eval()` and `new Function()` stay
+blocked.
+
+## Deployment: step by step
+
+In order, for a Kubernetes deployment next to an existing OpenCloud. `deploy/`
+holds the manifests; every `REPLACE_ME` in them is refused at startup.
+
+1. **OpenCloud: expose the gateway.** Set `OC_GATEWAY_GRPC_ADDR=0.0.0.0:9142`
+   and add port 9142 to a Service. Point `CS3_GATEWAY_ADDR` at it. The
+   connection is plaintext gRPC, so keep it on the cluster network.
+2. **OpenCloud: the CSP override** (above).
+3. **Secrets.** Two fresh 32-byte keys (`SRW_KEY`, `TW_KEY`) and OpenCloud's
+   service account id and secret (`service_account_id` and
+   `service_account_secret` in `opencloud.yaml`, or `OC_SERVICE_ACCOUNT_ID` and
+   `OC_SERVICE_ACCOUNT_SECRET` if you set them). See
+   `deploy/secret-wrap-keys.yaml`.
+4. **The state Space.** Run `backupd provision-state-space` once, from the
+   service image with the service account and `CS3_GATEWAY_ADDR` set, and put
+   the id it prints into `STATE_SPACE_ID` (see "the state Space" above).
+5. **The service.** `deploy/deployment-backupd.yaml` and
+   `deploy/service-backupd.yaml`. With OpenCloud's built-in IdP,
+   `OIDC_ISSUER` and `OC_BASE_URL` are OpenCloud's URL and `OIDC_AUDIENCE` is
+   `web`. Set `TZ` to the household's zone. The pod has to reach OpenCloud's
+   public URL (issuer, graph, and the `/data` gateway reva hands out) and trust
+   its certificate.
+6. **The route.** `deploy/ingress-backupd.yaml`: path `/backup/api` on
+   OpenCloud's own host, to the service, prefix not stripped. It must not be
+   `/backup`, because the extension's own pages live under `/backup-vault/`.
+7. **The extension** (above), then restart OpenCloud.
+8. **A target.** Seed one with `BOOTSTRAP_*` (granted to all users), or add one
+   as an OpenCloud admin through `/backup/api/v1/admin/targets`. The bucket key
+   needs read and write.
+9. **Check it.** `/readyz` answers 200 once the gateway is reachable. In
+   OpenCloud, Backup Vault appears in the app menu. Set up one Space, run
+   "Back up now", and restore from it before relying on it.
 
 ## Protecting backups from the credential that writes them
 

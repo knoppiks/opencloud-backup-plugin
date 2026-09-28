@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencloud-backupd
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: backupd
+spec:
+  # Cluster-internal only. The listener is plain HTTP; the ingress in front of
+  # it terminates TLS on OpenCloud's origin (README, "Deployment
+  # preconditions"). Never expose this Service directly.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: backupd
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http

@@ -18,7 +18,11 @@
 
 # --- build ------------------------------------------------------------------
 # Keep the Go version in step with go.mod and CI's GO_VERSION.
-FROM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS build
+# The build runs on the builder's own platform and cross-compiles, so a
+# multi-arch release does not run the Go toolchain under emulation.
+FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS build
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -31,8 +35,8 @@ COPY . .
 # CGO off, for the same reason CI asserts it: a single static binary that does
 # not care what is in the runtime image (decisions.md, success criterion 1).
 ENV CGO_ENABLED=0
-RUN go build -trimpath -ldflags "-s -w" -o /out/backupd ./cmd/backupd && \
-    go build -trimpath -ldflags "-s -w" -o /out/takeout ./cmd/takeout
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/backupd ./cmd/backupd && \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/takeout ./cmd/takeout
 
 # --- runtime ----------------------------------------------------------------
 # distroless/static, not scratch: the service makes outbound HTTPS calls (JWKS

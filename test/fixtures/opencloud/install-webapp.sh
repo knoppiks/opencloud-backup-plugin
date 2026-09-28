@@ -77,6 +77,18 @@ if [ "${STATUS}" != "200" ]; then
 fi
 echo "  entrypoint: ${ENTRY} (200)"
 
+# The page's CSP must allow WebAssembly compilation, or the Recovery Key
+# ceremony's Argon2id is blocked in the browser while everything above passes.
+# OpenCloud 7.3.0's default policy does not allow it; ./csp.yaml adds it.
+CSP=$(curl -sk -D - -o /dev/null "${BASE}/" | tr -d '\r' | grep -i '^content-security-policy:' || true)
+SCRIPT_SRC=$(printf '%s' "${CSP}" | tr ';' '\n' | grep -i 'script-src' || true)
+if ! printf '%s' "${SCRIPT_SRC}" | grep -q "'wasm-unsafe-eval'"; then
+  echo "FAIL: OpenCloud's CSP script-src lacks 'wasm-unsafe-eval' (${SCRIPT_SRC:-no script-src})." >&2
+  echo "      The Recovery Key ceremony cannot run. See ./csp.yaml." >&2
+  exit 1
+fi
+echo "  csp:        script-src allows 'wasm-unsafe-eval'"
+
 echo
 echo "Backup Vault is installed. Open ${BASE} (admin / admin) and pick it from the app menu."
 echo "The API it calls needs backupd behind the same origin — see the Phase 8 runbook."

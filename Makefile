@@ -7,6 +7,7 @@ DIST          ?= dist
 BINARIES      := backupd takeout decrypt
 IMAGE         ?= opencloud-backupd
 IMAGE_TAG     ?= dev
+WEB_IMAGE     ?= opencloud-backup-vault-web
 OPENCLOUD_DIR := test/fixtures/opencloud
 DEV_COMPOSE   := docker-compose.dev.yml
 WEB_DIR       := web
@@ -113,6 +114,10 @@ fmt: ## Format code.
 .PHONY: image
 image: ## Build the service container image ($(IMAGE):$(IMAGE_TAG)).
 	docker build -t $(IMAGE):$(IMAGE_TAG) .
+
+.PHONY: web-image
+web-image: ## Build the web bundle image for an initContainer ($(WEB_IMAGE):$(IMAGE_TAG)).
+	docker build -t $(WEB_IMAGE):$(IMAGE_TAG) $(WEB_DIR)
 
 .PHONY: k8s-validate
 k8s-validate: ## Validate K8s manifests offline (kubeconform).

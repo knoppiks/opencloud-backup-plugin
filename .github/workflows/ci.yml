@@ -10,6 +10,9 @@ on:
   # rather than by a deployer.
   schedule:
   - cron: "17 3 * * *"
+  # The release workflow runs this whole suite against the tagged commit before
+  # it publishes anything.
+  workflow_call:
 
 permissions:
   contents: read
@@ -251,17 +254,19 @@ jobs:
       run: docker logs opencloud-fixture --tail 200 || true
 
   image:
-    name: container image (build only)
+    name: container images (build only)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
 
-    # Nothing is published: there is no release process yet, and an image nobody
-    # can deploy is not worth a registry, a tag scheme and a signing key. What
-    # this job buys is that the Dockerfile — which is where the entrypoint
-    # contract deploy/ depends on actually lives — cannot rot unnoticed.
-    - name: docker build
+    # Publishing happens only on a `v*` tag (release.yml). What this job buys
+    # is that both Dockerfiles — the root one is where the entrypoint contract
+    # deploy/ depends on actually lives — cannot rot between releases.
+    - name: docker build (service)
       run: docker build -t opencloud-backupd:ci .
+
+    - name: docker build (web bundle)
+      run: docker build -t opencloud-backup-vault-web:ci web
 
   manifests:
     name: k8s manifests (kubeconform)

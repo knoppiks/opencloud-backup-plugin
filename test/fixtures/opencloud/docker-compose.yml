@@ -34,9 +34,13 @@ services:
       # Test-only: enable HTTP basic auth so tests can seed data without OIDC.
       PROXY_ENABLE_BASIC_AUTH: "true"
       OC_LOG_LEVEL: "error"
+      # The 7.3.0 default CSP plus 'wasm-unsafe-eval', which the Recovery Key
+      # ceremony's Argon2id needs. See ./csp.yaml.
+      PROXY_CSP_CONFIG_FILE_LOCATION: "/etc/opencloud-fixture/csp.yaml"
     volumes:
     - ./config:/etc/opencloud
     - ./data:/var/lib/opencloud
+    - ./csp.yaml:/etc/opencloud-fixture/csp.yaml:ro
     # Web extensions (Spike 4 / Phase 8) are served from here.
     - ./apps:/var/lib/opencloud/web/assets/apps
     healthcheck:
