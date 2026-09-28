@@ -92,26 +92,31 @@ func (g *GraphAdminResolver) IsAdmin(ctx context.Context, id Identity) (bool, er
 
 // --- allow-list resolver (fallback, decisions.md #13) ----------------------
 
-// AllowlistAdminResolver treats a fixed set of subject ids as admins. This is
-// the documented fallback for instances where graph detection is undesirable.
+// AllowlistAdminResolver treats a fixed set of OpenCloud user ids as admins.
+// This is the documented fallback for instances where graph detection is
+// undesirable. The ids are OpenCloud's (as shown in its user management), not
+// OIDC subjects, for the reason in users.go.
 type AllowlistAdminResolver struct {
-	subs map[string]struct{}
+	ids map[string]struct{}
 }
 
-// NewAllowlistAdminResolver builds an allow-list resolver from subject ids.
-func NewAllowlistAdminResolver(subjects []string) *AllowlistAdminResolver {
-	m := make(map[string]struct{}, len(subjects))
-	for _, s := range subjects {
+// NewAllowlistAdminResolver builds an allow-list resolver from user ids.
+func NewAllowlistAdminResolver(userIDs []string) *AllowlistAdminResolver {
+	m := make(map[string]struct{}, len(userIDs))
+	for _, s := range userIDs {
 		if s = strings.TrimSpace(s); s != "" {
 			m[s] = struct{}{}
 		}
 	}
-	return &AllowlistAdminResolver{subs: m}
+	return &AllowlistAdminResolver{ids: m}
 }
 
-// IsAdmin reports whether the caller's subject is in the allow-list.
+// IsAdmin reports whether the caller's user id is in the allow-list.
 func (a *AllowlistAdminResolver) IsAdmin(_ context.Context, id Identity) (bool, error) {
-	_, ok := a.subs[id.Subject]
+	if id.UserID == "" {
+		return false, nil
+	}
+	_, ok := a.ids[id.UserID]
 	return ok, nil
 }
 

@@ -39,7 +39,7 @@ func TestVisibleTargets_UserGrantScoped(t *testing.T) {
 	m := NewMemoryStore()
 	seedTarget(t, m, "t1", "Buddy")
 	seedTarget(t, m, "t2", "Other")
-	if err := m.PutGrant(context.Background(), Grant{TargetID: "t1", Scope: ScopeUser, UserSub: "alice"}); err != nil {
+	if err := m.PutGrant(context.Background(), Grant{TargetID: "t1", Scope: ScopeUser, UserID: "alice"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -91,7 +91,7 @@ func TestVisibleTargets_ReturnsOnlyPublicFields(t *testing.T) {
 func TestMayUse_ServerSide(t *testing.T) {
 	m := NewMemoryStore()
 	seedTarget(t, m, "t1", "Buddy")
-	_ = m.PutGrant(context.Background(), Grant{TargetID: "t1", Scope: ScopeUser, UserSub: "alice"})
+	_ = m.PutGrant(context.Background(), Grant{TargetID: "t1", Scope: ScopeUser, UserID: "alice"})
 
 	ok, err := m.MayUse(context.Background(), "alice", "", "t1")
 	if err != nil || !ok {
@@ -110,7 +110,7 @@ func TestMayUse_ServerSide(t *testing.T) {
 func TestGrantLifecycle(t *testing.T) {
 	m := NewMemoryStore()
 	seedTarget(t, m, "t1", "Buddy")
-	g := Grant{TargetID: "t1", Scope: ScopeUser, UserSub: "alice"}
+	g := Grant{TargetID: "t1", Scope: ScopeUser, UserID: "alice"}
 	_ = m.PutGrant(context.Background(), g)
 	_ = m.PutGrant(context.Background(), g) // idempotent replace
 

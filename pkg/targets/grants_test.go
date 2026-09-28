@@ -22,7 +22,7 @@ func TestGrantValidate(t *testing.T) {
 		valid bool
 	}{
 		{"all users", Grant{TargetID: "t", Scope: ScopeAllUsers}, true},
-		{"user", Grant{TargetID: "t", Scope: ScopeUser, UserSub: "alice"}, true},
+		{"user", Grant{TargetID: "t", Scope: ScopeUser, UserID: "alice"}, true},
 		{"space", Grant{TargetID: "t", Scope: ScopeSpace, SpaceID: "s1"}, true},
 
 		// The zero scope is the one that matters: it is what a client sends by
@@ -34,11 +34,11 @@ func TestGrantValidate(t *testing.T) {
 		{"user grant without a user", Grant{TargetID: "t", Scope: ScopeUser}, false},
 		{"space grant without a space", Grant{TargetID: "t", Scope: ScopeSpace}, false},
 		{"all-users grant naming a user",
-			Grant{TargetID: "t", Scope: ScopeAllUsers, UserSub: "alice"}, false},
+			Grant{TargetID: "t", Scope: ScopeAllUsers, UserID: "alice"}, false},
 		{"user grant naming a space",
-			Grant{TargetID: "t", Scope: ScopeUser, UserSub: "alice", SpaceID: "s1"}, false},
+			Grant{TargetID: "t", Scope: ScopeUser, UserID: "alice", SpaceID: "s1"}, false},
 		{"space grant naming a user",
-			Grant{TargetID: "t", Scope: ScopeSpace, SpaceID: "s1", UserSub: "alice"}, false},
+			Grant{TargetID: "t", Scope: ScopeSpace, SpaceID: "s1", UserID: "alice"}, false},
 	}
 
 	for _, tc := range cases {
@@ -77,7 +77,7 @@ func TestStoreContract_ReplaceGrants(t *testing.T) {
 
 			// A whole audience in one write.
 			if err := store.ReplaceGrants(ctx, "t1", []Grant{
-				{Scope: ScopeUser, UserSub: "alice"},
+				{Scope: ScopeUser, UserID: "alice"},
 				{Scope: ScopeSpace, SpaceID: "s1"},
 			}); err != nil {
 				t.Fatalf("ReplaceGrants: %v", err)
@@ -94,7 +94,7 @@ func TestStoreContract_ReplaceGrants(t *testing.T) {
 
 			// Replace, not merge: the previous audience is gone.
 			if err := store.ReplaceGrants(ctx, "t1", []Grant{
-				{Scope: ScopeUser, UserSub: "bob"},
+				{Scope: ScopeUser, UserID: "bob"},
 			}); err != nil {
 				t.Fatalf("ReplaceGrants second: %v", err)
 			}
@@ -106,7 +106,7 @@ func TestStoreContract_ReplaceGrants(t *testing.T) {
 			// from the path, so a caller cannot grant themselves somebody
 			// else's target through this route.
 			if err := store.ReplaceGrants(ctx, "t1", []Grant{
-				{TargetID: "t-elsewhere", Scope: ScopeUser, UserSub: "carol"},
+				{TargetID: "t-elsewhere", Scope: ScopeUser, UserID: "carol"},
 			}); err != nil {
 				t.Fatalf("ReplaceGrants third: %v", err)
 			}
@@ -134,7 +134,7 @@ func TestStoreContract_ReplaceGrants(t *testing.T) {
 			// and leaves the stored audience untouched. Applying the valid
 			// prefix would give an admin an audience they never asked for.
 			err := store.ReplaceGrants(ctx, "t1", []Grant{
-				{Scope: ScopeUser, UserSub: "dave"},
+				{Scope: ScopeUser, UserID: "dave"},
 				{Scope: ScopeUser}, // no user
 			})
 			if err == nil {

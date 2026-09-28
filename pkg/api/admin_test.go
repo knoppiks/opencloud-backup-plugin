@@ -10,27 +10,34 @@ import (
 // fakeValidator is a TokenValidator that maps a raw token straight to a subject,
 // so admin/handler tests do not need real JWT signing.
 type fakeValidator struct {
-	// tokens maps raw token -> subject. Unknown tokens are rejected.
+	// tokens maps raw token -> OpenCloud user id. Unknown tokens are rejected.
 	tokens map[string]string
 }
+
+// fakeOIDCSubject is the `sub` the fake validator issues for a user id. It is
+// deliberately different from the id, as it is on a real OpenCloud (users.go):
+// any code that authorizes on the subject instead of the user id then fails
+// every test that exercises it, rather than passing because the two happened
+// to be equal in a fake.
+func fakeOIDCSubject(userID string) string { return "oidc-sub:" + userID }
 
 func (f fakeValidator) Validate(_ context.Context, raw string) (Identity, error) {
 	sub, ok := f.tokens[raw]
 	if !ok {
 		return Identity{}, errInvalidToken
 	}
-	return Identity{Subject: sub, Username: sub, Token: raw}, nil
+	return Identity{Subject: fakeOIDCSubject(sub), UserID: sub, Username: sub, Token: raw}, nil
 }
 
 func TestAllowlistAdminResolver(t *testing.T) {
 	r := NewAllowlistAdminResolver([]string{"admin-sub", " spaced ", ""})
-	if ok, _ := r.IsAdmin(context.Background(), Identity{Subject: "admin-sub"}); !ok {
+	if ok, _ := r.IsAdmin(context.Background(), Identity{UserID: "admin-sub"}); !ok {
 		t.Fatal("admin-sub should be admin")
 	}
-	if ok, _ := r.IsAdmin(context.Background(), Identity{Subject: "spaced"}); !ok {
+	if ok, _ := r.IsAdmin(context.Background(), Identity{UserID: "spaced"}); !ok {
 		t.Fatal("trimmed subject should be admin")
 	}
-	if ok, _ := r.IsAdmin(context.Background(), Identity{Subject: "user-sub"}); ok {
+	if ok, _ := r.IsAdmin(context.Background(), Identity{UserID: "user-sub"}); ok {
 		t.Fatal("user-sub must not be admin")
 	}
 }
@@ -75,7 +82,7 @@ func TestAdminGate(t *testing.T) {
 		"user-token":  "user-sub",
 	}}
 	resolver := AdminResolverFunc(func(_ context.Context, id Identity) (bool, error) {
-		return id.Subject == "admin-sub", nil
+		return id.UserID == "admin-sub", nil
 	})
 	srv := NewServer(WithTokenValidator(val), WithAdminResolver(resolver))
 

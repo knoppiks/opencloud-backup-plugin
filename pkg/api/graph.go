@@ -24,6 +24,9 @@ const (
 
 // graphMe is the subset of the graph /me document this service reads.
 type graphMe struct {
+	// ID is the caller's OpenCloud user id: the id CS3 grants and Space
+	// ownership are expressed in. It is not the OIDC `sub` (see users.go).
+	ID                 string `json:"id"`
 	AppRoleAssignments []struct {
 		AppRoleID string `json:"appRoleId"`
 	} `json:"appRoleAssignments"`
@@ -47,14 +50,18 @@ func newGraphMeFetcher(baseURL string, client *http.Client) graphMeFetcher {
 	return graphMeFetcher{baseURL: strings.TrimRight(baseURL, "/"), client: client}
 }
 
-// fetch calls GET {base}/graph/v1.0/me?$expand={expand} as the caller. Errors
-// carry the operation and status only — never the token, never the body.
+// fetch calls GET {base}/graph/v1.0/me?$expand={expand} as the caller, or the
+// bare /me document when expand is empty. Errors carry the operation and
+// status only — never the token, never the body.
 func (g graphMeFetcher) fetch(ctx context.Context, op string, id Identity, expand string) (graphMe, error) {
 	var me graphMe
 	if id.Token == "" {
 		return me, fmt.Errorf("%s: no caller token", op)
 	}
-	u := g.baseURL + "/graph/v1.0/me?$expand=" + expand
+	u := g.baseURL + "/graph/v1.0/me"
+	if expand != "" {
+		u += "?$expand=" + expand
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return me, fmt.Errorf("%s: %w", op, err)

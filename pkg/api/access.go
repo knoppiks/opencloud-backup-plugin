@@ -148,7 +148,7 @@ func (a *access) callerGroups(ctx context.Context) ([]string, error) {
 // grant is evaluated first; group grants are consulted only when it falls short
 // and the Space actually has one.
 func (a *access) permits(ctx context.Context, sp cs3.Space, min cs3.Role) (bool, error) {
-	if sp.RoleFor(a.id.Subject, nil, a.now) >= min {
+	if sp.RoleFor(a.id.UserID, nil, a.now) >= min {
 		return true, nil
 	}
 	if !sp.GroupGrants() {
@@ -158,7 +158,7 @@ func (a *access) permits(ctx context.Context, sp cs3.Space, min cs3.Role) (bool,
 	if err != nil {
 		return false, err
 	}
-	return sp.RoleFor(a.id.Subject, groups, a.now) >= min, nil
+	return sp.RoleFor(a.id.UserID, groups, a.now) >= min, nil
 }
 
 // role returns the caller's effective role on sp: the highest of ownership, the
@@ -168,7 +168,7 @@ func (a *access) permits(ctx context.Context, sp cs3.Space, min cs3.Role) (bool,
 // an error, not a lower role (decisions.md #20): reporting "viewer" to someone
 // a group makes a manager would send them to ask for a permission they have.
 func (a *access) role(ctx context.Context, sp cs3.Space) (cs3.Role, error) {
-	direct := sp.RoleFor(a.id.Subject, nil, a.now)
+	direct := sp.RoleFor(a.id.UserID, nil, a.now)
 	if direct >= cs3.RoleManager || !sp.GroupGrants() {
 		// Group grants top out at manager; only ownership is above it, and
 		// ownership never comes from a group.
@@ -178,7 +178,7 @@ func (a *access) role(ctx context.Context, sp cs3.Space) (cs3.Role, error) {
 	if err != nil {
 		return cs3.RoleNone, err
 	}
-	return sp.RoleFor(a.id.Subject, groups, a.now), nil
+	return sp.RoleFor(a.id.UserID, groups, a.now), nil
 }
 
 // memberSpaceIDs returns the ids of the Spaces the caller can at least view.

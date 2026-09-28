@@ -1039,6 +1039,43 @@ is listed here so the corrections are themselves on the record:
   with the key but does not open the repository is reported as belonging to
   another Space, not as damage.
 
+### Amendments before the first real deployment (deployment-readiness.md)
+
+- **A user is identified by their OpenCloud user id, never by the token's
+  `sub`.** Before this, every authorization decision that named a user used the
+  OIDC `sub`: Space membership, target grants, and the admin allow-list. It was
+  measured on the 7.3.0 fixture with a real browser login:
+  - the built-in IdP issues an opaque `sub`;
+  - graph `/me` answers with the OpenCloud user id (a UUID);
+  - CS3 grants and Space ownership use the OpenCloud user id.
+  So every real user was refused every Space, including their own personal
+  Space, and `GET /spaces` returned an empty list. Every test passed anyway,
+  because every fake validator issued a `sub` equal to the user id. This is
+  R9's lesson (a fake at a boundary tests the code's idea of the boundary) at
+  the most important boundary there is.
+  - `Authenticate` now resolves the id from graph `/me` with the caller's own
+    token. The answer is cached per token (by hash) until the token's `exp`,
+    bounded at 4096 entries.
+  - Asking OpenCloud is IdP-agnostic: with Keycloak or any other external IdP,
+    OpenCloud has already mapped the claim for its own purposes.
+  - The rejected alternative was the built-in IdP's `lg.i.id` claim. It needs
+    no extra request, but it exists only on the built-in IdP.
+  - If the id cannot be resolved, the answer is 503. It never falls back to
+    `sub`, because that fallback is exactly the old bug.
+  - `OC_BASE_URL` is therefore required whenever `OIDC_ISSUER` is set, and
+    startup is refused without it.
+- **Target grants name `user_id`, not `user_sub`** (#12). This applies on the
+  wire and in the stored record. No deployment existed outside the fixture, so
+  the rename is a clean break rather than a migration.
+- **`ADMIN_SUBJECT_ALLOWLIST` holds OpenCloud user ids** (#13). Its name
+  predates the finding and is kept, so existing configuration does not
+  silently stop matching. The values are what OpenCloud's user management
+  shows.
+- **The fake validators now issue a `sub` that differs from the user id**, and
+  `TestRealTokenReachesTheCallersOwnSpace` drives a real token through the real
+  validator, resolver and CS3 Space list. Going back to `sub` in `access.go`
+  fails 125 unit tests, and the integration test reports `got []`.
+
 ---
 
 ## Trust & key model

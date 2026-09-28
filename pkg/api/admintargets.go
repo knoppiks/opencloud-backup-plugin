@@ -124,7 +124,7 @@ type adminTargetRequest struct {
 // one typo away from granting the wrong audience.
 type grantDTO struct {
 	Scope   string `json:"scope"`
-	UserSub string `json:"user_sub,omitempty"`
+	UserID  string `json:"user_id,omitempty"`
 	SpaceID string `json:"space_id,omitempty"`
 }
 
@@ -435,7 +435,7 @@ func (s *Server) handleAdminReplaceGrants(w http.ResponseWriter, r *http.Request
 		grant := targets.Grant{
 			TargetID: t.ID,
 			Scope:    scope,
-			UserSub:  strings.TrimSpace(g.UserSub),
+			UserID:   strings.TrimSpace(g.UserID),
 			SpaceID:  strings.TrimSpace(g.SpaceID),
 		}
 		// Validated here as well as in the store so the admin gets a 400 that
@@ -471,7 +471,7 @@ func toGrantsResponse(list []targets.Grant) grantsResponse {
 			// invite them to write it back.
 			continue
 		}
-		out = append(out, grantDTO{Scope: wire, UserSub: g.UserSub, SpaceID: g.SpaceID})
+		out = append(out, grantDTO{Scope: wire, UserID: g.UserID, SpaceID: g.SpaceID})
 	}
 	return grantsResponse{Grants: out}
 }

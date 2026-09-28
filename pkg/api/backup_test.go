@@ -65,7 +65,7 @@ func newBackupTestEnv(t *testing.T) *backupTestEnv {
 	}
 	// Only t-granted is granted, and only to alice.
 	if err := targetStore.PutGrant(ctx, targets.Grant{
-		TargetID: "t-granted", Scope: targets.ScopeUser, UserSub: "alice",
+		TargetID: "t-granted", Scope: targets.ScopeUser, UserID: "alice",
 	}); err != nil {
 		t.Fatalf("PutGrant: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestPatchBackupConfig_TargetIsGrantChecked(t *testing.T) {
 	if _, err := env.targets.CreateTarget(ctx, targets.Target{ID: "t-second", Name: "Second"}); err != nil {
 		t.Fatalf("CreateTarget: %v", err)
 	}
-	if err := env.targets.PutGrant(ctx, targets.Grant{TargetID: "t-second", Scope: targets.ScopeUser, UserSub: "alice"}); err != nil {
+	if err := env.targets.PutGrant(ctx, targets.Grant{TargetID: "t-second", Scope: targets.ScopeUser, UserID: "alice"}); err != nil {
 		t.Fatalf("PutGrant: %v", err)
 	}
 	if rec := env.patch(`{"target_id":"t-second"}`); rec.Code != http.StatusOK {

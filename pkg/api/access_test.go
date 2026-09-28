@@ -42,9 +42,9 @@ func (c *countingSpaceReader) OpenFile(context.Context, cs3.Space, string, int64
 
 // countingGroupResolver returns fixed groups per subject and counts lookups.
 type countingGroupResolver struct {
-	bySubject map[string][]string
-	err       error
-	calls     int
+	byUser map[string][]string
+	err    error
+	calls  int
 }
 
 func (c *countingGroupResolver) Groups(_ context.Context, id Identity) ([]string, error) {
@@ -52,7 +52,7 @@ func (c *countingGroupResolver) Groups(_ context.Context, id Identity) ([]string
 	if c.err != nil {
 		return nil, c.err
 	}
-	return c.bySubject[id.Subject], nil
+	return c.byUser[id.UserID], nil
 }
 
 // --- environment ------------------------------------------------------------
@@ -111,7 +111,7 @@ func newRoleTestEnv(t *testing.T, opts ...Option) *roleTestEnv {
 			roleGroupID: {Role: cs3.RoleEditor, Group: true},
 		},
 	}}}
-	groups := &countingGroupResolver{bySubject: map[string][]string{
+	groups := &countingGroupResolver{byUser: map[string][]string{
 		"grouped": {roleGroupID},
 	}}
 

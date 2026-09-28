@@ -233,15 +233,29 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 			return service{}, cleanup, err
 		}
 		opts = append(opts, api.WithTokenValidator(v))
+
+		// The token's `sub` is not the OpenCloud user id, and every
+		// authorization decision is taken on the latter (pkg/api/users.go).
+		// Without OC_BASE_URL nobody could be identified, so the service would
+		// answer 503 to every user: refuse to start instead.
+		base := strings.TrimSpace(os.Getenv("OC_BASE_URL"))
+		if base == "" {
+			return service{}, cleanup, errors.New(
+				"OC_BASE_URL is required when OIDC_ISSUER is set: a caller's OpenCloud " +
+					"user id is read from its graph API, and the token's subject is not that id")
+		}
+		opts = append(opts, api.WithUserResolver(api.NewGraphUserResolver(base, httpClient())))
 	} else {
 		logger.Warn("OIDC_ISSUER unset; authenticated routes will reject all requests")
 	}
 
 	// --- admin resolver ---------------------------------------------------
+	// ADMIN_SUBJECT_ALLOWLIST holds OpenCloud user ids, despite its name,
+	// which predates the finding in pkg/api/users.go.
 	if allow := os.Getenv("ADMIN_SUBJECT_ALLOWLIST"); allow != "" {
-		subs := splitAndTrim(allow)
-		opts = append(opts, api.WithAdminResolver(api.NewAllowlistAdminResolver(subs)))
-		logger.Info("admin detection: allow-list", "count", len(subs))
+		ids := splitAndTrim(allow)
+		opts = append(opts, api.WithAdminResolver(api.NewAllowlistAdminResolver(ids)))
+		logger.Info("admin detection: allow-list of OpenCloud user ids", "count", len(ids))
 	} else if base := os.Getenv("OC_BASE_URL"); base != "" {
 		roleID := envOr("OC_ADMIN_APP_ROLE_ID", api.DefaultAdminAppRoleID)
 		opts = append(opts, api.WithAdminResolver(api.NewGraphAdminResolver(base, roleID, httpClient())))

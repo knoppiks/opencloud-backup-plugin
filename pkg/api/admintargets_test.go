@@ -70,7 +70,7 @@ func newAdminTestEnv(t *testing.T, opts ...Option) *adminTestEnv {
 			userToken:  "user-sub",
 		}}),
 		WithAdminResolver(AdminResolverFunc(func(_ context.Context, id Identity) (bool, error) {
-			return id.Subject == "admin-sub", nil
+			return id.UserID == "admin-sub", nil
 		})),
 		WithTargetStore(env.store),
 		WithAuthorizer(env.store),
@@ -524,13 +524,13 @@ func TestAdminGrantsDriveWhatAUserSees(t *testing.T) {
 	}
 
 	rec := env.as(adminToken, http.MethodPut, "/api/v1/admin/targets/t1/grants",
-		[]byte(`{"grants":[{"scope":"user","user_sub":"user-sub"}]}`))
+		[]byte(`{"grants":[{"scope":"user","user_id":"user-sub"}]}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("replace grants = %d: %s", rec.Code, rec.Body.String())
 	}
 	var got grantsBody
 	decodeBody(t, rec.Body, &got)
-	if len(got.Grants) != 1 || got.Grants[0].Scope != "user" || got.Grants[0].UserSub != "user-sub" {
+	if len(got.Grants) != 1 || got.Grants[0].Scope != "user" || got.Grants[0].UserID != "user-sub" {
 		t.Fatalf("grants = %+v", got.Grants)
 	}
 	if ids := visibleTargetIDs(t, env.srv, userToken); len(ids) != 1 || ids[0] != "t1" {
@@ -556,7 +556,7 @@ func TestAdminGrantsRoundTripEveryScope(t *testing.T) {
 
 	rec := env.as(adminToken, http.MethodPut, "/api/v1/admin/targets/t1/grants", []byte(`{"grants":[
 		{"scope":"all_users"},
-		{"scope":"user","user_sub":"alice"},
+		{"scope":"user","user_id":"alice"},
 		{"scope":"space","space_id":"space-family"}
 	]}`))
 	if rec.Code != http.StatusOK {
@@ -571,7 +571,7 @@ func TestAdminGrantsRoundTripEveryScope(t *testing.T) {
 	}
 	want := map[string]grantDTO{
 		"all_users": {Scope: "all_users"},
-		"user":      {Scope: "user", UserSub: "alice"},
+		"user":      {Scope: "user", UserID: "alice"},
 		"space":     {Scope: "space", SpaceID: "space-family"},
 	}
 	for _, g := range got.Grants {
@@ -588,12 +588,12 @@ func TestAdminGrantValidation(t *testing.T) {
 	}{
 		// The empty scope is the interesting one: a client that forgets the
 		// field must not be read as "everyone".
-		{"missing scope", `{"grants":[{"user_sub":"alice"}]}`},
+		{"missing scope", `{"grants":[{"user_id":"alice"}]}`},
 		{"unknown scope", `{"grants":[{"scope":"everyone"}]}`},
 		{"the stored integer is not the wire form", `{"grants":[{"scope":"1"}]}`},
 		{"user grant without a user", `{"grants":[{"scope":"user"}]}`},
 		{"space grant without a space", `{"grants":[{"scope":"space"}]}`},
-		{"all-users grant naming a user", `{"grants":[{"scope":"all_users","user_sub":"alice"}]}`},
+		{"all-users grant naming a user", `{"grants":[{"scope":"all_users","user_id":"alice"}]}`},
 		{"malformed body", `{`},
 	}
 
@@ -602,7 +602,7 @@ func TestAdminGrantValidation(t *testing.T) {
 			env := newAdminTestEnv(t)
 			env.seedTarget(t, "t1")
 			if err := env.store.PutGrant(context.Background(), targets.Grant{
-				TargetID: "t1", Scope: targets.ScopeUser, UserSub: "alice",
+				TargetID: "t1", Scope: targets.ScopeUser, UserID: "alice",
 			}); err != nil {
 				t.Fatalf("PutGrant: %v", err)
 			}
@@ -613,7 +613,7 @@ func TestAdminGrantValidation(t *testing.T) {
 			}
 			// A refused write leaves the audience exactly as it was.
 			grants, err := env.store.ListGrants(context.Background(), "t1")
-			if err != nil || len(grants) != 1 || grants[0].UserSub != "alice" {
+			if err != nil || len(grants) != 1 || grants[0].UserID != "alice" {
 				t.Fatalf("a refused grant write changed the audience: %+v (%v)", grants, err)
 			}
 		})

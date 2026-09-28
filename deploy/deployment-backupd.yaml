@@ -95,11 +95,17 @@ spec:
         # Admin detection (decisions.md #13). Preferred: graph appRoleAssignments
         # — set OC_BASE_URL; OC_ADMIN_APP_ROLE_ID defaults to the pinned 7.3.0
         # Admin role id (phase-0-findings.md) and only needs overriding on other
-        # builds. The fallback is ADMIN_SUBJECT_ALLOWLIST (comma-separated subs).
+        # builds. The fallback is ADMIN_SUBJECT_ALLOWLIST: comma-separated
+        # OpenCloud user ids (as its user management shows them), NOT OIDC
+        # subjects, despite the name.
         #
         # ADMIN_SUBJECT_ALLOWLIST WINS when both are set: it is checked first, so
         # setting it silently disables graph detection. Leave it empty unless the
         # graph route is unavailable.
+        #
+        # OC_BASE_URL is REQUIRED with OIDC_ISSUER: the token's `sub` is not the
+        # OpenCloud user id, so every caller's id is read from graph /me, and
+        # the service refuses to start without it.
         #
         # OC_BASE_URL also backs group-grant resolution (graph memberOf,
         # decisions.md #20) and is NOT optional for that: without it, a Space

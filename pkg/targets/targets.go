@@ -83,7 +83,8 @@ const (
 	ScopeUnknown GrantScope = iota
 	// ScopeAllUsers grants a target to every authenticated user.
 	ScopeAllUsers
-	// ScopeUser grants a target to a specific user (by OIDC sub).
+	// ScopeUser grants a target to a specific user, by OpenCloud user id (the
+	// graph `/me` id, which CS3 grants use; not the OIDC `sub`).
 	ScopeUser
 	// ScopeSpace grants a target to members of a specific space.
 	ScopeSpace
@@ -94,8 +95,8 @@ const (
 type Grant struct {
 	TargetID string     `json:"target_id"`
 	Scope    GrantScope `json:"scope"`
-	// UserSub is set when Scope == ScopeUser.
-	UserSub string `json:"user_sub,omitempty"`
+	// UserID is set when Scope == ScopeUser: an OpenCloud user id.
+	UserID string `json:"user_id,omitempty"`
 	// SpaceID is set when Scope == ScopeSpace.
 	SpaceID string `json:"space_id,omitempty"`
 }
@@ -112,11 +113,11 @@ var errTargetIDRequired = errors.New("targets: target id required")
 func (g Grant) Validate() error {
 	switch g.Scope {
 	case ScopeAllUsers:
-		if g.UserSub != "" || g.SpaceID != "" {
+		if g.UserID != "" || g.SpaceID != "" {
 			return errors.New("targets: an all-users grant names no user or space")
 		}
 	case ScopeUser:
-		if g.UserSub == "" {
+		if g.UserID == "" {
 			return errors.New("targets: a user grant needs a user")
 		}
 		if g.SpaceID != "" {
@@ -126,7 +127,7 @@ func (g Grant) Validate() error {
 		if g.SpaceID == "" {
 			return errors.New("targets: a space grant needs a space")
 		}
-		if g.UserSub != "" {
+		if g.UserID != "" {
 			return errors.New("targets: a space grant names no user")
 		}
 	default:
@@ -264,9 +265,9 @@ type CredSealer interface {
 type Authorizer interface {
 	// VisibleTargets returns the targets granted to the user, given the spaces
 	// they are a member of. Returns least-disclosure projections.
-	VisibleTargets(ctx context.Context, userSub string, spaceIDs []string) ([]PublicView, error)
+	VisibleTargets(ctx context.Context, userID string, spaceIDs []string) ([]PublicView, error)
 	// MayUse reports whether the user may use target targetID for space spaceID.
-	MayUse(ctx context.Context, userSub, spaceID, targetID string) (bool, error)
+	MayUse(ctx context.Context, userID, spaceID, targetID string) (bool, error)
 }
 
 // ErrNotFound is returned when a target does not exist.
