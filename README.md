@@ -588,6 +588,33 @@ verify the OIDC issuer without turning verification off.
 carry `iss: https://localhost:9200`, and inside a container `localhost` is that
 container.
 
+### End-to-end tests in a real browser
+
+```sh
+make dev-up && make web-install-fixture      # preconditions, as above
+(cd web && pnpm exec playwright install chromium)   # once
+make e2e
+```
+
+`make e2e` starts its own `backupd` on `:8080`, so stop one started by hand
+first. That instance has in-memory state, wrap keys generated per run, and a
+fresh repository prefix in the dev Garage. It builds `takeout` and `decrypt`
+alongside.
+
+The run goes through the flow in order:
+
+1. An admin creates the destination through Backup Vault and grants it to
+   `testuser`.
+2. `testuser` protects their personal Space. First a wrongly retyped Recovery
+   Key must stop the setup, then the real setup completes.
+3. `testuser` backs up and restores.
+4. The Recovery Key from the browser opens a take-out with `decrypt`, both
+   before and after replacing the key.
+
+Every request the browser sends is checked for any form of any Recovery Key
+shown. Set `E2E_CHROME=/usr/bin/google-chrome` to use a system Chrome instead of
+Playwright's.
+
 ## Documentation
 
 - Design decisions, trust model, and threat model:

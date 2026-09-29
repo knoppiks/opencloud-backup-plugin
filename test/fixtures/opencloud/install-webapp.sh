@@ -31,12 +31,18 @@ if [ ! -f "${WEB_DIR}/dist/manifest.json" ]; then
 fi
 
 echo "installing into apps/${APP_ID}/..."
-rm -rf "apps/${APP_ID}"
-mkdir -p "apps/${APP_ID}"
-cp -r "${WEB_DIR}/dist/." "apps/${APP_ID}/"
-
-# The container runs as uid/gid 1000 and has to be able to read what we wrote.
-docker run --rm -v "$(pwd)/apps:/apps" alpine:3 chown -R 1000:1000 /apps >/dev/null 2>&1 || true
+# up.sh hands apps/ to the container's uid 1000, so on a host whose uid is not
+# 1000 (a GitHub runner is 1001) this script cannot write there. The whole
+# install therefore runs in a root helper, as up.sh's chown does, and hands
+# the result back to uid 1000 so OpenCloud can read it.
+DIST="$(cd "${WEB_DIR}/dist" && pwd)"
+docker run --rm -v "$(pwd)/apps:/apps" -v "${DIST}:/dist:ro" alpine:3 sh -c "
+  set -e
+  rm -rf '/apps/${APP_ID}'
+  mkdir -p '/apps/${APP_ID}'
+  cp -r /dist/. '/apps/${APP_ID}/'
+  chown -R 1000:1000 /apps
+"
 
 echo "restarting OpenCloud (the apps directory is scanned at startup only)..."
 docker compose restart opencloud >/dev/null

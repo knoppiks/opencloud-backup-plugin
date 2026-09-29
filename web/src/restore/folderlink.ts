@@ -35,6 +35,27 @@ export function isRestoreFolder(folder: string): boolean {
 }
 
 /**
+ * hostSpaceIds lists the ids the host may know a service Space id by, most
+ * likely first.
+ *
+ * The service names a Space in CS3 form, `storage$space!opaque`. The host's
+ * spaces store holds the graph drive id, which drops `!opaque` when it only
+ * repeats the space part. Measured on OpenCloud 7.3.0 in 8f: a personal Space
+ * is `…$9399…!9399…` to the service and `…$9399…` to the host, and an exact
+ * lookup finds nothing.
+ */
+export function hostSpaceIds(serviceId: string): string[] {
+  const bang = serviceId.lastIndexOf('!')
+  const dollar = serviceId.indexOf('$')
+  if (bang < 0 || dollar < 0 || bang < dollar) {
+    return [serviceId]
+  }
+  const spacePart = serviceId.slice(dollar + 1, bang)
+  const opaque = serviceId.slice(bang + 1)
+  return opaque === spacePart ? [serviceId, serviceId.slice(0, bang)] : [serviceId]
+}
+
+/**
  * restoreFolderLocation builds the route to a restore folder, or undefined
  * when there is nothing trustworthy to link to.
  *

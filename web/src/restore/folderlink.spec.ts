@@ -1,7 +1,7 @@
 import { createFileRouteOptions, createLocationSpaces } from '@opencloud-eu/web-pkg'
 import type { SpaceResource } from '@opencloud-eu/web-client'
 import { describe, expect, it } from 'vitest'
-import { isRestoreFolder, restoreFolderLocation } from './folderlink'
+import { hostSpaceIds, isRestoreFolder, restoreFolderLocation } from './folderlink'
 
 const FOLDER = 'Restore/2026-09-25T03-00-00Z'
 
@@ -80,5 +80,26 @@ describe('restoreFolderLocation', () => {
       name: 'files-spaces-generic',
       params: { driveAliasAndItem: `project/family-photos/${FOLDER}` }
     })
+  })
+})
+
+describe('hostSpaceIds', () => {
+  const STORAGE = '28e0fe60-d4c1-4dbf-aeb1-03c835309345'
+  const SPACE = '9399d706-bbcd-453d-b21f-743aad839d32'
+
+  // Measured in 8f: the host holds the graph form, without the repeated part.
+  it('adds the graph form when the opaque part repeats the space part', () => {
+    expect(hostSpaceIds(`${STORAGE}$${SPACE}!${SPACE}`)).toEqual([
+      `${STORAGE}$${SPACE}!${SPACE}`,
+      `${STORAGE}$${SPACE}`
+    ])
+  })
+
+  it('keeps an id whose opaque part is something else as it is', () => {
+    expect(hostSpaceIds(`${STORAGE}$${SPACE}!other`)).toEqual([`${STORAGE}$${SPACE}!other`])
+  })
+
+  it.each([`${STORAGE}$${SPACE}`, 'no-separators', `x!y$z`])('keeps %s as it is', (id) => {
+    expect(hostSpaceIds(id)).toEqual([id])
   })
 })

@@ -15,7 +15,15 @@ import prettier from 'eslint-config-prettier'
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'coverage/**', 'node_modules/**', '.__mf__temp/**', 'testdata/**']
+    ignores: [
+      'dist/**',
+      'coverage/**',
+      'e2e-results/**',
+      'playwright-report/**',
+      'node_modules/**',
+      '.__mf__temp/**',
+      'testdata/**'
+    ]
   },
 
   eslint.configs.recommended,
@@ -58,6 +66,13 @@ export default tseslint.config(
     // Routed views are named by their route, not by a component namespace.
     files: ['src/views/**/*.vue'],
     rules: { 'vue/multi-word-component-names': 'off' }
+  },
+
+  {
+    // The E2E harness runs in Node, not in the bundle, and its console output
+    // is the run's log. It never sees key material except the test's own.
+    files: ['e2e/**/*.ts'],
+    rules: { 'no-console': 'off' }
   },
 
   {

@@ -174,6 +174,7 @@ onMounted(load)
             class="ext:mt-1 ext:font-medium"
             :class="needsAttention(state) ? 'ext:text-role-error' : ''"
             data-testid="state-label"
+            :data-state="state"
           >
             {{ stateLabel(state, $gettext) }}
           </p>

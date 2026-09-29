@@ -5,3 +5,7 @@ dist/
 testdata/
 Dockerfile
 .dockerignore
+e2e/
+e2e-results/
+playwright-report/
+playwright.config.ts

@@ -36,6 +36,7 @@ describe('SpaceStatus board states', () => {
 
     expect(wrapper.find('h1').text()).toBe('Family photos')
     expect(wrapper.find('[data-testid="state-label"]').text()).toBe('Protected')
+    expect(wrapper.find('[data-testid="state-label"]').attributes('data-state')).toBe('active')
     expect(wrapper.find('[data-testid="last-success"]').text()).not.toBe('None yet')
     expect(wrapper.find('[data-testid="next-run"]').text()).not.toBe('')
     expect(wrapper.find('[data-testid="stale"]').exists()).toBe(false)

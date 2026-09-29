@@ -3,3 +3,5 @@ dist/
 coverage/
 .__mf__temp/
 *.tsbuildinfo
+e2e-results/
+playwright-report/
