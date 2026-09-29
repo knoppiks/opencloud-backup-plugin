@@ -18,8 +18,9 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "vue-tsc --noEmit",
-    "vectors": "UPDATE_BROWSER_VECTORS=1 vitest run browservectors"
+    "typecheck": "vue-tsc --noEmit && tsc --noEmit -p e2e",
+    "vectors": "UPDATE_BROWSER_VECTORS=1 vitest run browservectors",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@noble/ciphers": "2.4.0",
@@ -31,6 +32,8 @@
     "@opencloud-eu/extension-sdk": "7.2.0",
     "@opencloud-eu/web-client": "7.2.0",
     "@opencloud-eu/web-pkg": "7.2.0",
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.19.0",
     "@vitest/coverage-v8": "4.1.11",
     "@vue/test-utils": "2.5.1",
     "eslint": "9.39.5",

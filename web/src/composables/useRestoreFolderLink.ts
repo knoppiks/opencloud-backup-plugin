@@ -7,7 +7,7 @@
 
 import { createFileRouteOptions, createLocationSpaces, useSpacesStore } from '@opencloud-eu/web-pkg'
 import type { SpaceResource } from '@opencloud-eu/web-client'
-import { restoreFolderLocation } from '../restore/folderlink'
+import { hostSpaceIds, restoreFolderLocation } from '../restore/folderlink'
 
 /** FolderLocation is what `router-link`'s `to` accepts. */
 export type FolderLocation = ReturnType<typeof createLocationSpaces>
@@ -25,7 +25,10 @@ export function useRestoreFolderLink(): (
   return (spaceId, folder) =>
     restoreFolderLocation<SpaceResource, FolderLocation>(
       folder,
-      () => spacesStore.getSpace(spaceId) ?? undefined,
+      () =>
+        hostSpaceIds(spaceId)
+          .map((id) => spacesStore.getSpace(id))
+          .find((space) => space) ?? undefined,
       (space, path) =>
         createLocationSpaces('files-spaces-generic', createFileRouteOptions(space, { path }))
     )

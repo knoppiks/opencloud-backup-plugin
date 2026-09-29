@@ -4,3 +4,5 @@ node_modules/
 .__mf__temp/
 pnpm-lock.yaml
 testdata/
+e2e-results/
+playwright-report/

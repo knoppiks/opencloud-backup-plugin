@@ -94,6 +94,10 @@ web-install-fixture: ## Build the extension into the OpenCloud fixture and verif
 web-verify-fixture: ## Re-verify the installed extension without rebuilding it.
 	$(OPENCLOUD_DIR)/install-webapp.sh --no-build
 
+.PHONY: e2e
+e2e: ## Run the browser end-to-end tests (dev-up and web-install-fixture first; starts its own backupd).
+	cd $(WEB_DIR) && $(PNPM) e2e
+
 .PHONY: web-vectors
 web-vectors: ## Regenerate the browser-produced interop vectors, then verify Go opens them.
 	cd $(WEB_DIR) && $(PNPM) vectors

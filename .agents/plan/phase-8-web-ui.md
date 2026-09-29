@@ -124,13 +124,19 @@ Phases 2/3/5/6 (APIs).
 
 ## Exit criteria
 
-- [ ] Extension loads in OpenCloud Web, nav entry visible (success metric 7).
-- [ ] Admin sees the target-management view; non-admin does not (client gate +
-      server 403). Credentials never rendered back.
-- [ ] E2E happy path green in CI.
-- [ ] Browser↔CLI crypto interop test green.
-- [ ] Plaintext RK provably never sent: network-layer assertion in E2E
-      (inspect all requests during ceremony).
+- [x] Extension loads in OpenCloud Web (`install-webapp.sh` asserts the
+      registration; every E2E run loads it). The app-menu entry itself is not
+      clicked by any test.
+- [x] Admin sees the target-management view; non-admin does not (client gate +
+      server 403). Credentials never rendered back. (E2E `admin.e2e.ts`)
+- [ ] E2E happy path green in CI. Green locally. The `e2e` job is added, and
+      this box is ticked once the PR's CI run is green.
+- [x] Browser↔CLI crypto interop test green: the `takeout` and `decrypt`
+      binaries open the backup with the key from the browser, before and
+      after a rotation. (E2E `journey.e2e.ts`)
+- [x] Plaintext RK provably never sent. Every request of the family member's
+      session is recorded, for the whole journey rather than only the
+      ceremony. (E2E `journey.e2e.ts`)
 - [ ] UI reviewed against OpenCloud design system (native look — success
       metric 7).
 
@@ -626,7 +632,127 @@ Tests: 600 in 43 spec files (486 in 32 before).
 Not done, by decision: editing Space grants (they are shown read-only and
 preserved), and E2E (8f).
 
-### Sub-phase 8d.4 plan — decisions taken before implementation
+### Sub-phase 8f plan — decisions taken before implementation
+
+Settled with the owner before any code (issue #42). The survey found:
+
+- no Playwright, no target for the fixture, and nothing that starts backupd
+  for it;
+- the `integration-opencloud` CI job stops OpenCloud in its last step;
+- no test that takes a key from the real browser ceremony through a real
+  Take-Out and the `cmd/decrypt` binary, and no test of rotation;
+- #37 (425 right after an upload) not yet fixed.
+
+1. **`@playwright/test` in `web/e2e/`**, with its own `playwright.config.ts`
+   and excluded from vitest. Same package, lint and TypeScript setup.
+2. **Pinned Playwright Chromium.** CI runs `playwright install --with-deps
+   chromium`. Locally an environment variable can point at a system Chrome
+   instead.
+3. **`globalSetup` owns backupd.** It builds `backupd`, `takeout` and
+   `decrypt`, generates SRW and TW keys at runtime, starts backupd on the host
+   behind the fixture's Caddy, and stops it in teardown. The fixture
+   (`make dev-up`, `make web-install-fixture`) and the dev Garage are
+   preconditions, as they are for `make test-opencloud`. One `make e2e` target.
+4. **In-memory state for now.** `STATE_BACKEND=memory` gives every run fresh
+   state and avoids the 425 flake on job records. This is a recorded gap:
+   switch to a CS3 state Space once #37 has its retry. Each run also writes
+   to a fresh repo prefix in the bucket, because key setup is once-only per
+   Space and the bucket outlives the run.
+5. **The admin spec runs first, through the 8e UI.**
+   - It creates the destination, checks the connection, and grants it to
+     `testuser` only.
+   - It asserts that `testuser` sees no admin view and gets 403 from the API.
+   - The user journey then finds exactly one target, which is bound
+     automatically.
+   - Specs run serially, with one worker.
+6. **CI: its own `e2e` job, on every PR and nightly**, parallel to the rest.
+
+### Sub-phase 8f outcome (implemented, issue #42)
+
+`make e2e` (`web/`, `pnpm e2e`) runs nine tests in two projects in about 45
+seconds, not counting the fixture itself.
+
+`admin.e2e.ts`, as `admin`:
+- creates "Family backup" against the dev Garage, under this run's prefix;
+- "Check connection" says `ok`;
+- grants it to `testuser`, and the stored grant is
+  `{scope:user, user_id:OC_NORMAL_USER_ID}`;
+- neither the page nor any backup-API response contains either half of the key
+  pair.
+
+`admin.e2e.ts`, as `testuser`:
+- sees exactly that target;
+- the overview has no admin link, `/admin/targets` shows the notice, and the
+  API answers 403.
+
+`journey.e2e.ts`, as `testuser`, in the personal Space:
+1. Uploads two files through WebDAV, one of them nested and with non-ASCII
+   names, into a folder named after the run.
+2. A wrong group in the gate shows the mismatch, and no `POST …/setup` is
+   sent.
+3. After a reload the setup completes with a new key, and the schedule is
+   saved.
+4. "Back up now"; the board goes `waiting` → `active`.
+5. A restore lands in `Restore/<ts>/` with both files byte-identical. The
+   folder link opens the Files app on that folder.
+6. `takeout` plus `decrypt` with the browser's key restore both files. The
+   key the gate refused is rejected with "key does not match".
+7. The key is replaced through the UI, then a take-out is made before the next
+   backup:
+   - the old key opens it and the new one does not;
+   - with the downloaded `recovery.ocbke` as `-envelope`, the new key opens
+     it and the old one does not;
+   - after "Back up now" on the done screen, a fresh take-out opens with the
+     new key only.
+8. None of the three keys appears in any request of the whole session, in any
+   of these forms: display form, bare symbols, lower case, or the raw secret
+   as base64, base64url or hex. They are searched for in URLs, bodies and
+   headers. Single groups are searched for in URLs and bodies only, because
+   bearer tokens make a chance match in headers likely. Web storage is
+   checked too. The check first shows that it catches a planted key.
+
+**Found by the run, and fixed here: the restore folder link never
+resolved.**
+- The service names a Space in CS3 form, `storage$space!opaque`. The host's
+  spaces store holds the graph drive id, which drops `!opaque` where it
+  repeats the space part.
+- `getSpace` matches exactly, so every restore showed a plain path instead of
+  a link. This is the 8d.3 assumption "the service Space id equals the host
+  drive id", which was left for 8f to verify, and it is false.
+- `restore/folderlink.ts` `hostSpaceIds` now looks the Space up by the service
+  id and then by its graph form. It is unit-tested, and the journey clicks the
+  link.
+- Whether anything else compares the two forms of id is worth a look.
+  Nothing in the extension does today.
+
+Other details:
+
+- **globalSetup** refuses to start when the fixture, the installed extension or
+  Garage is missing, or when something already answers on :8080. It builds
+  the three binaries into a run directory under `E2E_RUN_ROOT` (default:
+  tmpdir), generates SRW and TW keys, and passes the run directory and
+  repository prefix to the specs through the environment.
+- **Waits for #37.** An upload is followed by polling the file until it reads
+  200. The service still has no retry of its own.
+- **`SpaceStatus.vue`'s `state-label` gained `data-state`**, as `SpaceCard`
+  has, so the E2E waits on a state rather than on English text.
+- **System Chrome crashed ("Target crashed") on a memory-tight developer
+  machine.** The pinned Playwright Chromium did not. `E2E_CHROME` remains as
+  an opt-in.
+- **Leak check speed.** The first version asserted per needle and per request
+  and took 5.6 minutes. It now collects hits and asserts once.
+- **`web/.dockerignore`** keeps the E2E files out of the image context.
+
+Not covered, and recorded rather than dropped:
+
+- the state store is in memory (decision 4, until #37);
+- the app-menu entry is not clicked;
+- shared Spaces and roles below manager are not driven in a browser (their
+  API rules are covered by the fixture's Go tests);
+- Firefox and WebKit are not run;
+- the copy button and clipboard are not exercised; the key is read from the
+  display.
+
 
 Only what the 8d decisions leave open. Settled with the user before any code.
 Three things the survey found shaped the options:

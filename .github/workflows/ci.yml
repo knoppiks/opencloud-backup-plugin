@@ -253,6 +253,84 @@ jobs:
       if: failure()
       run: docker logs opencloud-fixture --tail 200 || true
 
+  # The whole flow in a real browser (phase-8 sub-phase 8f, issue #42): an
+  # admin sets up the destination, a family member protects their Space,
+  # backs up, restores, and opens a take-out with the browser-made Recovery
+  # Key, before and after replacing it. Its own job: integration-opencloud
+  # stops OpenCloud in its last step.
+  e2e:
+    name: e2e (browser against the OpenCloud fixture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - uses: actions/setup-node@v6
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: enable corepack
+      run: corepack enable
+
+    - name: install
+      working-directory: web
+      run: pnpm install --frozen-lockfile
+
+    # The Chromium build pinned by @playwright/test's version in package.json,
+    # not whatever Chrome the runner image carries this week.
+    - name: install the browser
+      working-directory: web
+      run: pnpm exec playwright install --with-deps chromium
+
+    # The destination the admin spec creates. Same pinned Garage as `make
+    # dev-up`; the specs read its key pair from this compose file.
+    - name: start Garage
+      run: |
+        docker compose -f docker-compose.dev.yml up -d
+        for _ in $(seq 1 30); do
+          curl -s -o /dev/null http://127.0.0.1:3900/ && exit 0
+          sleep 2
+        done
+        echo "Garage did not answer on :3900" >&2; exit 1
+
+    - name: start the OpenCloud fixture
+      run: |
+        cd test/fixtures/opencloud
+        ./up.sh
+        ./seed.sh
+
+    # Builds the extension, installs it into the fixture and asserts that
+    # OpenCloud serves it, with the CSP it needs.
+    - name: install Backup Vault into the fixture
+      run: test/fixtures/opencloud/install-webapp.sh
+
+    # globalSetup builds and starts backupd itself (web/e2e/global-setup.ts).
+    - name: e2e
+      working-directory: web
+      env:
+        E2E_RUN_ROOT: ${{ runner.temp }}/e2e
+      run: pnpm e2e
+
+    - name: e2e report on failure
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-report
+        path: |
+          web/playwright-report
+          web/e2e-results
+          ${{ runner.temp }}/e2e/*/backupd.log
+        if-no-files-found: ignore
+
+    - name: fixture logs on failure
+      if: failure()
+      run: docker logs opencloud-fixture --tail 200 || true
+
   image:
     name: container images (build only)
     runs-on: ubuntu-latest

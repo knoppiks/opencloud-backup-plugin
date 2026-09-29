@@ -39,7 +39,7 @@ it.
 
 **Phase 8 is split into sub-phases** (8a crypto interop, 8b admin API, 8c
 skeleton, 8d user flows, 8e admin view, 8f E2E); see that phase's doc for the
-split, the decisions behind it, and what has landed. **8a–8e are
+split, the decisions behind it, and what has landed. **8a–8f are
 implemented**:
 - the browser crypto in `/web/src/crypto`, pinned against `pkg/keys` in both
   directions;
@@ -51,10 +51,14 @@ implemented**:
 - the Recovery Key page ("Check my Recovery Key", the `recovery.ocbke`
   download) and the Recovery Key replacement;
 - the admin view (#41): target list, create/edit with write-only keys and a
-  connection check, "everyone"/"these people" grants, delete.
+  connection check, "everyone"/"these people" grants, delete;
+- the browser E2E (#42, `make e2e`): admin setup, the family journey, the
+  offline take-out with the browser's key before and after rotation, and the
+  network-level check that no Recovery Key is ever sent.
 
-8f (E2E) is #42 and is what remains of Phase 8. Issue #35 was closed by the
-merge of 8a–8d and no longer tracks the rest.
+Still open for Phase 8: the E2E job green in CI, and a review of the UI against
+the OpenCloud design system. Issue #35 was closed by the merge of 8a–8d and no
+longer tracks the rest.
 
 **Deployment readiness:** [deployment-readiness.md](deployment-readiness.md)
 records what stood between 8d and a first real deployment (CSP, publishing,
