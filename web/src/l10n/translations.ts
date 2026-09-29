@@ -317,7 +317,110 @@ const de: Record<string, string> = {
   'Other members of this space who kept the old Recovery Key need the new one. If you downloaded the key file before, download it again.':
     'Andere Mitglieder dieses Spaces, die den alten Wiederherstellungsschlüssel aufbewahrt haben, brauchen den neuen. Falls Sie die Schlüsseldatei schon einmal heruntergeladen haben, laden Sie sie erneut herunter.',
   'A backup is running. When it has finished, the old Recovery Key stops working.':
-    'Eine Sicherung läuft. Wenn sie abgeschlossen ist, verliert der alte Wiederherstellungsschlüssel seine Gültigkeit.'
+    'Eine Sicherung läuft. Wenn sie abgeschlossen ist, verliert der alte Wiederherstellungsschlüssel seine Gültigkeit.',
+
+  // Admin: backup destinations (views/Admin*.vue, components/admin/).
+  'Manage backup destinations': 'Sicherungsziele verwalten',
+  'Backup destinations': 'Sicherungsziele',
+  'Back to Backup Vault': 'Zurück zum Backup-Tresor',
+  'Back to backup destinations': 'Zurück zu den Sicherungszielen',
+  'Add a backup destination': 'Sicherungsziel hinzufügen',
+  'There are no backup destinations yet. Nobody can set up backups until there is one.':
+    'Es gibt noch keine Sicherungsziele. Solange es keines gibt, kann niemand Sicherungen einrichten.',
+  'Separate maintenance keys': 'Eigene Wartungsschlüssel',
+  'One key pair for everything': 'Ein Schlüsselpaar für alles',
+  Settings: 'Einstellungen',
+  'Only administrators can manage backup destinations':
+    'Nur Administratoren können Sicherungsziele verwalten',
+  'Sign in with an administrator account to continue.':
+    'Melden Sie sich mit einem Administratorkonto an, um fortzufahren.',
+  'This backup destination does not exist': 'Dieses Sicherungsziel existiert nicht',
+  'It may have been deleted in the meantime.': 'Es wurde möglicherweise inzwischen gelöscht.',
+  'The backup service did not accept this': 'Der Sicherungsdienst hat das nicht angenommen',
+  'The reason is below.': 'Den Grund finden Sie unten.',
+  'The reason is below. Ask whoever runs the backup service.':
+    'Den Grund finden Sie unten. Wenden Sie sich an die Person, die den Sicherungsdienst betreibt.',
+  'This backup destination is still in use': 'Dieses Sicherungsziel wird noch verwendet',
+
+  // Admin: the settings form.
+  Name: 'Bezeichnung',
+  'People see this name when they choose where to back up.':
+    'Diesen Namen sehen Personen, wenn sie auswählen, wohin gesichert wird.',
+  Endpoint: 'Endpunkt',
+  'Address of the S3 service, e.g. s3.example.org or garage:3900':
+    'Adresse des S3-Dienstes, z. B. s3.example.org oder garage:3900',
+  Bucket: 'S3-Bucket',
+  'Region (optional)': 'Region (kann leer bleiben)',
+  'Prefix (optional)': 'Präfix (optional)',
+  'A folder inside the bucket to keep the backups in.':
+    'Ein Ordner im Bucket, in dem die Sicherungen abgelegt werden.',
+  'Use path-style addresses (needed by most self-hosted S3 services)':
+    'Pfad-Adressierung verwenden (für die meisten selbst betriebenen S3-Dienste nötig)',
+  'Connect without TLS (only inside a trusted network)':
+    'Ohne TLS verbinden (nur in einem vertrauenswürdigen Netz)',
+  Required: 'Pflichtfeld',
+  'Access keys': 'Zugangsschlüssel',
+  'The stored keys are kept. They are never shown: to use other keys, replace them.':
+    'Die gespeicherten Schlüssel bleiben erhalten. Sie werden nie angezeigt: Um andere Schlüssel zu verwenden, ersetzen Sie sie.',
+  'Replace keys': 'Schlüssel ersetzen',
+  'Keep the stored keys': 'Gespeicherte Schlüssel behalten',
+  'Saving replaces both key pairs. If you leave the maintenance keys empty, the stored maintenance keys are removed and the backup keys are used for both.':
+    'Beim Speichern werden beide Schlüsselpaare ersetzt. Wenn Sie die Wartungsschlüssel leer lassen, werden die gespeicherten Wartungsschlüssel entfernt und die Sicherungsschlüssel für beides verwendet.',
+  'Backup keys': 'Sicherungsschlüssel',
+  'Used to write new backups and to restore them.':
+    'Damit werden neue Sicherungen geschrieben und wiederhergestellt.',
+  'Maintenance keys (optional)': 'Wartungsschlüssel (optional)',
+  'A separate pair used only to remove old backups. Leave empty to use the backup keys for that too.':
+    'Ein eigenes Paar, das nur zum Entfernen alter Sicherungen dient. Leer lassen, um dafür ebenfalls die Sicherungsschlüssel zu verwenden.',
+  'Access key ID': 'Zugriffsschlüssel-ID',
+  'Secret access key': 'Geheimer Zugriffsschlüssel',
+  'Create backup destination': 'Sicherungsziel anlegen',
+  'Saved.': 'Gespeichert.',
+
+  // Admin: the connection check.
+  'Check connection': 'Verbindung prüfen',
+  'Maintenance keys': 'Wartungsschlüssel',
+  Works: 'Funktioniert',
+  'Endpoint not reachable': 'Endpunkt nicht erreichbar',
+  'No answer in time': 'Keine Antwort in der vorgesehenen Zeit',
+  'Keys not accepted': 'Schlüssel nicht akzeptiert',
+  'Access denied': 'Zugriff verweigert',
+  'Bucket not found': 'Bucket nicht gefunden',
+  'Unknown problem': 'Unbekanntes Problem',
+
+  // Admin: who can back up to a destination.
+  'Who can back up here': 'Wer hierhin sichern darf',
+  Everyone: 'Alle',
+  'Only these people': 'Nur diese Personen',
+  'Some people are also listed by name. Everyone can back up here anyway, so saving removes that list.':
+    'Zusätzlich sind einzelne Personen namentlich eingetragen. Da ohnehin alle hierhin sichern dürfen, wird diese Liste beim Speichern entfernt.',
+  'Unknown user': 'Unbekannte Person',
+  Remove: 'Entfernen',
+  'Also granted to these spaces. This cannot be changed here yet, and saving keeps it:':
+    'Außerdem für diese Spaces freigegeben. Das lässt sich hier noch nicht ändern und bleibt beim Speichern erhalten:',
+  'Nobody can back up here yet.': 'Noch darf niemand hierhin sichern.',
+  'Save who can back up here': 'Speichern, wer hierhin sichern darf',
+  'Add a person': 'Person hinzufügen',
+  'Type at least %{count} characters of a name or email address.':
+    'Geben Sie mindestens %{count} Zeichen eines Namens oder einer E-Mail-Adresse ein.',
+  'Searching…': 'Wird gesucht…',
+  'Could not search for people. Try again in a moment.':
+    'Die Personensuche ist fehlgeschlagen. Versuchen Sie es gleich noch einmal.',
+  'Nobody matches.': 'Niemand gefunden.',
+  'Already listed': 'Bereits eingetragen',
+  Add: 'Hinzufügen',
+
+  // Admin: deleting a destination.
+  'Delete this destination': 'Dieses Sicherungsziel löschen',
+  'Delete…': 'Löschen…',
+  'Delete “%{name}”?': '„%{name}“ löschen?',
+  'Nobody can choose it for new backups any more. The backups already stored in the bucket are not deleted.':
+    'Danach kann es niemand mehr für Sicherungen auswählen. Die bereits im Bucket gespeicherten Sicherungen werden nicht gelöscht.',
+  Delete: 'Löschen',
+  'Some spaces still back up to this destination. They have to be switched to another destination first.':
+    'Einige Spaces sichern noch auf dieses Ziel. Sie müssen zuerst auf ein anderes Sicherungsziel umgestellt werden.',
+  'Spaces still backing up to this destination: %{count}. They have to be switched to another destination first.':
+    'Spaces, die noch auf dieses Ziel sichern: %{count}. Sie müssen zuerst auf ein anderes Sicherungsziel umgestellt werden.'
 }
 
 export const translations: Translations = { de }

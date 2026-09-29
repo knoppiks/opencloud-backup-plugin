@@ -16,7 +16,7 @@
 import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { ApiError } from '../api'
-import { errorAdvice, errorTitle } from '../api/errortext'
+import { errorAdvice, errorTitle, type Wording } from '../api/errortext'
 
 const props = defineProps<{
   loading: boolean
@@ -25,15 +25,22 @@ const props = defineProps<{
   empty?: boolean
   /** emptyMessage overrides the generic "nothing here yet" wording. */
   emptyMessage?: string
+  /** title and advice replace the shared wording where a page says it better. */
+  title?: Wording
+  advice?: Wording
 }>()
 
 const emit = defineEmits<{ retry: [] }>()
 
 const { $gettext } = useGettext()
 
-const title = computed(() => (props.error ? errorTitle(props.error.code, $gettext) : ''))
+const headline = computed(() =>
+  props.error ? (props.title ?? errorTitle)(props.error.code, $gettext) : ''
+)
 
-const advice = computed(() => (props.error ? errorAdvice(props.error.code, $gettext) : ''))
+const hint = computed(() =>
+  props.error ? (props.advice ?? errorAdvice)(props.error.code, $gettext) : ''
+)
 
 /**
  * detail is the service's own message.
@@ -54,8 +61,8 @@ const showRetry = computed(() => props.error?.isRetryable === true)
   </div>
 
   <div v-else-if="error" class="ext:p-6" role="alert">
-    <h2 class="ext:text-lg ext:font-semibold">{{ title }}</h2>
-    <p v-if="advice" class="ext:mt-1">{{ advice }}</p>
+    <h2 class="ext:text-lg ext:font-semibold">{{ headline }}</h2>
+    <p v-if="hint" class="ext:mt-1">{{ hint }}</p>
     <p v-if="detail" class="ext:mt-1 ext:text-sm ext:text-role-on-surface-variant">{{ detail }}</p>
     <oc-button v-if="showRetry" class="ext:mt-3" appearance="outline" @click="emit('retry')">
       {{ $gettext('Try again') }}

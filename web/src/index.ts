@@ -94,6 +94,31 @@ export default defineWebApplication({
         component: () => import('./views/ReplaceRecoveryKey.vue'),
         props: true,
         meta: { authContext: 'user', title: $gettext('Backup Vault') }
+      },
+      // Admin: backup destinations and who may use them. Registered for
+      // everyone, like every route: each view checks the admin ability before
+      // it calls anything, and the server's 403 is what actually decides.
+      // Credentials never go into these URLs; a target id is not a secret.
+      {
+        path: '/admin/targets',
+        name: 'backup-vault-admin-targets',
+        component: () => import('./views/AdminTargets.vue'),
+        meta: { authContext: 'user', title: $gettext('Backup Vault') }
+      },
+      {
+        // vue-router ranks this static path above `:targetId`, so "new" is
+        // never read as an id.
+        path: '/admin/targets/new',
+        name: 'backup-vault-admin-target-new',
+        component: () => import('./views/AdminTargetNew.vue'),
+        meta: { authContext: 'user', title: $gettext('Backup Vault') }
+      },
+      {
+        path: '/admin/targets/:targetId',
+        name: 'backup-vault-admin-target',
+        component: () => import('./views/AdminTargetEdit.vue'),
+        props: true,
+        meta: { authContext: 'user', title: $gettext('Backup Vault') }
       }
     ]
 

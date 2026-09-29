@@ -39,7 +39,7 @@ it.
 
 **Phase 8 is split into sub-phases** (8a crypto interop, 8b admin API, 8c
 skeleton, 8d user flows, 8e admin view, 8f E2E); see that phase's doc for the
-split, the decisions behind it, and what has landed. **8a–8d are
+split, the decisions behind it, and what has landed. **8a–8e are
 implemented**:
 - the browser crypto in `/web/src/crypto`, pinned against `pkg/keys` in both
   directions;
@@ -49,10 +49,12 @@ implemented**:
 - the setup wizard (target, Recovery Key ceremony and gate, schedule);
 - the restore flow (backup picker, confirmation, progress, folder link);
 - the Recovery Key page ("Check my Recovery Key", the `recovery.ocbke`
-  download) and the Recovery Key replacement.
+  download) and the Recovery Key replacement;
+- the admin view (#41): target list, create/edit with write-only keys and a
+  connection check, "everyone"/"these people" grants, delete.
 
-8e (the admin view, #41) is next; 8f (E2E) is #42. Issue #35 was closed by
-the merge of 8a–8d and no longer tracks the rest.
+8f (E2E) is #42 and is what remains of Phase 8. Issue #35 was closed by the
+merge of 8a–8d and no longer tracks the rest.
 
 **Deployment readiness:** [deployment-readiness.md](deployment-readiness.md)
 records what stood between 8d and a first real deployment (CSP, publishing,

@@ -2,7 +2,8 @@
 // sends rather than its own idea of them.
 
 import { vi } from 'vitest'
-import type { BackupApi, BackupStatus, Job, Snapshot, Space } from '../api'
+import type { AdminTarget, BackupApi, BackupStatus, Job, Snapshot, Space } from '../api'
+import type { AdminApi } from '../api/admin'
 
 export const SPACE_ID = 'storage$space-1!space-1'
 
@@ -81,4 +82,57 @@ export function fakeApi(): FakeApi {
   return Object.fromEntries(
     methods.map((m) => [m, vi.fn(() => Promise.reject(new Error(`unexpected call: ${m}`)))])
   ) as FakeApi
+}
+
+// --- admin -----------------------------------------------------------------
+
+export const TARGET_ID = 'target-buddy'
+
+export function adminTarget(overrides: Partial<AdminTarget> = {}): AdminTarget {
+  return {
+    id: TARGET_ID,
+    name: 'Buddy',
+    endpoint: 'buddy.example.org:3900',
+    bucket: 'backups',
+    region: 'garage',
+    use_path_style: true,
+    disable_tls: false,
+    maintenance_configured: false,
+    created_at: '2026-09-20T10:00:00Z',
+    updated_at: '2026-09-20T10:00:00Z',
+    ...overrides
+  }
+}
+
+/** FakeAdminApi is every admin client method as a mock. */
+export type FakeAdminApi = { [K in keyof AdminApi]: ReturnType<typeof vi.fn> }
+
+/** fakeAdminApi returns an admin client whose every method rejects until told otherwise. */
+export function fakeAdminApi(): FakeAdminApi {
+  const methods: (keyof AdminApi)[] = [
+    'listTargets',
+    'target',
+    'createTarget',
+    'updateTarget',
+    'deleteTarget',
+    'checkTarget',
+    'grants',
+    'replaceGrants'
+  ]
+  return Object.fromEntries(
+    methods.map((m) => [m, vi.fn(() => Promise.reject(new Error(`unexpected call: ${m}`)))])
+  ) as FakeAdminApi
+}
+
+/** FakeDirectory is a user directory whose calls a test controls. */
+export interface FakeDirectory {
+  search: ReturnType<typeof vi.fn>
+  lookup: ReturnType<typeof vi.fn>
+}
+
+export function fakeDirectory(): FakeDirectory {
+  return {
+    search: vi.fn(async () => []),
+    lookup: vi.fn(async () => undefined)
+  }
 }

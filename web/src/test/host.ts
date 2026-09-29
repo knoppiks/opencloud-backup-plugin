@@ -32,8 +32,11 @@ const button = defineComponent({
   }
 })
 
+// Like the real OcTextInput (measured on the fixture, 8e), attributes such as
+// `data-testid` and `autocomplete` land on the <input> itself, not on a wrapper.
 const textInput = defineComponent({
   name: 'OcTextInputStub',
+  inheritAttrs: false,
   props: {
     modelValue: String,
     label: String,
@@ -43,11 +46,12 @@ const textInput = defineComponent({
     disabled: Boolean
   },
   emits: ['update:modelValue'],
-  setup(props, { emit }) {
+  setup(props, { emit, attrs }) {
     return () =>
       h('label', [
         props.label,
         h('input', {
+          ...attrs,
           type: props.type ?? 'text',
           value: props.modelValue,
           disabled: props.disabled,

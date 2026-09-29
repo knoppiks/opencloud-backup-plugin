@@ -175,6 +175,43 @@ export default tseslint.config(
   },
 
   {
+    // The admin target form holds S3 secrets between typing and sending
+    // (8e decision 12). Same reasoning as above: a secret in browser storage
+    // outlives the tab and the admin's intention, and nothing here needs to
+    // remember anything across a reload.
+    files: ['src/admin/**/*.ts', 'src/components/admin/**/*.vue', 'src/views/Admin*.vue'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'localStorage',
+          message: 'Code that holds S3 credentials must not persist anything.'
+        },
+        {
+          name: 'sessionStorage',
+          message: 'Code that holds S3 credentials must not persist anything.'
+        },
+        { name: 'indexedDB', message: 'Code that holds S3 credentials must not persist anything.' }
+      ],
+      'no-restricted-properties': [
+        'error',
+        {
+          property: 'localStorage',
+          message: 'Code that holds S3 credentials must not persist anything.'
+        },
+        {
+          property: 'sessionStorage',
+          message: 'Code that holds S3 credentials must not persist anything.'
+        },
+        {
+          property: 'indexedDB',
+          message: 'Code that holds S3 credentials must not persist anything.'
+        }
+      ]
+    }
+  },
+
+  {
     // The machines are plain TypeScript so they can be tested without Vue.
     files: ['src/wizard/**/*.ts', 'src/recoverykey/**/*.ts'],
     ignores: ['src/wizard/**/*.spec.ts', 'src/recoverykey/**/*.spec.ts'],

@@ -4,6 +4,10 @@
 // This module may import `src/crypto`; `src/crypto` may not import this one
 // (eslint.config.ts enforces the direction). The crypto layer decides what a
 // request body contains, and this layer sends it.
+//
+// AdminApi is deliberately not re-exported here: every view imports this
+// barrel, and the admin client belongs in the admin chunk only. Import it from
+// './admin'. Its wire types are plain types and cost nothing, so they are here.
 
 export { ApiPathError, DEFAULT_API_PATH, resolveApiBase } from './baseurl'
 export {
@@ -19,6 +23,14 @@ export {
 } from './errors'
 export { BackupApi, DEFAULT_TIMEOUT_MS, type BackupApiOptions, type TokenSource } from './client'
 export type {
+  AdminTarget,
+  AdminTargetRequest,
+  CheckOutcome,
+  CheckResult,
+  CheckRole,
+  Grant,
+  GrantScope,
+  S3Credentials,
   BackupConfig,
   BackupConfigPatch,
   BackupConfigRequest,
