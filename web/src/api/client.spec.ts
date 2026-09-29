@@ -1,29 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { BackupApi } from './client'
 import { ApiError, isApiError } from './errors'
+import { stubFetch as stub } from '../test/fetchstub'
 
 const BASE = 'https://cloud.example.org/backup/api/v1'
 const SPACE = '28e0fe60-d4c1$7586a8a9!7586a8a9'
-
-/** call is one recorded request. */
-interface Call {
-  url: string
-  init: RequestInit
-}
-
-/** stub builds a fetch that answers with the given status and body. */
-function stub(status: number, body?: unknown, contentType = 'application/json') {
-  const calls: Call[] = []
-  const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-    calls.push({ url: String(url), init: init ?? {} })
-    const text = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body)
-    return new Response(text === '' ? null : text, {
-      status,
-      headers: { 'Content-Type': contentType }
-    })
-  })
-  return { calls, fetchImpl: fetchImpl as unknown as typeof fetch }
-}
 
 function client(fetchImpl: typeof fetch) {
   return new BackupApi({ baseUrl: BASE, getToken: () => 'token-abc', fetchImpl })

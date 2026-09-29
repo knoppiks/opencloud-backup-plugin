@@ -56,8 +56,8 @@ describe('RecoveryKeyGate', () => {
     const wrapper = mountWithHost(RecoveryKeyGate, { props })
     expect(wrapper.find('[data-testid="gate-2"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="gate-6"]').exists()).toBe(true)
-    await wrapper.find('[data-testid="gate-2"] input').setValue('aaaaa')
-    await wrapper.find('[data-testid="gate-6"] input').setValue('bbbbb')
+    await wrapper.find('input[data-testid="gate-2"]').setValue('aaaaa')
+    await wrapper.find('input[data-testid="gate-6"]').setValue('bbbbb')
     await wrapper.find('form').trigger('submit')
     expect(wrapper.emitted('submit')).toEqual([[['aaaaa', 'bbbbb']]])
     expect(wrapper.find('[data-testid="gate-submit"]').text()).toBe('Go')
@@ -65,7 +65,7 @@ describe('RecoveryKeyGate', () => {
 
   it('clears the answers when new groups are asked for', async () => {
     const wrapper = mountWithHost(RecoveryKeyGate, { props })
-    await wrapper.find('[data-testid="gate-2"] input').setValue('aaaaa')
+    await wrapper.find('input[data-testid="gate-2"]').setValue('aaaaa')
     await wrapper.setProps({ groups: [1, 3] })
     await wrapper.find('form').trigger('submit')
     expect(wrapper.emitted('submit')).toEqual([[['', '']]])

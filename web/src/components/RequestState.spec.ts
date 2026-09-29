@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError, type ApiFailureCode } from '../api'
+import type { Wording } from '../api/errortext'
 import { mountWithHost } from '../test/host'
 import RequestState from './RequestState.vue'
 
@@ -8,6 +9,8 @@ function state(props: {
   error?: ApiError
   empty?: boolean
   emptyMessage?: string
+  title?: Wording
+  advice?: Wording
 }) {
   return mountWithHost(RequestState, {
     props: { loading: false, error: undefined, ...props },
@@ -61,5 +64,15 @@ describe('RequestState', () => {
     })
     expect(wrapper.find('h2').text()).toBe('Something went wrong')
     expect(wrapper.text()).toContain('retention_days must be at least 7')
+  })
+
+  it("uses a page's own wording when given", () => {
+    const wrapper = state({
+      error: new ApiError('forbidden', 'x', 403),
+      title: (code) => `title for ${code}`,
+      advice: (code) => `advice for ${code}`
+    })
+    expect(wrapper.find('h2').text()).toBe('title for forbidden')
+    expect(wrapper.text()).toContain('advice for forbidden')
   })
 })

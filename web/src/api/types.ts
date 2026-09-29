@@ -9,7 +9,8 @@
 // owns them (`SetupRequest`, `RotateRecoveryKeyRequest`), because the module
 // that produces the envelope is the module that should decide what is sent.
 //
-// Nothing in this file describes the admin API. That is sub-phase 8e.
+// The admin API's types are at the bottom, apart: only the admin view uses
+// them, and only an admin can call the routes they describe.
 
 /**
  * SpaceRole is the caller's own authority on a Space, in the server's words.
@@ -234,4 +235,81 @@ export interface RestoreAccepted {
   space_id: string
   snapshot_id: string
   state: string
+}
+
+// --- admin: targets and grants (`/admin/targets`) -------------------------
+
+/**
+ * AdminTarget is a backup destination as an administrator sees it.
+ *
+ * Where the backups go, never the keys to get in: credentials are write-only
+ * (decisions.md #14), and no admin response carries them back.
+ */
+export interface AdminTarget {
+  id: string
+  name: string
+  endpoint: string
+  bucket: string
+  region?: string
+  prefix?: string
+  use_path_style: boolean
+  disable_tls: boolean
+  /** maintenance_configured says a separate prune key pair is stored. */
+  maintenance_configured: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+/** S3Credentials is one key pair on the way in. It has no response twin. */
+export interface S3Credentials {
+  access_key_id: string
+  /** secret_access_key is sent as typed: the server does not trim it. */
+  secret_access_key: string
+}
+
+/**
+ * AdminTargetRequest creates, updates or checks a target.
+ *
+ * On update, leaving out `credentials` keeps the stored ones; sending them
+ * replaces both pairs at once, so an update without `maintenance_credentials`
+ * removes a stored maintenance pair.
+ */
+export interface AdminTargetRequest {
+  name: string
+  endpoint: string
+  bucket: string
+  region: string
+  prefix: string
+  use_path_style: boolean
+  disable_tls: boolean
+  credentials?: S3Credentials
+  maintenance_credentials?: S3Credentials
+}
+
+/** GrantScope is who a grant is for. */
+export type GrantScope = 'all_users' | 'user' | 'space'
+
+/**
+ * Grant is one entry of a target's audience.
+ *
+ * `user_id` is the OpenCloud (graph) user id. `space_id` is the CS3 Space id
+ * (`storage$space!opaque`), not a graph drive id.
+ */
+export interface Grant {
+  scope: GrantScope
+  user_id?: string
+  space_id?: string
+}
+
+/** CheckRole is which key pair a connection check result is about. */
+export type CheckRole = 'backup' | 'maintenance'
+
+/** CheckOutcome is the one word a connection check says per key pair. */
+export type CheckOutcome =
+  'ok' | 'unreachable' | 'timeout' | 'auth_failed' | 'denied' | 'bucket_missing' | 'unknown'
+
+/** CheckResult is one key pair's connection check. */
+export interface CheckResult {
+  role: CheckRole | string
+  outcome: CheckOutcome | string
 }

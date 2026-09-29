@@ -67,7 +67,7 @@ const step = (wrapper: VueWrapper) => wrapper.find('[data-step]').attributes('da
 /** passGate answers whichever two groups the gate asked for. */
 async function passGate(wrapper: VueWrapper, key: string) {
   const groups = key.split('-').slice(1)
-  for (const field of wrapper.findAll('[data-testid^="gate-"] input')) {
+  for (const field of wrapper.findAll('input[data-testid^="gate-"]')) {
     const label = field.element.closest('[data-testid]')?.getAttribute('data-testid') ?? ''
     const number = Number(label.replace('gate-', ''))
     await field.setValue(groups[number - 1] as string)
@@ -182,7 +182,7 @@ describe('SetupWizard ceremony', () => {
 
     await wrapper.find('[data-testid="key-saved"]').trigger('click')
     expect(step(wrapper)).toBe('confirm')
-    expect(wrapper.findAll('[data-testid^="gate-"] input')).toHaveLength(2)
+    expect(wrapper.findAll('input[data-testid^="gate-"]')).toHaveLength(2)
     // The key is not on screen while the gate asks for it.
     expect(wrapper.text()).not.toContain(key)
     expect(wrapper.find('[data-testid="recovery-key"]').exists()).toBe(false)
@@ -215,7 +215,7 @@ describe('SetupWizard ceremony', () => {
     await flushPromises()
     await wrapper.find('[data-testid="key-saved"]').trigger('click')
 
-    for (const field of wrapper.findAll('[data-testid^="gate-"] input')) {
+    for (const field of wrapper.findAll('input[data-testid^="gate-"]')) {
       await field.setValue('WRONG')
     }
     await wrapper.find('form[data-step="confirm"]').trigger('submit')

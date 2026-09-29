@@ -7,11 +7,14 @@ import Overview from './Overview.vue'
 
 const api = vi.hoisted(() => ({ current: undefined as unknown }))
 vi.mock('../composables/useBackupApi', () => ({ useBackupApi: () => api.current }))
+const gate = vi.hoisted(() => ({ admin: false }))
+vi.mock('../composables/useIsAdmin', () => ({ useIsAdmin: () => gate.admin }))
 
 let fake: FakeApi
 beforeEach(() => {
   fake = fakeApi()
   api.current = fake
+  gate.admin = false
   fake.listTargets.mockResolvedValue([{ id: 't', name: 'Buddy' }])
 })
 
@@ -109,5 +112,20 @@ describe('Overview', () => {
     fake.listSpaces.mockRejectedValue(new ApiError('forbidden', 'x', 403))
     const wrapper = await mountOverview()
     expect(wrapper.find('[role="alert"] button').exists()).toBe(false)
+  })
+  it('offers the destination management to administrators only', async () => {
+    fake.listSpaces.mockResolvedValue([])
+    expect((await mountOverview()).find('[data-testid="admin-link"]').exists()).toBe(false)
+
+    gate.admin = true
+    const link = (await mountOverview()).find('[data-testid="admin-link"]')
+    expect(JSON.parse(link.attributes('data-to')!)).toEqual({ name: 'backup-vault-admin-targets' })
+  })
+
+  // An admin whose own Spaces fail to load may be the one who has to fix it.
+  it('keeps the admin link when the Space list fails', async () => {
+    gate.admin = true
+    fake.listSpaces.mockRejectedValue(new ApiError('offline', 'x'))
+    expect((await mountOverview()).find('[data-testid="admin-link"]').exists()).toBe(true)
   })
 })

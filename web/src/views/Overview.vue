@@ -11,12 +11,15 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { useBackupApi } from '../composables/useBackupApi'
+import { useIsAdmin } from '../composables/useIsAdmin'
 import RequestState from '../components/RequestState.vue'
 import SpaceCard from '../components/SpaceCard.vue'
 import { ApiError, isApiError, type BackupStatus, type Space, type Target } from '../api'
 
 const { $gettext } = useGettext()
 const api = useBackupApi()
+/** isAdmin only decides whether the admin link is offered (8e decision 4). */
+const isAdmin = useIsAdmin()
 
 const loading = ref(true)
 const error = ref<ApiError | undefined>(undefined)
@@ -78,7 +81,21 @@ onMounted(load)
 
 <template>
   <main class="ext:p-4">
-    <h1 class="ext:text-xl ext:font-semibold">{{ $gettext('Backup Vault') }}</h1>
+    <div class="ext:flex ext:flex-wrap ext:items-baseline ext:justify-between ext:gap-2">
+      <h1 class="ext:text-xl ext:font-semibold">{{ $gettext('Backup Vault') }}</h1>
+      <!--
+        Outside RequestState on purpose: an admin whose own Space list fails
+        to load may be exactly the person who needs to fix a destination.
+      -->
+      <router-link
+        v-if="isAdmin"
+        :to="{ name: 'backup-vault-admin-targets' }"
+        class="ext:text-sm"
+        data-testid="admin-link"
+      >
+        {{ $gettext('Manage backup destinations') }}
+      </router-link>
+    </div>
 
     <RequestState
       :loading="loading"

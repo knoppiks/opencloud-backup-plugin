@@ -70,7 +70,7 @@ async function mountPage(role = 'viewer', keys = true, language?: string) {
 }
 
 async function checkKey(wrapper: VueWrapper, key: string) {
-  await wrapper.find('[data-testid="check-input"] input').setValue(key)
+  await wrapper.find('input[data-testid="check-input"]').setValue(key)
   await wrapper.find('[data-testid="check-form"]').trigger('submit')
   await flushPromises()
 }
@@ -144,7 +144,7 @@ describe('RecoveryKeyView check', () => {
     const wrapper = await mountPage()
     await checkKey(wrapper, 'nope')
     expect(result(wrapper)).toBe('malformed')
-    await wrapper.find('[data-testid="check-input"] input').setValue('nope2')
+    await wrapper.find('input[data-testid="check-input"]').setValue('nope2')
     expect(wrapper.find('[data-result]').exists()).toBe(false)
   })
 

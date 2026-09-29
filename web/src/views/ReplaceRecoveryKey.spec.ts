@@ -78,14 +78,14 @@ async function mountPage(role = 'manager', language?: string) {
 const step = (wrapper: VueWrapper) => wrapper.find('[data-step]').attributes('data-step')
 
 async function enterCurrent(wrapper: VueWrapper, key: string) {
-  await wrapper.find('[data-testid="current-key"] input').setValue(key)
+  await wrapper.find('input[data-testid="current-key"]').setValue(key)
   await wrapper.find('form[data-step="enter_current"]').trigger('submit')
   await flushPromises()
 }
 
 async function passGate(wrapper: VueWrapper, key: string) {
   const groups = key.split('-').slice(1)
-  for (const field of wrapper.findAll('[data-testid^="gate-"] input')) {
+  for (const field of wrapper.findAll('input[data-testid^="gate-"]')) {
     const label = field.element.closest('[data-testid]')?.getAttribute('data-testid') ?? ''
     await field.setValue(groups[Number(label.replace('gate-', '')) - 1] as string)
   }
@@ -145,7 +145,7 @@ describe('ReplaceRecoveryKey happy path', () => {
   it('blocks a gate that does not match', async () => {
     const wrapper = await mountPage()
     await toGate(wrapper)
-    for (const field of wrapper.findAll('[data-testid^="gate-"] input')) {
+    for (const field of wrapper.findAll('input[data-testid^="gate-"]')) {
       await field.setValue('00000')
     }
     await wrapper.find('form[data-step="confirm"]').trigger('submit')
@@ -161,7 +161,7 @@ describe('ReplaceRecoveryKey failures', () => {
     rotateMock.mockRejectedValueOnce(new UnwrapError())
     await enterCurrent(wrapper, oldKey)
     expect(wrapper.find('[data-failure="wrong"]').exists()).toBe(true)
-    const input = wrapper.find('[data-testid="current-key"] input').element as HTMLInputElement
+    const input = wrapper.find('input[data-testid="current-key"]').element as HTMLInputElement
     expect(input.value).toBe(oldKey)
   })
 
@@ -172,7 +172,7 @@ describe('ReplaceRecoveryKey failures', () => {
     await passGate(wrapper, ceremonies[0]!.recoveryKey)
     expect(step(wrapper)).toBe('enter_current')
     expect(wrapper.find('[data-testid="discard-new"]').exists()).toBe(true)
-    const input = wrapper.find('[data-testid="current-key"] input').element as HTMLInputElement
+    const input = wrapper.find('input[data-testid="current-key"]').element as HTMLInputElement
     expect(input.value).toBe('')
   })
 

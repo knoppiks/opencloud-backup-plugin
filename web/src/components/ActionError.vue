@@ -5,10 +5,7 @@
 import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { ApiError } from '../api'
-import { errorAdvice, errorTitle, type Gettext } from '../api/errortext'
-import type { ApiFailureCode } from '../api/errors'
-
-type Wording = (code: ApiFailureCode, $gettext: Gettext) => string
+import { errorAdvice, errorTitle, type Wording } from '../api/errortext'
 
 const props = defineProps<{
   error: ApiError

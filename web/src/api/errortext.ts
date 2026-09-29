@@ -13,6 +13,9 @@ import type { ApiFailureCode } from './errors'
 /** Gettext is the slice of vue3-gettext these helpers need. */
 export type Gettext = (msgid: string, parameters?: Record<string, string>) => string
 
+/** Wording turns a failure code into a sentence; pages that say it better pass their own. */
+export type Wording = (code: ApiFailureCode, $gettext: Gettext) => string
+
 /** errorTitle is the one-line headline for a failure. */
 export function errorTitle(code: ApiFailureCode, $gettext: Gettext): string {
   switch (code) {

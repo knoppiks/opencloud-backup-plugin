@@ -521,6 +521,111 @@ that shape the options:
 7. **Deleting** asks for confirmation. A 409 `target_in_use` shows the count
    the server sent and says what to do.
 
+Settled with the owner at the start of implementation (issue #41):
+
+8. **Names for existing user grants: one graph `getUser` per granted id**, in
+   parallel, selecting `displayName` and `mail`. A lookup that fails renders
+   "Unknown user" with the id, and the row stays removable: a deleted account
+   must not leave a grant nobody can take away. Grant lists are family-sized;
+   fetching the whole directory to match locally breaks on paging.
+9. **Three routes, all in the lazy admin chunk:** `/admin/targets` (list),
+   `/admin/targets/new` (create) and `/admin/targets/:targetId` (edit:
+   settings, credentials, audience, delete). The id reaches the view as a prop,
+   as on every other route. Nothing secret is ever in a URL.
+10. **Create, then the edit page.** Creating saves the target only; the view
+    moves to its edit page, where the audience is set and saved on its own. A
+    new target has no grants, so nobody can use it yet, and the page says so.
+    The rejected alternative, one combined save, leaves a created target with
+    no audience when the second request fails, which needs explaining anyway.
+11. **Audience is "Everyone" or "Only these people".** Saving "Everyone" sends
+    `all_users` plus the unchanged Space grants; listed user grants are
+    dropped, so nothing hidden survives. A stored list with both shows as
+    "Everyone", with a note that saving removes the redundant names.
+12. **The storage lint ban covers the admin credential files**, with its own
+    message: they hold S3 secrets between typing and sending.
+
+### Sub-phase 8e outcome (implemented, issue #41)
+
+Landed as planned. Where things are:
+
+- **API.** `api/transport.ts` now holds the HTTP, token and failure handling
+  that `BackupApi` used to own. `BackupApi` (`client.ts`) and the new
+  `AdminApi` (`admin.ts`) both sit on it. `AdminApi` is deliberately not
+  re-exported from the `api` barrel, so the admin routes stay in the admin
+  chunk. The admin wire types are in `api/types.ts`.
+- **Logic without Vue** (`src/admin/`):
+  - `targetform.ts`: the server's validation rules mirrored, and the only
+    place a form becomes a request body;
+  - `audience.ts`: grants ⇄ "everyone / these people", with every other grant
+    kept verbatim;
+  - `directory.ts`: graph search and per-id lookup behind an injected client;
+  - `wording.ts`: admin error wording (403 = "only administrators…"), the
+    check outcome words, and the count read out of `target_in_use`.
+- **Composables.** `useIsAdmin` (`read-all` on `Setting`), `useAdminApi`,
+  `useUserDirectory` (`graphAuthenticated.users`, plus
+  `sharingSearchMinLength`).
+- **UI.**
+  - Views: `AdminTargets`, `AdminTargetNew`, `AdminTargetEdit`.
+  - Components under `components/admin/`: `AdminOnly` (the gate, which calls
+    nothing for a non-admin), `TargetSettingsForm`, `KeyPairFields`,
+    `ConnectionCheck`, `TargetAudience`, `UserPicker`, `DeleteTarget`.
+  - `RequestState` gained optional `title`/`advice` like `ActionError`, and
+    the `Wording` type moved to `errortext.ts`.
+  - The overview shows "Manage backup destinations" to admins, outside
+    `RequestState`, so an admin whose own Spaces fail to load can still reach
+    it.
+- **Routes.** Views get the router from web-pkg's `useRouter`, which is shared
+  by the host, so no second vue-router is bundled.
+
+Details worth knowing:
+
+- **The test host stub for `oc-text-input` was wrong.** The real component
+  puts fallthrough attributes (`data-testid`, `autocomplete`) on the
+  `<input>`, not on a wrapper. This was measured on the fixture when the first
+  browser probe could not find `[data-testid="name"] input`. The stub now does
+  the same, and the 8d specs' selectors changed from `[data-testid=x] input`
+  to `input[data-testid=x]`. 8f's selectors should assume the real shape.
+- **Fake timers in the picker specs fake only `setTimeout`/`clearTimeout`.**
+  With a faked `Date`, Vue drops a click as older than the listener it
+  reaches.
+- **A check result is cleared by any edit** to what it was about, so "Works"
+  never sits next to settings it did not test.
+- **After a save, key fields are emptied, and again on "Keep the stored keys"
+  and on unmount.** The edit page renders no password input at all until
+  "Replace keys" is pressed.
+- **Deleting a target that is already gone (404) counts as deleted.**
+- **The `target_in_use` wording avoids plurals** ("Spaces still backing up to
+  this destination: 2."), because the catalogue has no plural forms.
+
+Verified on the fixture (backupd with in-memory state, extension installed
+with `make web-install-fixture`, Chrome through playwright-core):
+
+- `admin`:
+  - the overview link is shown and `GET /admin/targets` answers 200;
+  - a target was created against the dev Garage. "Check connection" said
+    "Works", and with a wrong secret "Access denied" (Garage answers that as
+    `denied`, not `auth_failed`);
+  - saving moved to the edit page, which has no password inputs and shows
+    "Nobody can back up here yet";
+  - searching "test" found Test User. Saving stored
+    `{scope:user, user_id:<graph id>}`, which equals the fixture's
+    `OC_NORMAL_USER_ID`. After a reload the name came back through
+    `getUser`;
+  - "Replace keys" opened empty, and the delete went back to the empty list;
+  - no API response contained the secret, and there were no page errors.
+- `testuser`: no overview link, `GET /admin/targets` answers 403, and the page
+  shows only the "Only administrators…" notice without calling the API.
+
+**Bundle.** The admin code is in `AdminTargets`, `AdminTargetNew`,
+`AdminTargetEdit`, `TargetSettingsForm` and `useAdminApi` chunks, none of
+which import crypto. The overview chunk gained only `useIsAdmin` (0.18 kB),
+and the admin routes do not appear in it.
+
+Tests: 600 in 43 spec files (486 in 32 before).
+
+Not done, by decision: editing Space grants (they are shown read-only and
+preserved), and E2E (8f).
+
 ### Sub-phase 8d.4 plan — decisions taken before implementation
 
 Only what the 8d decisions leave open. Settled with the user before any code.
