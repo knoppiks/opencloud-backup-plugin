@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api'
 import {
   base64Encode,
+  decodeRecoveryKey,
   generateRecoveryKey,
   MIN_ARGON_PARAMS,
   randomBytes,
@@ -62,6 +63,25 @@ function ready(m: RecoveryKeyCheck): Extract<CheckState, { step: 'ready' }> {
 }
 
 const aKey = () => generateRecoveryKey().display
+
+/**
+ * aCaughtTypo swaps two groups of a fresh key, drawing again until the
+ * checksum rejects the swap. The checksum is one byte, so about one swap in
+ * 256 passes it: that is the format's promise (a typo detector, not a
+ * guarantee), and a test on a single random key would fail that often.
+ */
+function aCaughtTypo(): string {
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const [prefix, first, second, ...rest] = aKey().split('-')
+    const typo = [prefix, second, first, ...rest].join('-')
+    try {
+      decodeRecoveryKey(typo)
+    } catch {
+      return typo
+    }
+  }
+  throw new Error('no swap the checksum catches in 64 keys')
+}
 
 describe('start', () => {
   it('is ready for any member, and offers replacement to managers only', async () => {
@@ -122,11 +142,8 @@ describe('check', () => {
   it('calls a typo malformed, before any request and before Argon2id', async () => {
     const m = machine()
     await m.start()
-    const key = aKey()
-    // One group swapped for another: the checksum catches it.
-    const groups = key.split('-')
-    const typo = [groups[0], groups[2], groups[1], ...groups.slice(3)].join('-')
-    for (const input of ['', 'not a recovery key', typo]) {
+    // One group swapped for another, of the kind the checksum catches.
+    for (const input of ['', 'not a recovery key', aCaughtTypo()]) {
       await m.check(input)
       expect(ready(m).result, input).toEqual({ kind: 'malformed' })
     }
