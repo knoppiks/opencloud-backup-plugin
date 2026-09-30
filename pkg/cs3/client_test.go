@@ -47,6 +47,11 @@ type fakeGateway struct {
 	downloadToken    string
 	downloadProtocol string
 	downloadStatus   rpc.Code
+	// downloadStatusSeq, while non-empty, supplies the status of the next
+	// InitiateFileDownload call ahead of downloadStatus.
+	downloadStatusSeq []rpc.Code
+	// downloadCalls counts InitiateFileDownload calls.
+	downloadCalls int
 	// downloadedRefPath records the reference path of the last download.
 	downloadedRefPath string
 	// downloadRootID records the reference resource id of the last download.
@@ -127,12 +132,17 @@ func (f *fakeGateway) Stat(_ context.Context, in *provider.StatRequest, _ ...grp
 func (f *fakeGateway) InitiateFileDownload(_ context.Context, in *provider.InitiateFileDownloadRequest, _ ...grpc.CallOption) (*gateway.InitiateFileDownloadResponse, error) {
 	f.downloadedRefPath = in.GetRef().GetPath()
 	f.downloadRootID = in.GetRef().GetResourceId()
+	f.downloadCalls++
 	proto := f.downloadProtocol
 	if proto == "" {
 		proto = "spaces"
 	}
+	code := f.downloadStatus
+	if len(f.downloadStatusSeq) > 0 {
+		code, f.downloadStatusSeq = f.downloadStatusSeq[0], f.downloadStatusSeq[1:]
+	}
 	return &gateway.InitiateFileDownloadResponse{
-		Status: okStatus(f.downloadStatus),
+		Status: okStatus(code),
 		Protocols: []*gateway.FileDownloadProtocol{{
 			Protocol:         proto,
 			DownloadEndpoint: f.downloadEndpoint,

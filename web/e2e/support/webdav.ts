@@ -42,12 +42,12 @@ export async function mkcol(account: Account, drive: Drive, path: string): Promi
 }
 
 /**
- * upload writes a file and waits until it can be read back.
+ * upload writes a file and returns as soon as OpenCloud accepts it.
  *
- * The wait is #37: right after an upload OpenCloud answers 425 while it
- * post-processes, and a backup started in that window fails. Until the
- * service retries on its own, the test waits for what a person would never
- * notice.
+ * It deliberately does not wait until the file can be read back. Right after
+ * an upload OpenCloud answers 425 while it post-processes, and a backup started
+ * in that window is exactly what a person triggers after saving their work.
+ * The service is expected to wait that out itself (#37).
  */
 export async function upload(
   account: Account,
@@ -61,11 +61,31 @@ export async function upload(
     basicAuth: [account.user, account.password]
   })
   expect([201, 204], res.text()).toContain(res.status)
-  await expect
-    .poll(async () => (await download(account, drive, path)).status, { timeout: 60_000 })
-    .toBe(200)
 }
 
 export function download(account: Account, drive: Drive, path: string) {
   return http(davUrl(drive, path), { basicAuth: [account.user, account.password] })
+}
+
+/**
+ * downloadWhenReady reads a file the service has just written, waiting out
+ * OpenCloud's 425 while it post-processes. The test is the reader here, not
+ * the service, so the wait is the test's to do.
+ */
+export async function downloadWhenReady(
+  account: Account,
+  drive: Drive,
+  path: string
+): Promise<Awaited<ReturnType<typeof download>>> {
+  let res: Awaited<ReturnType<typeof download>> | undefined
+  await expect
+    .poll(
+      async () => {
+        res = await download(account, drive, path)
+        return res.status
+      },
+      { timeout: 60_000 }
+    )
+    .not.toBe(425)
+  return res!
 }

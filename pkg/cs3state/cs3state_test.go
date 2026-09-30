@@ -29,6 +29,8 @@ type fakeSpace struct {
 
 	// listErr, if set, fails ListSpaces.
 	listErr error
+	// openErr, if set, fails OpenFile.
+	openErr error
 	// clobbers makes Upload overwrite silently instead of refusing, which is
 	// the other behaviour reva could have (see the overwrite-semantics
 	// integration test). Create must be safe either way.
@@ -88,6 +90,9 @@ func dirKey(relDir string) string {
 func (f *fakeSpace) OpenFile(_ context.Context, _ cs3.Space, relPath string, _ int64) (io.ReadCloser, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
 	data, ok := f.files[strings.Trim(relPath, "/")]
 	if !ok {
 		return nil, fmt.Errorf("cs3 Stat: code=CODE_NOT_FOUND")
@@ -152,6 +157,27 @@ func newStore(t *testing.T) (*Store, *fakeSpace) {
 		t.Fatalf("New: %v", err)
 	}
 	return store, fake
+}
+
+// A record OpenCloud has not finished processing is neither missing nor
+// readable. Reporting it as missing would let a caller act on a record it has
+// not seen, so it stays an error the caller can recognise.
+func TestStore_GetDoesNotMistakeNotReadyForMissing(t *testing.T) {
+	ctx := context.Background()
+	store, fake := newStore(t)
+	if err := store.Create(ctx, "jobs/space/1", []byte("{}")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fake.openErr = fmt.Errorf("cs3 download: gave up after 2m0s: %w", cs3.ErrNotReady)
+
+	_, err := store.Get(ctx, "jobs/space/1")
+	var notFound state.ErrNotFound
+	if errors.As(err, &notFound) {
+		t.Fatalf("Get = %v, reported as not found", err)
+	}
+	if !errors.Is(err, cs3.ErrNotReady) {
+		t.Fatalf("Get = %v, want ErrNotReady", err)
+	}
 }
 
 func TestStoreContract(t *testing.T) {

@@ -85,11 +85,13 @@ Blockers found between "8d is done" and "it runs somewhere real":
   not the OpenCloud user id, and membership was checked against `sub`, so every
   user saw no Spaces. Fixed; see decisions.md, "Amendments before the first
   real deployment". This alone would have ended the live test at the overview.
-- **Flake, not fixed (already tracked as #37):** `TestIntegration_CS3State/round_trip` failed once with
+- **Flake, fixed in #37:** `TestIntegration_CS3State/round_trip` failed once with
   a `cs3 download: unexpected status 425` (Too Early: the upload was still in
   OpenCloud's post-processing), then passed three times in a row. The state
-  store reads straight after a write. A retry on 425 in the CS3 download path
-  would close it, and the same window can hit the service in production.
+  store reads straight after a write. The CS3 client now retries a "too early"
+  read for up to 2 minutes per file (decisions.md, "Amendments from #37").
+  `TestIntegration_ReadRightAfterUpload` reads files back the moment they are
+  uploaded.
 
 ## Known risks for the live test
 

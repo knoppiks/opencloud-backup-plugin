@@ -7,15 +7,17 @@
 // Per run, fresh:
 //   - SRW and TW keys, generated here and handed to backupd's environment
 //     only. They are never written to disk or logged.
-//   - State, in memory (8f decision 4; switch to a CS3 state Space once #37
-//     is fixed).
+//   - A state prefix in the fixture's state Space, which is durable like a
+//     real deployment's (so the run reads records straight after writing them,
+//     as the service does in production). The Space is provisioned once per
+//     fixture; see stateSpace.
 //   - A repository prefix in the bucket. Key setup is once-only per Space and
 //     the bucket outlives the run, so a second run must not find the first
-//     run's repository.
+//     run's repository, nor the first run's state.
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -43,9 +45,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   buildBinaries(binDir)
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const prefix = `e2e/${stamp}-${randomBytes(3).toString('hex')}/`
+  const runId = `${stamp}-${randomBytes(3).toString('hex')}`
+  const prefix = `e2e/${runId}/`
+  const state = { spaceId: stateSpace(binDir), prefix: `${STATE_PREFIX_ROOT}/${runId}` }
 
-  const backupd = startBackupd(binDir, runDir)
+  const backupd = startBackupd(binDir, runDir, state)
   await waitForReady(backupd, runDir)
 
   process.env.E2E_RUN_DIR = runDir
@@ -97,11 +101,49 @@ function buildBinaries(binDir: string): void {
   }
 }
 
+/** STATE_PREFIX_ROOT is the folder every run's state goes under. */
+const STATE_PREFIX_ROOT = '.backup-service-state-e2e'
+const STATE_SPACE_NAME = 'Backup service state (e2e)'
+
+/**
+ * stateSpace returns the fixture's state Space, provisioning it on first use.
+ *
+ * The id is appended to fixture.env, the place the README tells a person
+ * running backupd by hand to put it. That file lives exactly as long as the
+ * fixture does (up.sh rewrites it), so a fresh fixture gets a fresh Space and
+ * a long-lived one keeps reusing its own.
+ */
+function stateSpace(binDir: string): string {
+  const existing = fixtureEnv().STATE_SPACE_ID
+  if (existing) {
+    return existing
+  }
+  const env: NodeJS.ProcessEnv = { ...process.env, ...fixtureEnv() }
+  // provision-state-space refuses to run while one is configured.
+  delete env.STATE_SPACE_ID
+  const result = spawnSync(
+    join(binDir, 'backupd'),
+    ['provision-state-space', '-name', STATE_SPACE_NAME],
+    { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }
+  )
+  // backupd logs to stdout as well; the id is the command's last line.
+  const id = (result.stdout ?? '').trim().split('\n').at(-1)?.trim() ?? ''
+  if (result.status !== 0 || id === '') {
+    throw new Error('backupd provision-state-space failed; see its output above')
+  }
+  appendFileSync(join(FIXTURE_DIR, 'fixture.env'), `export STATE_SPACE_ID='${id}'\n`)
+  return id
+}
+
 function wrapKey(): string {
   return randomBytes(32).toString('base64')
 }
 
-function startBackupd(binDir: string, runDir: string): ChildProcess {
+function startBackupd(
+  binDir: string,
+  runDir: string,
+  state: { spaceId: string; prefix: string }
+): ChildProcess {
   const workDir = join(runDir, 'work')
   mkdirSync(workDir)
   const log = openSync(join(runDir, 'backupd.log'), 'a')
@@ -112,7 +154,8 @@ function startBackupd(binDir: string, runDir: string): ChildProcess {
       ...process.env,
       ...fixtureEnv(),
       BACKUPD_ADDR: `:${BACKUPD_PORT}`,
-      STATE_BACKEND: 'memory',
+      STATE_SPACE_ID: state.spaceId,
+      STATE_PREFIX: state.prefix,
       SRW_KEY: wrapKey(),
       TW_KEY: wrapKey(),
       BACKUP_WORK_DIR: workDir,
