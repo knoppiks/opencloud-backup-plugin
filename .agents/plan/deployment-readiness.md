@@ -101,9 +101,14 @@ Blockers found between "8d is done" and "it runs somewhere real":
   `/backup-vault/...`. The ingress path must be `/backup/api`.
 - **Gateway reachability.** OpenCloud binds its gateway gRPC to loopback by
   default. `OC_GATEWAY_GRPC_ADDR=0.0.0.0:9142` plus a Service port are needed.
-  Whether reva then hands out other loopback addresses (registry via NATS) to
-  an external client is unverified; the fixture did not show it, but the
-  fixture is not a pod network.
+  - **Confirmed and fixed for the data path on 7.5.0.** The gateway hands out
+    `http://localhost:9158/data`, so the fix is `STORAGE_USERS_HTTP_ADDR`
+    plus `CS3_DATA_SERVER_URL` (decisions.md, "Amendments from moving to
+    OpenCloud 7.5.0").
+  - Other loopback addresses (the registry via NATS) have not been seen, but
+    the fixture is not a pod network.
+- **The deployment runs OpenCloud 7.5.0**, and Renovate keeps updating it.
+  Every upgrade has to pass the fixture suites before it is merged.
 - **Plaintext gRPC.** `CS3_GATEWAY_ADDR` has no TLS option; it must stay on the
   cluster network.
 - **First containerised run.** The fixture runs backupd on the host. The

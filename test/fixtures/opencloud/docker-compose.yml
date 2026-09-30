@@ -5,17 +5,20 @@
 # one-time `init` (generates secrets into ./config/opencloud.yaml) before the
 # server starts. up.sh handles init + start + secret extraction.
 #
-# Pinned images (Phase 0, Phase 8): opencloudeu/opencloud-rolling:7.3.0,
-# caddy:2.10-alpine
+# Pinned images: opencloudeu/opencloud-rolling:7.5.0 by digest (the image the
+# first real deployment runs; keep up.sh's IMAGE identical), caddy:2.10-alpine
 # Exposed:
 #   9200 -> HTTPS single origin, served by the proxy below: OpenCloud plus
 #           /backup/* routed to a backupd on the host (sub-phase 8c)
 #   9201 -> OpenCloud directly, bypassing the proxy, for debugging
 #   9142 -> CS3 gateway gRPC (bound to 0.0.0.0 for out-of-container workers)
+#   9158 -> the storage provider's data server. From 7.5 the gateway hands CS3
+#           clients this address instead of the public data gateway, so an
+#           out-of-container worker needs it (CS3_DATA_SERVER_URL)
 
 services:
   opencloud:
-    image: opencloudeu/opencloud-rolling:7.3.0
+    image: opencloudeu/opencloud-rolling:7.5.0@sha256:6db1cfb06d430a663f16e9f33dcd4596d82a4875be0b4df233c26ce5f667ea74
     container_name: opencloud-fixture
     # `entrypoint: opencloud` + no command == `server`.
     #
@@ -25,12 +28,17 @@ services:
     ports:
     - "9201:9200"
     - "9142:9142"
+    - "9158:9158"
     environment:
       OC_INSECURE: "true"
       PROXY_HTTP_ADDR: "0.0.0.0:9200"
       OC_URL: "https://localhost:9200"
       # Expose the CS3 gateway gRPC outside the container (default is localhost).
       OC_GATEWAY_GRPC_ADDR: "0.0.0.0:9142"
+      # Bind the data server beyond loopback, as a deployment has to. Its
+      # advertised URL stays http://localhost:9158/data; backupd is pointed at
+      # 127.0.0.1 with CS3_DATA_SERVER_URL (up.sh), so the rewrite is exercised.
+      STORAGE_USERS_HTTP_ADDR: "0.0.0.0:9158"
       # Test-only: enable HTTP basic auth so tests can seed data without OIDC.
       PROXY_ENABLE_BASIC_AUTH: "true"
       OC_LOG_LEVEL: "error"

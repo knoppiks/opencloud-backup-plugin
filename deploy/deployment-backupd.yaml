@@ -97,7 +97,7 @@ spec:
         - name: OIDC_AUDIENCE
           value: "REPLACE_ME_WITH_THE_OIDC_CLIENT_ID"
         # Admin detection (decisions.md #13). Preferred: graph appRoleAssignments
-        # — set OC_BASE_URL; OC_ADMIN_APP_ROLE_ID defaults to the pinned 7.3.0
+        # — set OC_BASE_URL; OC_ADMIN_APP_ROLE_ID defaults to the pinned 7.3.0–7.5.0
         # Admin role id (phase-0-findings.md) and only needs overriding on other
         # builds. The fallback is ADMIN_SUBJECT_ALLOWLIST: comma-separated
         # OpenCloud user ids (as its user management shows them), NOT OIDC
@@ -136,6 +136,15 @@ spec:
         # gRPC with no TLS option: keep it on the cluster network.
         - name: CS3_GATEWAY_ADDR
           value: "opencloud-gateway:9142"
+        # OpenCloud 7.5 and later: where the storage provider's data server is
+        # reachable, scheme and host only. 7.5 hands CS3 clients that server's
+        # own address (http://localhost:9158/data by default) instead of the
+        # public data gateway. Set STORAGE_USERS_HTTP_ADDR=0.0.0.0:9158 on
+        # OpenCloud and publish the port like the gateway's. The path OpenCloud
+        # returns is kept. Plaintext, token-checked: cluster network only.
+        # Leave it unset for OpenCloud 7.4 and earlier.
+        - name: CS3_DATA_SERVER_URL
+          value: "http://opencloud-gateway:9158"
         - name: OC_SERVICE_ACCOUNT_ID
           valueFrom:
             secretKeyRef:
