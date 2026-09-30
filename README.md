@@ -597,9 +597,11 @@ make e2e
 ```
 
 `make e2e` starts its own `backupd` on `:8080`, so stop one started by hand
-first. That instance has in-memory state, wrap keys generated per run, and a
-fresh repository prefix in the dev Garage. It builds `takeout` and `decrypt`
-alongside.
+first. That instance keeps its state in a CS3 state Space, as a real deployment
+does, under a fresh prefix per run. It generates wrap keys per run and uses a
+fresh repository prefix in the dev Garage. If `fixture.env` has no
+`STATE_SPACE_ID`, the first run provisions a state Space and appends its id
+there. It builds `takeout` and `decrypt` alongside.
 
 The run goes through the flow in order:
 

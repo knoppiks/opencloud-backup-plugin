@@ -19,7 +19,7 @@ import {
   readRecoveryKey
 } from './support/keys'
 import { apiJson, openVault, signIn, type Session } from './support/session'
-import { download, mkcol, personalDrive, upload, type Drive } from './support/webdav'
+import { downloadWhenReady, mkcol, personalDrive, upload, type Drive } from './support/webdav'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -220,7 +220,7 @@ test('the backup comes back into a new folder, and the link opens it', async () 
   expect(restoreFolder, await done.innerText()).toBeDefined()
 
   for (const [path, content] of Object.entries(files)) {
-    const res = await download(FAMILY, drive, `${restoreFolder}/${path}`)
+    const res = await downloadWhenReady(FAMILY, drive, `${restoreFolder}/${path}`)
     expect(res.status, `${restoreFolder}/${path}`).toBe(200)
     expect(sha256(res.body)).toBe(sha256(content))
   }

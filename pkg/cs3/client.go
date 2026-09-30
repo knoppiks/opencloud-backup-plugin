@@ -108,6 +108,13 @@ type Client struct {
 	http *http.Client
 	// stall is how long a transfer may make no progress; zero uses the default.
 	stall time.Duration
+	// notReadyWait is how long a "too early" read is retried; zero uses the
+	// default (notready.go).
+	notReadyWait time.Duration
+	// now and sleep drive the retry wait; nil uses the real clock. Tests set
+	// them to run the wait without taking its time.
+	now   func() time.Time
+	sleep func(ctx context.Context, d time.Duration) error
 }
 
 var _ SpaceReader = (*Client)(nil)
@@ -224,6 +231,9 @@ func (c *Client) listDir(ctx context.Context, space Space, relDir string) ([]Ent
 // transfer token (Spike 3, steps 6–7). A non-zero offset is requested with a
 // Range header and, if the gateway ignores it, satisfied by discarding the
 // leading bytes so callers always observe the requested position.
+//
+// A file OpenCloud has not finished processing is retried for a bounded
+// period before ErrNotReady is returned (notready.go).
 func (c *Client) OpenFile(ctx context.Context, space Space, relPath string, offset int64) (io.ReadCloser, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("cs3 open file: negative offset")
@@ -232,7 +242,14 @@ func (c *Client) OpenFile(ctx context.Context, space Space, relPath string, offs
 	if rel == "" {
 		return nil, fmt.Errorf("cs3 open file: empty path")
 	}
+	return c.openWhenReady(ctx, func() (io.ReadCloser, error) {
+		return c.openOnce(ctx, space, rel, offset)
+	})
+}
 
+// openOnce makes one download attempt. Every attempt initiates its own
+// download: a transfer token is not assumed to be reusable.
+func (c *Client) openOnce(ctx context.Context, space Space, rel string, offset int64) (io.ReadCloser, error) {
 	authCtx, token, err := c.authContext(ctx)
 	if err != nil {
 		return nil, err
@@ -242,6 +259,9 @@ func (c *Client) OpenFile(ctx context.Context, space Space, relPath string, offs
 	})
 	if err != nil {
 		return nil, fmt.Errorf("cs3 initiate download: %w", err)
+	}
+	if res.GetStatus().GetCode() == rpc.Code_CODE_TOO_EARLY {
+		return nil, ErrNotReady
 	}
 	if err := c.status(res.GetStatus(), "InitiateFileDownload"); err != nil {
 		return nil, err
@@ -316,6 +336,9 @@ func (c *Client) stream(ctx context.Context, endpoint, accessToken, transferToke
 		// The gateway answers a missing file on the data path with a plain 404;
 		// callers distinguish "not there" from "went wrong" (pkg/cs3state).
 		return fail(ErrNotFound)
+	case http.StatusTooEarly:
+		// Uploaded but still in OpenCloud's post-processing; OpenFile retries.
+		return fail(ErrNotReady)
 	default:
 		// Status only — the response body may echo internal detail.
 		return fail(fmt.Errorf("cs3 download: unexpected status %d", resp.StatusCode))

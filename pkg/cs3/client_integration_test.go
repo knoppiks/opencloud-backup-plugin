@@ -5,8 +5,10 @@ package cs3_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -230,6 +232,55 @@ func TestIntegration_ZeroByteUpload(t *testing.T) {
 	if got := time.Unix(found.MTimeUnix, 0).UTC(); !got.Equal(mtime) {
 		t.Errorf("mtime = %s, want %s: the requested mtime survived initiation before, "+
 			"so losing it here is a change in reva worth noticing", got, mtime)
+	}
+}
+
+// TestIntegration_ReadRightAfterUpload reads files back the moment they are
+// uploaded (#37). OpenCloud post-processes an upload after accepting it and
+// answers reads in that window with 425; before the client waited that out,
+// this is what failed roughly one fixture run in three, in whichever test
+// happened to read back what it had just written.
+//
+// Several files, each read back at once, so the window is hit on most runs
+// rather than by luck.
+func TestIntegration_ReadRightAfterUpload(t *testing.T) {
+	client, ctx := fixtureClient(t)
+	space := writableFixtureSpace(ctx, t, client)
+
+	dir := fmt.Sprintf("read-after-upload-%d", time.Now().UnixNano())
+	if err := client.MakeDir(ctx, space, dir); err != nil {
+		t.Fatalf("MakeDir: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := client.Delete(cleanupCtx, space, dir); err != nil {
+			t.Logf("could not remove %s: %v", dir, err)
+		}
+	})
+
+	for i := range 5 {
+		content := make([]byte, 64*1024)
+		if _, err := rand.Read(content); err != nil {
+			t.Fatalf("rand: %v", err)
+		}
+		rel := path.Join(dir, fmt.Sprintf("fresh-%d.bin", i))
+		if err := client.Upload(ctx, space, rel, int64(len(content)), time.Time{}, bytes.NewReader(content)); err != nil {
+			t.Fatalf("Upload %s: %v", rel, err)
+		}
+
+		rc, err := client.OpenFile(ctx, space, rel, 0)
+		if err != nil {
+			t.Fatalf("OpenFile %s straight after upload: %v", rel, err)
+		}
+		got, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if !bytes.Equal(got, content) {
+			t.Fatalf("%s: read back %d bytes that differ from the %d uploaded", rel, len(got), len(content))
+		}
 	}
 }
 

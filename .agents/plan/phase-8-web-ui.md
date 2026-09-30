@@ -732,8 +732,11 @@ Other details:
   the three binaries into a run directory under `E2E_RUN_ROOT` (default:
   tmpdir), generates SRW and TW keys, and passes the run directory and
   repository prefix to the specs through the environment.
-- **Waits for #37.** An upload is followed by polling the file until it reads
-  200. The service still has no retry of its own.
+- **Waited for #37; no longer does.** An upload used to be followed by
+  polling the file until it read 200, because the service had no retry of its
+  own. Since #37 the upload returns as soon as OpenCloud accepts it, and the
+  service waits out the 425 itself. The test still waits when *it* is the
+  reader (restored files, `downloadWhenReady`).
 - **`SpaceStatus.vue`'s `state-label` gained `data-state`**, as `SpaceCard`
   has, so the E2E waits on a state rather than on English text.
 - **System Chrome crashed ("Target crashed") on a memory-tight developer
@@ -745,7 +748,10 @@ Other details:
 
 Not covered, and recorded rather than dropped:
 
-- the state store is in memory (decision 4, until #37);
+- ~~the state store is in memory (decision 4, until #37)~~. Closed with #37:
+  the run uses a CS3 state Space. It is provisioned once per fixture with
+  `backupd provision-state-space`, and its id is appended to `fixture.env`.
+  Each run writes under its own `STATE_PREFIX`;
 - the app-menu entry is not clicked;
 - shared Spaces and roles below manager are not driven in a browser (their
   API rules are covered by the fixture's Go tests);

@@ -1076,6 +1076,37 @@ is listed here so the corrections are themselves on the record:
   validator, resolver and CS3 Space list. Going back to `sub` in `access.go`
   fails 125 unit tests, and the integration test reports `got []`.
 
+### Amendments from #37 (reading files OpenCloud has not finished with)
+
+- **"Too early" is not ready, not missing and not broken.** OpenCloud accepts
+  an upload before post-processing (virus scan and the like) has run, and
+  refuses reads in that window: HTTP 425 on the data path, `CODE_TOO_EARLY`
+  on the gateway. The CS3 client used to treat that like any other refusal and
+  fail at once. It now retries such a read, in one place (`cs3.Client.OpenFile`).
+  That covers both callers: the service reading its own state records straight
+  after writing them, and a backup reading a file a person saved just before
+  the run.
+  - Backoff starts at 250 ms and doubles to a 5 s cap. Each attempt initiates
+    its own download, because a transfer token is not assumed to be reusable.
+  - Only "too early" is retried. 404, 401, 5xx and every other gateway code
+    fail at once, exactly as before.
+- **The bound is 2 minutes per file** (`cs3.DefaultNotReadyWait`, settable
+  with `cs3.WithNotReadyWait`, no environment variable yet).
+  - It matches `DefaultStallTimeout`. Both say how long OpenCloud may go
+    without delivering a file before the service stops waiting for it.
+  - 2 minutes covers plain post-processing (well under a second on the
+    fixture) and a virus scan of a mid-sized file.
+  - A per-file bound is enough; no per-run budget is needed. A file that stays
+    unreadable fails the run it is part of, so a run waits out at most one
+    full window. Files that become ready inside the window were being processed
+    in parallel on the server, so a later wait is shorter than a first.
+  - The run deadline (`DefaultRunTimeout`) still outranks the window: the wait
+    ends when the run's context does.
+- **Running out of the window stays a failure** (`cs3.ErrNotReady`). It is
+  never reported as "not found": in the state store that would let a caller
+  act on a record it has not seen. A backup that cannot read a file is still
+  discarded, never completed without it.
+
 ---
 
 ## Trust & key model
