@@ -1107,6 +1107,36 @@ is listed here so the corrections are themselves on the record:
   act on a record it has not seen. A backup that cannot read a file is still
   discarded, never completed without it.
 
+### Amendments from moving to OpenCloud 7.5.0 (first real deployment)
+
+- **Supported range: 7.3.0 to 7.5.0.** The fixture is pinned to 7.5.0 by the
+  digest the home deployment runs. The full OpenCloud suite and the browser E2E
+  pass on it. The admin app-role id and the grants format are unchanged.
+- **7.5.0 no longer routes CS3 clients through the data gateway.**
+  opencloud-eu/opencloud#3289 hard-codes `expose_data_server: true` and
+  removes `STORAGE_USERS_EXPOSE_DATA_SERVER`. `InitiateFileDownload` and
+  `InitiateFileUpload` now return the storage provider's own address
+  (`STORAGE_USERS_DATA_SERVER_URL`, default `http://localhost:9158/data`)
+  with no transfer token. Every read and write from a worker outside the pod
+  failed with "connection refused". The PR says OpenCloud does not expose the
+  CS3 API. That makes CS3 (decision #11) an interface upstream can change
+  without notice, and each OpenCloud upgrade has to be tested against the
+  fixture first.
+- **Fixed on the plugin side: `CS3_DATA_SERVER_URL`** (scheme and host only).
+  The client keeps the path the gateway returns and replaces the scheme and
+  host. A path in the setting is refused at startup, because it would
+  otherwise be silently ignored.
+  - The rejected alternative was setting `STORAGE_USERS_DATA_SERVER_URL` on
+    OpenCloud. That needs no plugin code, but it sends OpenCloud's own
+    proxy-to-data-server traffic out through the cluster Service and back
+    into the same pod.
+  - Either way OpenCloud has to bind the data server beyond loopback
+    (`STORAGE_USERS_HTTP_ADDR=0.0.0.0:9158`) and publish the port. The data
+    server answers 401 without a token and is plaintext, the same class as
+    the gRPC gateway.
+  - The owner decided against a NetworkPolicy limiting 9142/9158 to the
+    backupd pod. That is recorded here, not assumed.
+
 ---
 
 ## Trust & key model

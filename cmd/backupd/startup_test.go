@@ -363,3 +363,33 @@ func TestImageEntrypointTakesNoArguments(t *testing.T) {
 		t.Error("the deployment must set no args: anything there is read as an operator subcommand")
 	}
 }
+
+func TestCS3ClientOptions_DataServerURL(t *testing.T) {
+	t.Setenv("CS3_DATA_SERVER_URL", "")
+	opts, err := cs3ClientOptions()
+	if err != nil || len(opts) != 1 {
+		t.Fatalf("unset: %d options, %v; want the HTTP client only", len(opts), err)
+	}
+
+	t.Setenv("CS3_DATA_SERVER_URL", "http://opencloud.files.svc.cluster.local:9158")
+	opts, err = cs3ClientOptions()
+	if err != nil || len(opts) != 2 {
+		t.Fatalf("set: %d options, %v; want the HTTP client and the origin", len(opts), err)
+	}
+
+	// A path would be silently ignored, so it is refused rather than accepted.
+	t.Setenv("CS3_DATA_SERVER_URL", "http://opencloud:9158/data")
+	if _, err := cs3ClientOptions(); err == nil || !strings.Contains(err.Error(), "CS3_DATA_SERVER_URL") {
+		t.Fatalf("with a path: err = %v, want a refusal naming the variable", err)
+	}
+}
+
+func TestDialCS3_RefusesABadDataServerURL(t *testing.T) {
+	t.Setenv("CS3_GATEWAY_ADDR", "127.0.0.1:1")
+	t.Setenv("CS3_DATA_SERVER_URL", "not a url")
+	client, closeFn, err := dialCS3()
+	defer closeFn()
+	if err == nil || client != nil {
+		t.Fatalf("dialCS3 = %v, %v; want a refusal", client, err)
+	}
+}

@@ -182,6 +182,10 @@ func (c *Client) Upload(ctx context.Context, space Space, relPath string, size i
 	if endpoint == "" {
 		return fmt.Errorf("cs3 initiate upload: no upload endpoint returned")
 	}
+	endpoint, err = c.dataEndpoint(endpoint)
+	if err != nil {
+		return err
+	}
 	return c.put(ctx, endpoint, token, transfer, size, modTime, r)
 }
 

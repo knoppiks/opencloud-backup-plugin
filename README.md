@@ -89,6 +89,11 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
 
 ## Deployment preconditions
 
+**Supported OpenCloud versions: 7.3.0 to 7.5.0.** The fixture the tests run
+against is pinned to 7.5.0 by digest. The service talks to OpenCloud over CS3,
+which OpenCloud does not treat as a public interface, so test a new OpenCloud
+release against the fixture before upgrading a deployment that runs backups.
+
 The image is published as `ghcr.io/knoppiks/opencloud-backupd` for every
 release tag, or built from the `Dockerfile` in this repository (`make image`). It
 contains the service
@@ -219,7 +224,7 @@ gets for free. Copying into a running pod does nothing until it restarts.
 
 **OpenCloud's Content Security Policy has to allow WebAssembly.** The Recovery
 Key's key derivation (Argon2id) runs in the browser as WebAssembly, and the
-default policy of OpenCloud 7.3.0 (`script-src 'self' 'unsafe-inline'`) blocks
+default policy of OpenCloud 7.3.0 to 7.5.0 (`script-src 'self' 'unsafe-inline'`) blocks
 compiling it. Everything else still works, so the failure shows up late: setup,
 "Check my Recovery Key" and the key replacement all fail in the browser. Add
 `'wasm-unsafe-eval'` to `script-src` in the CSP file OpenCloud reads
@@ -244,9 +249,18 @@ blocked.
 In order, for a Kubernetes deployment next to an existing OpenCloud. `deploy/`
 holds the manifests; every `REPLACE_ME` in them is refused at startup.
 
-1. **OpenCloud: expose the gateway.** Set `OC_GATEWAY_GRPC_ADDR=0.0.0.0:9142`
-   and add port 9142 to a Service. Point `CS3_GATEWAY_ADDR` at it. The
-   connection is plaintext gRPC, so keep it on the cluster network.
+1. **OpenCloud: expose the gateway and the data server.**
+   - Set `OC_GATEWAY_GRPC_ADDR=0.0.0.0:9142` and add port 9142 to a Service.
+     Point `CS3_GATEWAY_ADDR` at it.
+   - From OpenCloud 7.5 on, also set `STORAGE_USERS_HTTP_ADDR=0.0.0.0:9158` and
+     add port 9158 to the Service. Point `CS3_DATA_SERVER_URL` at it, scheme and
+     host only (for example `http://opencloud.files.svc.cluster.local:9158`).
+     7.5 hands CS3 clients the storage provider's own address, by default
+     `http://localhost:9158/data`, instead of the public data gateway. The
+     service keeps that path and replaces the scheme and host. OpenCloud's own
+     routing is unchanged.
+   - Both are plaintext and check the service account's token on every
+     request. Keep them on the cluster network.
 2. **OpenCloud: the CSP override** (above).
 3. **Secrets.** Two fresh 32-byte keys (`SRW_KEY`, `TW_KEY`) and OpenCloud's
    service account id and secret (`service_account_id` and
@@ -557,7 +571,7 @@ make web-lint web-typecheck web-test web-build
 To see it in a browser, against the pinned OpenCloud:
 
 ```sh
-make dev-up                      # Garage + OpenCloud 7.3.0 + the fixture proxy, seeded
+make dev-up                      # Garage + OpenCloud 7.5.0 + the fixture proxy, seeded
 make web-install-fixture         # build, install into the fixture, verify it registered
 ```
 

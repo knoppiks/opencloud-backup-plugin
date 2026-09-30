@@ -69,7 +69,11 @@ func runProvisionStateSpace(ctx context.Context, args []string, logger *slog.Log
 
 	gw := gateway.NewGatewayAPIClient(conn)
 	auth := cs3.NewCachedAuth(cs3.ServiceAccountAuth{Gateway: gw, ClientID: saID, Secret: saSecret})
-	client := cs3.NewClient(gw, auth, cs3.WithHTTPClient(dataGatewayClient()))
+	opts, err := cs3ClientOptions()
+	if err != nil {
+		return err
+	}
+	client := cs3.NewClient(gw, auth, opts...)
 
 	ctx, cancel := context.WithTimeout(ctx, provisionTimeout)
 	defer cancel()

@@ -9,7 +9,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-IMAGE="opencloudeu/opencloud-rolling:7.3.0"
+IMAGE="opencloudeu/opencloud-rolling:7.5.0@sha256:6db1cfb06d430a663f16e9f33dcd4596d82a4875be0b4df233c26ce5f667ea74"
 # Root helper for the file-ownership chores the host user may not be allowed to
 # do itself (same image down.sh --purge uses).
 HELPER_IMAGE="alpine:3"
@@ -103,6 +103,8 @@ done
 
 {
   echo "export CS3_GATEWAY_ADDR=127.0.0.1:9142"
+  # Where the data server is reachable from the host (docker-compose.yml, 9158).
+  echo "export CS3_DATA_SERVER_URL=http://127.0.0.1:9158"
   emit CS3_SERVICE_ACCOUNT_ID "${sa_id}"
   emit CS3_SERVICE_ACCOUNT_SECRET "${sa_secret}"
   emit OC_JWT_SECRET "${jwt}"

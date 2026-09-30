@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -111,6 +112,9 @@ type Client struct {
 	// notReadyWait is how long a "too early" read is retried; zero uses the
 	// default (notready.go).
 	notReadyWait time.Duration
+	// dataOrigin, if set, replaces the scheme and host of every data endpoint
+	// the gateway returns (dataorigin.go).
+	dataOrigin *url.URL
 	// now and sleep drive the retry wait; nil uses the real clock. Tests set
 	// them to run the wait without taking its time.
 	now   func() time.Time
@@ -269,6 +273,10 @@ func (c *Client) openOnce(ctx context.Context, space Space, rel string, offset i
 	endpoint, transfer := pickDownloadProtocol(res.GetProtocols())
 	if endpoint == "" {
 		return nil, fmt.Errorf("cs3 initiate download: no download endpoint returned")
+	}
+	endpoint, err = c.dataEndpoint(endpoint)
+	if err != nil {
+		return nil, err
 	}
 
 	return c.stream(ctx, endpoint, token, transfer, offset)

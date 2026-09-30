@@ -566,8 +566,34 @@ func dialCS3() (*cs3.Client, func(), error) {
 		ClientID: os.Getenv("OC_SERVICE_ACCOUNT_ID"),
 		Secret:   os.Getenv("OC_SERVICE_ACCOUNT_SECRET"),
 	})
-	client := cs3.NewClient(gw, auth, cs3.WithHTTPClient(dataGatewayClient()))
+	opts, err := cs3ClientOptions()
+	if err != nil {
+		_ = conn.Close()
+		return nil, noop, err
+	}
+	client := cs3.NewClient(gw, auth, opts...)
 	return client, func() { _ = conn.Close() }, nil
+}
+
+// cs3ClientOptions is the data-path configuration every CS3 client here uses.
+//
+// CS3_DATA_SERVER_URL is needed from OpenCloud 7.5 on, where the gateway hands
+// out the storage provider's own address (http://localhost:9158/data by
+// default) instead of the public data gateway. It names where that data server
+// is reachable from this service — scheme and host only, the path OpenCloud
+// returns is kept. Unset, the gateway's URL is used as it is, which is right
+// for OpenCloud up to 7.4.
+func cs3ClientOptions() ([]cs3.ClientOption, error) {
+	opts := []cs3.ClientOption{cs3.WithHTTPClient(dataGatewayClient())}
+	raw := strings.TrimSpace(os.Getenv("CS3_DATA_SERVER_URL"))
+	if raw == "" {
+		return opts, nil
+	}
+	origin, err := cs3.ParseDataServerOrigin(raw)
+	if err != nil {
+		return nil, fmt.Errorf("CS3_DATA_SERVER_URL: %w", err)
+	}
+	return append(opts, cs3.WithDataServerOrigin(origin)), nil
 }
 
 // buildStateStore chooses where the service keeps its own state.
