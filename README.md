@@ -281,8 +281,19 @@ holds the manifests; every `REPLACE_ME` in them is refused at startup.
    `/backup`, because the extension's own pages live under `/backup-vault/`.
 7. **The extension** (above), then restart OpenCloud.
 8. **A target.** Seed one with `BOOTSTRAP_*` (granted to all users), or add one
-   as an OpenCloud admin through `/backup/api/v1/admin/targets`. The bucket key
-   needs read and write.
+   as an OpenCloud admin through `/backup/api/v1/admin/targets` or Backup
+   Vault's admin view. The bucket key needs read and write.
+   - "Check connection" tells the admin only a coarse verdict, such as
+     "Endpoint not reachable". The service log has the cause, in a
+     `target connection check failed` line: the name that did not resolve,
+     the refused connection, the untrusted certificate, or what the endpoint
+     answered. Credentials are never in it.
+   - **A destination whose certificate comes from a private CA** is "not
+     reachable" until the service trusts that CA. Mount the CA certificate
+     into the pod (for example from a ConfigMap) and point `SSL_CERT_DIR` at
+     the directory. That adds to the image's public CA bundle. Do not use
+     `SSL_CERT_FILE` for this: it replaces the bundle, and the service then
+     cannot verify a publicly certified OpenCloud issuer.
 9. **Check it.** `/readyz` answers 200 once the gateway is reachable. In
    OpenCloud, Backup Vault appears in the app menu. Set up one Space, run
    "Back up now", and restore from it before relying on it.

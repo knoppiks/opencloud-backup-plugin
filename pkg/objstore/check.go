@@ -15,10 +15,16 @@ package objstore
 //     upstream error would turn "is my bucket reachable" into a probe of
 //     whatever else answers on the household's network, with the reply quoted
 //     verbatim. Six named outcomes carry everything an admin can act on.
+//
+// The operator is a different audience. The coarse outcome alone cannot tell
+// a name that does not resolve from a certificate the service does not trust,
+// so a failed check also writes its cause to the service log (checklog.go).
+// That log is the operator's, not the admin's; nothing of it reaches the API.
 
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -72,6 +78,8 @@ const DefaultCheckTimeout = 15 * time.Second
 type S3Checker struct {
 	// Timeout bounds the check; zero means DefaultCheckTimeout.
 	Timeout time.Duration
+	// Logger receives the cause of every failed check; nil logs nothing.
+	Logger *slog.Logger
 }
 
 var _ Checker = S3Checker{}
@@ -90,9 +98,13 @@ func (c S3Checker) Check(ctx context.Context, cfg S3Config, prefix string) Check
 	if err != nil {
 		// The configuration could not even be assembled — a missing bucket
 		// name, or an unusable ambient AWS config. Not a network verdict.
+		c.report(CheckUnknown, cfg, err)
 		return CheckUnknown
 	}
-	return classifyCheck(listOneObject(ctx, store.client, cfg.Bucket, prefix))
+	err = listOneObject(ctx, store.client, cfg.Bucket, prefix)
+	outcome := classifyCheck(err)
+	c.report(outcome, cfg, err)
+	return outcome
 }
 
 // objectLister is the part of the S3 client the check uses, so every verdict

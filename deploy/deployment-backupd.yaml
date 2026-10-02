@@ -202,6 +202,15 @@ spec:
         # process memory, decisions.md #14.)
         - name: BACKUP_WORK_DIR
           value: "/work"
+        # A backup destination whose certificate comes from a private CA: mount
+        # the CA (e.g. a ConfigMap at /etc/ssl/private-ca) and add the
+        # directory. SSL_CERT_DIR ADDS to the image's public bundle, which the
+        # OIDC issuer usually needs; SSL_CERT_FILE would REPLACE it. Without the
+        # CA, "Check connection" says the endpoint is not reachable, and the
+        # log line "target connection check failed" says the certificate is
+        # not trusted.
+        # - name: SSL_CERT_DIR
+        #   value: "/etc/ssl/private-ca"
         # Phase 6 — durable state. The service keeps its own memory (schedules,
         # run history, wrapped key envelopes, target records) in a dedicated
         # OpenCloud Space reached over CS3 with the service account. That Space
