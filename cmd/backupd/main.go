@@ -327,9 +327,9 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	opts = append(opts,
 		api.WithAuthorizer(targetStore),
 		api.WithTargetStore(targetStore),
-		// The admin's connection check. Read-only and coarse by construction;
-		// see pkg/objstore/check.go.
-		api.WithTargetChecker(objstore.S3Checker{}),
+		// The admin's connection check. Read-only and coarse towards the API;
+		// the cause of a failure goes to this log only (pkg/objstore).
+		api.WithTargetChecker(objstore.S3Checker{Logger: logger}),
 	)
 
 	// --- key service (Phase 3) -------------------------------------------
