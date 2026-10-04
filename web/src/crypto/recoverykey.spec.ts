@@ -1,9 +1,9 @@
 // Properties of the Recovery Key that the shared vectors cannot express,
 // because they are about every key rather than a handful of fixed ones.
 //
-// The display shape matters more than it looks: the wizard lays the key out in
-// a fixed grid, the confirmation gate asks for a specific group, and the
-// decrypt CLI prompts for it. All three were written against documentation that
+// The display shape matters more than it looks: the confirmation gate asks for
+// a specific group and draws where it sits in the key, and the decrypt CLI
+// prompts for it. All three were written against documentation that
 // said seven groups of five until a test finally measured it.
 import { describe, expect, it } from 'vitest'
 import { bytesToHex, equalBytes } from './bytes'
@@ -16,7 +16,8 @@ import {
   recoveryKeyGroups,
   RK_ENTROPY_BYTES,
   RK_GROUP_COUNT,
-  RK_PREFIX
+  RK_PREFIX,
+  RK_SYMBOL_COUNT
 } from './recoverykey'
 
 const GROUP_SIZES = [5, 5, 5, 5, 5, 5, 4]
@@ -171,6 +172,7 @@ describe('recovery key fragments', () => {
     expect(groups).toHaveLength(RK_GROUP_COUNT)
     expect(groups.map((group) => group.length)).toEqual(GROUP_SIZES)
     expect(`${RK_PREFIX}-${groups.join('-')}`).toBe(display)
+    expect(groups.join('')).toHaveLength(RK_SYMBOL_COUNT)
   })
 
   it('refuses something that is not a display string', () => {

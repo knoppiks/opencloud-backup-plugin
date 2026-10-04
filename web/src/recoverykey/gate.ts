@@ -6,10 +6,47 @@
 // could be read off the screen before it is hidden, the whole key is friction a
 // family audience would work around.
 
-import { normalizeRecoveryKeyInput, recoveryKeyGroups, RK_GROUP_COUNT } from '../crypto'
+//
+// Groups are counted after the `ocbk1-` prefix: group 1 is the first block of
+// five after it (#55). The saved key has eight dash-separated parts, so the
+// form says "after ocbk1-" and draws where the asked group sits (gateHint)
+// rather than relying on a number alone.
+
+import {
+  normalizeRecoveryKeyInput,
+  recoveryKeyGroups,
+  RK_GROUP_COUNT,
+  RK_GROUP_SIZE,
+  RK_PREFIX,
+  RK_SYMBOL_COUNT
+} from '../crypto'
 
 /** GATE_GROUPS is how many groups of the key the confirmation gate asks for. */
 export const GATE_GROUPS = 2
+
+/** GateHintPart is one dash-separated part of the key's shape. */
+export interface GateHintPart {
+  text: string
+  /** asked marks the group the person is asked to type. */
+  asked: boolean
+}
+
+const HIDDEN_SYMBOL = '•'
+const ASKED_SYMBOL = '_'
+
+/**
+ * gateHint draws the shape of a saved key with one group marked, so "which
+ * group" reads the same however a person counts: the prefix as text, every
+ * other group as dots, the asked one as blanks. It carries no key material.
+ */
+export function gateHint(group: number): GateHintPart[] {
+  const groups = Array.from({ length: RK_GROUP_COUNT }, (_, i) => {
+    const length = Math.min(RK_GROUP_SIZE, RK_SYMBOL_COUNT - i * RK_GROUP_SIZE)
+    const asked = i === group
+    return { text: (asked ? ASKED_SYMBOL : HIDDEN_SYMBOL).repeat(length), asked }
+  })
+  return [{ text: RK_PREFIX, asked: false }, ...groups]
+}
 
 /**
  * pickGateGroups chooses which groups the gate asks for: GATE_GROUPS distinct

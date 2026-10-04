@@ -219,6 +219,18 @@ describe('the gate', () => {
     expect(api.rotateRecoveryKey).toHaveBeenCalledTimes(1)
   })
 
+  it('counts groups after the prefix, not the saved key’s dash-separated parts', async () => {
+    const m = machine()
+    await toGate(m)
+    const s = m.state
+    if (s.step !== 'confirm') throw new Error(`not at the gate: ${s.step}`)
+    // #55's mistake: "Group N" read as the saved key's Nth part, ocbk1 first.
+    const parts = s.recoveryKey.split('-')
+    await m.confirmKey(s.groups.map((g) => parts[g] as string))
+    expect(m.state).toMatchObject({ step: 'confirm', mismatch: true })
+    expect(api.rotateRecoveryKey).not.toHaveBeenCalled()
+  })
+
   it('sends exactly the ceremony’s request: the new envelope and the old digest', async () => {
     const m = machine()
     api.rotateRecoveryKey.mockResolvedValueOnce({})

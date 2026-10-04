@@ -1477,6 +1477,28 @@ anticipate.
   reviewable, and testable, entirely on its own — which is the only reason the
   vectors above could be written before any UI exists.
 
+### Follow-up — the Recovery Key shown as it is saved (issue #55)
+
+- **Finding — setup failed with a correctly saved key.** The key was shown as
+  seven numbered groups without `ocbk1-`, "Copy" wrote the full string, and the
+  gate asked for "Group N". Counted in the saved copy (eight dash-separated
+  parts) every answer was one off; a hand selection also picked up the numbers.
+- **The key is shown whole**, prefix included, as one `<code>` string with
+  "Copy" beside it. Shown, copied and hand-selected text are identical; unit
+  tests compare `textContent` with what `writeText` receives, and the e2e
+  `readRecoveryKey` checks all three in a real browser.
+- **Owner's choice — groups stay counted after the prefix** (option A, not
+  renumbering with `ocbk1` as part 1). The label says "Group N after ocbk1-",
+  the intro says so once, and each field draws the key's shape with the asked
+  group marked (`gateHint`), which reads the same however a person counts. The
+  shape is built from constants and carries no key material. `gateMatches` and
+  its tolerance are unchanged; a whole pasted key is still not accepted.
+- **Finding — the extension shipped no CSS.** `@opencloud-eu/extension-sdk/
+  tailwind.css` was never imported, so every `ext:` class in every view was
+  inert (the "grid" had never been a grid). The import is in `src/index.ts`;
+  the federation loader adds the stylesheet as a same-origin `<link>`, which the
+  fixture's `style-src 'self'` allows. All views were reviewed from e2e traces.
+
 ## Risks / notes
 
 - Argon2id in the browser (wasm) + exact parameter match with Go is the

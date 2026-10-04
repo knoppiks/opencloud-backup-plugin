@@ -170,15 +170,8 @@ describe('SetupWizard ceremony', () => {
     await flushPromises()
     expect(step(wrapper)).toBe('show_key')
     const key = ceremony!.recoveryKey
-    const shown = wrapper
-      .findAll('[data-testid="recovery-key"] li')
-      .map((li) => li.findAll('span').map((span) => span.text()))
-    expect(shown).toEqual(
-      key
-        .split('-')
-        .slice(1)
-        .map((group, i) => [String(i + 1), group])
-    )
+    // Exactly the saved text, prefix included and nothing around it (#55).
+    expect(wrapper.find('[data-testid="recovery-key"]').element.textContent).toBe(key)
 
     await wrapper.find('[data-testid="key-saved"]').trigger('click')
     expect(step(wrapper)).toBe('confirm')

@@ -43,6 +43,7 @@ export {
   RK_GROUP_COUNT,
   RK_GROUP_SIZE,
   RK_PREFIX,
+  RK_SYMBOL_COUNT,
   type RecoveryKey,
   type RecoveryKeyErrorReason
 } from './recoverykey'

@@ -5,15 +5,27 @@ import { expect, type BrowserContext, type Page, type Request } from '@playwrigh
 import { decodeRecoveryKey } from '../../src/crypto/recoverykey'
 
 /**
- * readRecoveryKey rebuilds the key from the displayed groups. The page shows
- * the groups without the `ocbk1` prefix, so the prefix is added back here.
+ * readRecoveryKey reads the key off the page the three ways a person saves it
+ * — as shown, selected by hand, and through "Copy" — and checks they are the
+ * same text (#55). The key is shown whole, prefix included.
  */
 export async function readRecoveryKey(page: Page): Promise<string> {
   const display = page.locator('[data-testid="recovery-key"]')
   await expect(display).toBeVisible()
-  const groups = await display.locator('li > span:nth-child(2)').allInnerTexts()
-  expect(groups).toHaveLength(7)
-  return ['ocbk1', ...groups.map((g) => g.trim())].join('-')
+  const shown = (await display.textContent()) ?? ''
+  expect(groupsOf(shown), 'the shown key has seven groups').toHaveLength(7)
+  decodeRecoveryKey(shown)
+
+  await display.click({ clickCount: 3 })
+  const selected = await page.evaluate(() => globalThis.getSelection()?.toString() ?? '')
+  expect(selected, 'a hand selection is the shown key').toBe(shown)
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.locator('[data-testid="copy-key"]').click()
+  await expect(page.locator('[data-testid="copy-key"]')).toHaveText('Copied')
+  const copied = await page.evaluate(() => globalThis.navigator.clipboard.readText())
+  expect(copied, '"Copy" writes the shown key').toBe(shown)
+  return shown
 }
 
 /** groupsOf returns the seven groups of a key, "group 1" first. */

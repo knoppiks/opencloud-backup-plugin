@@ -119,8 +119,7 @@ describe('ReplaceRecoveryKey happy path', () => {
     expect(rotateMock).toHaveBeenCalledWith({ currentEnvelope: stored, currentRecoveryKey: oldKey })
     expect(step(wrapper)).toBe('show_key')
     const newKey = ceremonies[0]!.recoveryKey
-    const shown = wrapper.findAll('[data-testid="recovery-key"] li span:last-child')
-    expect(shown.map((g) => g.text())).toEqual(newKey.split('-').slice(1))
+    expect(wrapper.find('[data-testid="recovery-key"]').element.textContent).toBe(newKey)
     expect(fake.rotateRecoveryKey).not.toHaveBeenCalled()
 
     await wrapper.find('[data-testid="key-saved"]').trigger('click')

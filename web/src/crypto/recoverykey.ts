@@ -29,6 +29,9 @@ export const RK_ENTROPY_BYTES = 20
 /** RK_GROUP_SIZE is the number of characters per dash-separated group. */
 export const RK_GROUP_SIZE = 5
 
+/** RK_SYMBOL_COUNT is the number of base32 symbols after the prefix (168 bits / 5, rounded up). */
+export const RK_SYMBOL_COUNT = Math.ceil(((RK_ENTROPY_BYTES + 1) * 8) / 5)
+
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
 /**

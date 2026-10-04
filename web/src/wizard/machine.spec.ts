@@ -74,6 +74,14 @@ function answersFor(w: SetupWizard): string[] {
   return s.groups.map((g) => groups[g] as string)
 }
 
+/** answersCountingPrefix is #55's mistake: "Group N" read as the saved key's Nth part. */
+function answersCountingPrefix(w: SetupWizard): string[] {
+  const s = w.state
+  if (s.step !== 'confirm') throw new Error(`not at the gate: ${s.step}`)
+  const parts = s.recoveryKey.split('-')
+  return s.groups.map((g) => parts[g] as string)
+}
+
 /** toGate drives a manager from key_intro to the gate. */
 async function toGate(w: SetupWizard): Promise<void> {
   await w.createKey()
@@ -327,6 +335,17 @@ describe('confirmation gate', () => {
 
     await w.confirmKey(answersFor(w))
     expect(api.setupKeys).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts groups after the prefix, not the saved key’s dash-separated parts', async () => {
+    api.status.mockResolvedValueOnce(status({ keys_configured: false, enabled: false }))
+    const w = wizard()
+    await w.start()
+    await toGate(w)
+
+    await w.confirmKey(answersCountingPrefix(w))
+    expect(w.state).toMatchObject({ step: 'confirm', mismatch: true })
+    expect(api.setupKeys).not.toHaveBeenCalled()
   })
 
   it('can show the key again, and asks for new groups afterwards', async () => {
