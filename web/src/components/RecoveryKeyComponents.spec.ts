@@ -11,31 +11,51 @@ afterEach(() => {
 })
 
 describe('RecoveryKeyDisplay', () => {
-  it('shows the seven groups, numbered, and the slot', () => {
+  it('shows the whole key as one string, prefix included, and the slot', () => {
     const key = generateRecoveryKey().display
     const wrapper = mountWithHost(RecoveryKeyDisplay, {
       props: { recoveryKey: key },
       slots: { default: '<button data-testid="extra">x</button>' }
     })
-    const items = wrapper.findAll('[data-testid="recovery-key"] li')
-    expect(items).toHaveLength(7)
-    expect(items.map((li) => li.find('span:last-child').text())).toEqual(key.split('-').slice(1))
-    expect(items[0]!.find('span').text()).toBe('1')
+    const shown = wrapper.find('[data-testid="recovery-key"]')
+    // textContent, not text(): a hand selection gets surrounding whitespace too.
+    expect(shown.element.textContent).toBe(key)
+    expect(shown.element.tagName).toBe('CODE')
+    expect(shown.findAll('*')).toHaveLength(0)
     expect(wrapper.find('[data-testid="extra"]').exists()).toBe(true)
   })
 
-  it('copies the whole key to the clipboard, and says so', async () => {
-    const writeText = vi.fn(() => Promise.resolve())
+  it('copies exactly the text it shows, and says so', async () => {
+    const writeText = vi.fn((_text: string) => Promise.resolve())
     vi.stubGlobal('navigator', { clipboard: { writeText } })
     const key = generateRecoveryKey().display
     const wrapper = mountWithHost(RecoveryKeyDisplay, { props: { recoveryKey: key } })
     await wrapper.find('[data-testid="copy-key"]').trigger('click')
     await flushPromises()
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(writeText.mock.calls[0]![0]).toBe(
+      wrapper.find('[data-testid="recovery-key"]').element.textContent
+    )
     expect(writeText).toHaveBeenCalledWith(key)
     expect(wrapper.find('[data-testid="copy-key"]').text()).toBe('Copied')
 
     await wrapper.setProps({ recoveryKey: generateRecoveryKey().display })
     expect(wrapper.find('[data-testid="copy-key"]').text()).toBe('Copy')
+  })
+
+  it('only writes to the clipboard, never reads it', async () => {
+    const readText = vi.fn(() => Promise.resolve(''))
+    const read = vi.fn(() => Promise.resolve([]))
+    vi.stubGlobal('navigator', {
+      clipboard: { writeText: () => Promise.resolve(), readText, read }
+    })
+    const wrapper = mountWithHost(RecoveryKeyDisplay, {
+      props: { recoveryKey: generateRecoveryKey().display }
+    })
+    await wrapper.find('[data-testid="copy-key"]').trigger('click')
+    await flushPromises()
+    expect(readText).not.toHaveBeenCalled()
+    expect(read).not.toHaveBeenCalled()
   })
 
   it('does not claim a copy the clipboard refused', async () => {
@@ -61,6 +81,18 @@ describe('RecoveryKeyGate', () => {
     await wrapper.find('form').trigger('submit')
     expect(wrapper.emitted('submit')).toEqual([[['aaaaa', 'bbbbb']]])
     expect(wrapper.find('[data-testid="gate-submit"]').text()).toBe('Go')
+  })
+
+  it('counts groups after the prefix, in the label and in the drawn key', () => {
+    const wrapper = mountWithHost(RecoveryKeyGate, { props })
+    const label = wrapper.find('input[data-testid="gate-2"]').element.closest('label')
+    expect(label?.textContent?.trim()).toBe('Group 2 after ocbk1-')
+    expect(wrapper.text()).toContain('Groups are counted after ocbk1-.')
+    const hint = wrapper.find('[data-testid="gate-hint-2"]')
+    expect(hint.attributes('aria-hidden')).toBe('true')
+    expect(hint.text()).toBe('ocbk1-•••••-_____-•••••-•••••-•••••-•••••-••••')
+    expect(hint.find('mark').text()).toBe('_____')
+    expect(wrapper.find('[data-testid="gate-hint-6"] mark').text()).toBe('_____')
   })
 
   it('clears the answers when new groups are asked for', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { gateMatches, pickGateGroups } from './gate'
+import { generateRecoveryKey } from '../crypto'
+import { gateHint, gateMatches, pickGateGroups } from './gate'
 
 describe('confirmation gate', () => {
   it('picks two distinct groups of seven, in key order', () => {
@@ -25,5 +26,26 @@ describe('confirmation gate', () => {
     expect(gateMatches(key, [0, 6], ['AB1C0', '6788'])).toBe(false)
     expect(gateMatches(key, [0, 6], ['AB1C0'])).toBe(false)
     expect(gateMatches(key, [0, 6], ['DEFGH', 'AB1C0'])).toBe(false)
+  })
+
+  it('counts groups after the prefix, not the saved key’s dash-separated parts', () => {
+    const key = generateRecoveryKey().display
+    const parts = key.split('-')
+    // Group index 1 ("Group 2 after ocbk1-") is the saved key's third part.
+    expect(gateMatches(key, [1, 4], [parts[2]!, parts[5]!])).toBe(true)
+    expect(gateMatches(key, [1, 4], [parts[1]!, parts[4]!])).toBe(false)
+  })
+
+  it('draws the key’s shape with only the asked group marked', () => {
+    const hint = gateHint(6)
+    expect(hint.map((p) => p.text).join('-')).toBe('ocbk1-•••••-•••••-•••••-•••••-•••••-•••••-____')
+    expect(hint.filter((p) => p.asked)).toEqual([{ text: '____', asked: true }])
+    for (let group = 0; group < 7; group++) {
+      const parts = gateHint(group)
+      expect(parts).toHaveLength(8)
+      expect(parts.findIndex((p) => p.asked)).toBe(group + 1)
+      // Same length as a real key, so the drawing lines up with the saved copy.
+      expect(parts.map((p) => p.text).join('-')).toHaveLength(generateRecoveryKey().display.length)
+    }
   })
 })

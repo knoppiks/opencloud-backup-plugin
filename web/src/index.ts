@@ -10,6 +10,11 @@
 // it is where the API base URL is resolved. See appconfig.ts for why that is
 // captured rather than injected, and api/baseurl.ts for why the only thing
 // configurable is a path.
+//
+// The SDK's Tailwind setup generates the `ext:`-prefixed utilities the views
+// use. Without this import the build emits no CSS and every `ext:` class is
+// inert (found through #55, where the Recovery Key's layout depends on it).
+import '@opencloud-eu/extension-sdk/tailwind.css'
 import {
   defineWebApplication,
   type AppMenuItemExtension,

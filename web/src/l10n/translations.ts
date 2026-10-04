@@ -174,9 +174,9 @@ const de: Record<string, string> = {
   Copied: 'Kopiert',
   'I have saved it': 'Ich habe ihn gespeichert',
   'Check that you saved it': 'Prüfen, ob Sie ihn gespeichert haben',
-  'Type two groups from your saved Recovery Key. This makes sure you can find it when you need it.':
-    'Geben Sie zwei Gruppen aus Ihrem gespeicherten Wiederherstellungsschlüssel ein. So ist sichergestellt, dass Sie ihn finden, wenn Sie ihn brauchen.',
-  'Group %{number}': 'Gruppe %{number}',
+  'Type two groups from your saved Recovery Key. Groups are counted after %{prefix}-. This makes sure you can find it when you need it.':
+    'Geben Sie zwei Gruppen aus Ihrem gespeicherten Wiederherstellungsschlüssel ein. Die Gruppen werden nach %{prefix}- gezählt. So ist sichergestellt, dass Sie ihn finden, wenn Sie ihn brauchen.',
+  'Group %{number} after %{prefix}-': 'Gruppe %{number} nach %{prefix}-',
   'That does not match. Look at your saved copy and try again.':
     'Das stimmt nicht überein. Sehen Sie in Ihrer gespeicherten Kopie nach und versuchen Sie es erneut.',
   'Show the key again': 'Schlüssel erneut anzeigen',
