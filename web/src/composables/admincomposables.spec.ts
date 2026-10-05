@@ -23,7 +23,7 @@ vi.mock('@opencloud-eu/web-pkg', () => ({
 vi.mock('../appconfig', () => ({ apiBaseUrl: () => 'https://cloud.example.org/backup/api/v1' }))
 
 import { useAdminApi } from './useAdminApi'
-import { useIsAdmin } from './useIsAdmin'
+import { isAdmin, useIsAdmin } from './useIsAdmin'
 import { useUserDirectory, useUserSearchMinLength } from './useUserDirectory'
 
 beforeEach(() => {
@@ -38,6 +38,14 @@ describe('useIsAdmin', () => {
 
     host.can.mockReturnValue(false)
     expect(useIsAdmin()).toBe(false)
+  })
+
+  it('applies the same rule to an ability passed in', () => {
+    const can = vi.fn(
+      (action: string, subject: string) => action === 'read-all' && subject === 'Setting'
+    )
+    expect(isAdmin({ can })).toBe(true)
+    expect(isAdmin({ can: () => false })).toBe(false)
   })
 })
 

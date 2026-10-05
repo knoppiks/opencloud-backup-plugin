@@ -7,6 +7,8 @@ import { onMounted, ref } from 'vue'
 import { asApiError, type AdminTarget, type ApiError } from '../api'
 import { adminErrorAdvice, adminErrorTitle } from '../admin/wording'
 import AdminOnly from '../components/admin/AdminOnly.vue'
+import PageLayout from '../components/PageLayout.vue'
+import { destinationsCrumbs } from '../layout/breadcrumbs'
 import DeleteTarget from '../components/admin/DeleteTarget.vue'
 import TargetAudience from '../components/admin/TargetAudience.vue'
 import TargetSettingsForm from '../components/admin/TargetSettingsForm.vue'
@@ -52,19 +54,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="ext:p-4 ext:flex ext:flex-col ext:gap-6 ext:max-w-2xl">
-    <router-link
-      :to="{ name: 'backup-vault-admin-targets' }"
-      class="ext:text-sm"
-      data-testid="back"
-    >
-      {{ $gettext('Back to backup destinations') }}
-    </router-link>
-
-    <h1 class="ext:text-xl ext:font-semibold">
-      {{ target ? target.name : $gettext('Backup destination') }}
-    </h1>
-
+  <PageLayout
+    :crumbs="
+      destinationsCrumbs($gettext, { text: target ? target.name : $gettext('Backup destination') })
+    "
+    narrow
+  >
     <AdminOnly>
       <RequestState
         :loading="loading"
@@ -83,5 +78,5 @@ onMounted(() => {
         </template>
       </RequestState>
     </AdminOnly>
-  </main>
+  </PageLayout>
 </template>

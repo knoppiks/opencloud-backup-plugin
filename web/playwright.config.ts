@@ -38,6 +38,8 @@ export default defineConfig({
   },
   projects: [
     { name: 'admin', testMatch: 'admin.e2e.ts' },
-    { name: 'journey', testMatch: 'journey.e2e.ts', dependencies: ['admin'] }
+    { name: 'journey', testMatch: 'journey.e2e.ts', dependencies: ['admin'] },
+    // Last: it photographs the state the other two leave behind (8g).
+    { name: 'screens', testMatch: 'screens.e2e.ts', dependencies: ['journey'] }
   ]
 })

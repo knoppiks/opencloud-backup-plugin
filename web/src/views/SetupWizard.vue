@@ -11,6 +11,8 @@ import { useGettext } from 'vue3-gettext'
 import ActionError from '../components/ActionError.vue'
 import RecoveryKeyDisplay from '../components/RecoveryKeyDisplay.vue'
 import RecoveryKeyGate from '../components/RecoveryKeyGate.vue'
+import PageLayout from '../components/PageLayout.vue'
+import { spaceCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
 import { useBackupApi } from '../composables/useBackupApi'
 import { useFormat } from '../composables/useFormat'
@@ -30,6 +32,15 @@ const { $gettext } = gettext
 const format = useFormat()
 
 const state = shallowRef<WizardState>({ step: 'loading' })
+/**
+ * crumbs is the page's breadcrumb trail. It names the Space once wizard has
+ * read it, which happens with a state change: reading `state` is what makes
+ * this follow, since wizard.spaceName itself is not reactive.
+ */
+const crumbs = computed(() => {
+  void state.value
+  return spaceCrumbs($gettext, props.spaceId, wizard.spaceName, { text: $gettext('Set up backup') })
+})
 const wizard = new SetupWizard(props.spaceId, {
   api: useBackupApi(),
   ceremony: () => performSetupCeremony(),
@@ -71,22 +82,7 @@ onBeforeUnmount(() => wizard.dispose())
 </script>
 
 <template>
-  <main class="ext:p-4 ext:flex ext:flex-col ext:gap-4 ext:max-w-2xl">
-    <router-link
-      :to="{ name: 'backup-vault-space', params: { spaceId } }"
-      class="ext:text-sm"
-      data-testid="back"
-    >
-      {{ $gettext('Back to the space') }}
-    </router-link>
-
-    <h1 class="ext:text-xl ext:font-semibold">
-      <template v-if="wizard.spaceName">
-        {{ $gettext('Set up backup for %{space}', { space: wizard.spaceName }) }}
-      </template>
-      <template v-else>{{ $gettext('Set up backup') }}</template>
-    </h1>
-
+  <PageLayout :crumbs="crumbs" narrow>
     <RequestState :loading="state.step === 'loading'" :error="loadError" @retry="wizard.start()">
       <!-- Viewer -->
       <section v-if="state.step === 'not_allowed'" data-step="not_allowed">
@@ -382,5 +378,5 @@ onBeforeUnmount(() => wizard.dispose())
         </p>
       </section>
     </RequestState>
-  </main>
+  </PageLayout>
 </template>

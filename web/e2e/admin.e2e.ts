@@ -25,7 +25,8 @@ test('an administrator creates the destination and grants it to one person', asy
   })
 
   await openVault(page, '/overview')
-  await page.locator('[data-testid="admin-link"]').click()
+  // Offered in the host's left navigation, to admins only (8g).
+  await page.getByRole('link', { name: 'Backup destinations', exact: true }).click()
   await expect(page.locator('main h1')).toHaveText('Backup destinations')
   await page.locator('[data-testid="add"]').click()
 
@@ -87,7 +88,7 @@ test('the family member sees the destination and none of its administration', as
 
   await openVault(page, '/overview')
   await expect(page.locator('[data-testid="no-targets"]')).toHaveCount(0)
-  await expect(page.locator('[data-testid="admin-link"]')).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Backup destinations', exact: true })).toHaveCount(0)
 
   const { targets } = await apiJson<{ targets: { name: string }[] }>(page, '/targets')
   expect(targets.map((t) => t.name)).toEqual(['Family backup'])

@@ -17,9 +17,11 @@
 import '@opencloud-eu/extension-sdk/tailwind.css'
 import {
   defineWebApplication,
+  useAbility,
   type AppMenuItemExtension,
   type ApplicationSetupOptions,
-  type Extension
+  type Extension,
+  type ExtensionPoint
 } from '@opencloud-eu/web-pkg'
 import { urlJoin } from '@opencloud-eu/web-client'
 import { computed } from 'vue'
@@ -27,12 +29,16 @@ import { useGettext } from 'vue3-gettext'
 import type { RouteRecordRaw } from 'vue-router'
 import { configureApi, type BackupVaultConfig } from './appconfig'
 import { translations } from './l10n/translations'
+import { navExtensionPoint, navExtensions } from './navigation'
 
 const appId = 'backup-vault'
 
 export default defineWebApplication({
   setup({ applicationConfig }: ApplicationSetupOptions) {
     const { $gettext } = useGettext()
+    // Held, not asked: the rules are only filled in after sign-in, so the
+    // admin nav item asks each time it is drawn (see navigation.ts).
+    const ability = useAbility()
 
     // Deliberately not guarded: a misconfigured apiPath throws here, at app
     // setup, which is the earliest and loudest place an operator can be told.
@@ -136,9 +142,10 @@ export default defineWebApplication({
         icon: appInfo.icon,
         path: urlJoin(appId)
       }
-      return [menuItem]
+      return [menuItem, ...navExtensions(appId, $gettext, ability)]
     })
+    const extensionPoints = computed<ExtensionPoint<Extension>[]>(() => [navExtensionPoint(appId)])
 
-    return { appInfo, routes, extensions, translations }
+    return { appInfo, routes, extensions, extensionPoints, translations }
   }
 })

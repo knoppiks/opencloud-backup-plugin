@@ -80,7 +80,12 @@ const result = (wrapper: VueWrapper) => wrapper.find('[data-result]').attributes
 describe('RecoveryKeyView for each role', () => {
   it('offers a viewer the check, the key file and the lost-key facts, but no replacement', async () => {
     const wrapper = await mountPage('viewer')
-    expect(wrapper.find('h1').text()).toBe('Recovery Key for Family photos')
+    expect(wrapper.find('h1').text()).toBe('Recovery Key')
+    expect(wrapper.findAll('[data-testid="breadcrumb"] li').map((li) => li.text())).toEqual([
+      'Spaces',
+      'Family photos',
+      'Recovery Key'
+    ])
     expect(wrapper.find('[data-testid="check-form"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="download-envelope"]').exists()).toBe(true)
     expect(wrapper.findAll('[data-testid="lost-key"]')).toHaveLength(1)

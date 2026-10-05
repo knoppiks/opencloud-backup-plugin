@@ -57,8 +57,9 @@ implemented**:
   network-level check that no Recovery Key is ever sent.
 
 Still open for Phase 8: the E2E job green in CI, and a review of the UI against
-the OpenCloud design system. Issue #35 was closed by the merge of 8a–8d and no
-longer tracks the rest.
+the OpenCloud design system — planned as **8g** in
+[phase-8g-ui-design.md](phase-8g-ui-design.md). Issue #35 was closed by the
+merge of 8a–8d and no longer tracks the rest.
 
 **Deployment readiness:** [deployment-readiness.md](deployment-readiness.md)
 records what stood between 8d and a first real deployment (CSP, publishing,

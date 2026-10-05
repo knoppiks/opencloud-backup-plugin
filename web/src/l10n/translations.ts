@@ -20,6 +20,30 @@ export type Translations = Record<string, Record<string, string>>
 
 const de: Record<string, string> = {
   'Backup Vault': 'Backup-Tresor',
+  // Left navigation (navigation.ts); "Backup destinations" is shared below.
+  Spaces: 'Spaces',
+  // Breadcrumb stand-in until a Space's name has loaded (layout/breadcrumbs.ts).
+  Space: 'Space',
+
+  // Spaces table (views/Overview.vue, status/overviewrow.ts).
+  Type: 'Typ',
+  Status: 'Status',
+  'Last backup': 'Letzte Sicherung',
+  Actions: 'Aktionen',
+  Off: 'Aus',
+  'Spaces: %{total} · Protected: %{protected}': 'Spaces: %{total} · Geschützt: %{protected}',
+  'Need attention: %{count}': 'Brauchen Aufmerksamkeit: %{count}',
+  'No backup destination is available to you yet':
+    'Ihnen steht noch kein Sicherungsziel zur Verfügung',
+  'Ask your administrator to share one with you. Until then, no space can be set up.':
+    'Bitten Sie Ihre Administration, eines für Sie freizugeben. Bis dahin kann kein Space eingerichtet werden.',
+  'Add a backup destination, or share an existing one with yourself.':
+    'Legen Sie ein Sicherungsziel an oder geben Sie ein vorhandenes für sich selbst frei.',
+  'Add or share a destination': 'Ziel anlegen oder freigeben',
+  // Recent activity table (components/RunHistory.vue).
+  Activity: 'Aktivität',
+  When: 'Wann',
+  Details: 'Details',
   Loading: 'Wird geladen',
   'Loading…': 'Wird geladen…',
   'Try again': 'Erneut versuchen',
@@ -84,14 +108,8 @@ const de: Record<string, string> = {
   // Overview cards (components/SpaceCard.vue).
   'Personal space': 'Persönlicher Space',
   'Shared space': 'Geteilter Space',
-  'Running since %{when}': 'Läuft seit %{when}',
-  'Last backup %{when}': 'Letzte Sicherung %{when}',
-  'No successful backup since %{when}': 'Keine erfolgreiche Sicherung seit %{when}',
-  'Last successful backup %{when}': 'Letzte erfolgreiche Sicherung %{when}',
-  'No backup has succeeded yet.': 'Bisher war keine Sicherung erfolgreich.',
 
   // Status board (views/SpaceStatus.vue).
-  'All spaces': 'Alle Spaces',
   'A backup is running.': 'Eine Sicherung läuft.',
   'A restore is running.': 'Eine Wiederherstellung läuft.',
   'Old backups are being cleaned up.': 'Alte Sicherungen werden aufgeräumt.',
@@ -99,7 +117,7 @@ const de: Record<string, string> = {
   'Could not refresh the status. Retrying…':
     'Der Status konnte nicht aktualisiert werden. Neuer Versuch…',
   'No successful backup since %{when}.': 'Keine erfolgreiche Sicherung seit %{when}.',
-  'The last backup failed:': 'Die letzte Sicherung ist fehlgeschlagen:',
+  'The last backup failed': 'Die letzte Sicherung ist fehlgeschlagen',
   'Last successful backup': 'Letzte erfolgreiche Sicherung',
   'None yet': 'Noch keine',
   'Next backup': 'Nächste Sicherung',
@@ -143,7 +161,6 @@ const de: Record<string, string> = {
 
   // Setup wizard (views/SetupWizard.vue, components/ActionError.vue).
   'Back to the space': 'Zurück zum Space',
-  'Set up backup for %{space}': 'Sicherung für %{space} einrichten',
   'Only editors and managers of this space can set up backup.':
     'Nur Personen, die diesen Space bearbeiten oder verwalten, können die Sicherung einrichten.',
   'Where should backups go?': 'Wohin sollen die Sicherungen gehen?',
@@ -209,8 +226,6 @@ const de: Record<string, string> = {
     'Bewahren Sie Ihren Wiederherstellungsschlüssel sicher auf. Nur mit ihm lassen sich diese Sicherungen lesen, falls dieser Server verloren geht.',
   // Restore (8d.3)
   'Restore files': 'Dateien wiederherstellen',
-  'Restore files in %{space}': 'Dateien in %{space} wiederherstellen',
-  'Restore files from a backup': 'Dateien aus einer Sicherung wiederherstellen',
   'Backups are not set up for this space yet, so there is nothing to restore.':
     'Für diesen Space ist noch keine Sicherung eingerichtet, daher gibt es nichts wiederherzustellen.',
   'That backup is no longer available. Older backups are removed as they reach the end of the keep period. Please choose another one.':
@@ -245,7 +260,6 @@ const de: Record<string, string> = {
   'Restoring into:': 'Wird wiederhergestellt nach:',
 
   // Recovery Key: check, key file and replacement (8d.4).
-  'Recovery Key for %{space}': 'Wiederherstellungsschlüssel für %{space}',
   'This space has no Recovery Key yet. It is created when backup is set up.':
     'Dieser Space hat noch keinen Wiederherstellungsschlüssel. Er wird beim Einrichten der Sicherung erstellt.',
   'Check my Recovery Key': 'Meinen Wiederherstellungsschlüssel prüfen',
@@ -270,7 +284,6 @@ const de: Record<string, string> = {
   'Downloaded. Download it again after the Recovery Key is replaced.':
     'Heruntergeladen. Laden Sie die Datei erneut herunter, nachdem der Wiederherstellungsschlüssel ersetzt wurde.',
   'Replace the Recovery Key': 'Wiederherstellungsschlüssel ersetzen',
-  'Replace the Recovery Key for %{space}': 'Wiederherstellungsschlüssel für %{space} ersetzen',
   'If the Recovery Key is lost': 'Wenn der Wiederherstellungsschlüssel verloren ist',
   'Nobody can give it back. There is no copy anywhere, not even with your administrator.':
     'Niemand kann ihn zurückgeben. Es gibt nirgendwo eine Kopie, auch nicht bei Ihrer Administration.',
@@ -278,7 +291,6 @@ const de: Record<string, string> = {
     'Sicherungen und Wiederherstellungen hier funktionieren auch ohne ihn weiter. Gebraucht wird er nur, wenn dieser Server verloren geht.',
   'Setting up backup again is not possible, because that would make every existing backup unreadable. A new Recovery Key can only be made with the current one.':
     'Die Sicherung erneut einzurichten ist nicht möglich, weil das alle vorhandenen Sicherungen unlesbar machen würde. Ein neuer Wiederherstellungsschlüssel lässt sich nur mit dem aktuellen erstellen.',
-  'Back to the Recovery Key': 'Zurück zum Wiederherstellungsschlüssel',
   'Only a manager of this space can replace its Recovery Key, because every member who kept the old one would need the new one.':
     'Nur eine verwaltende Person dieses Spaces kann seinen Wiederherstellungsschlüssel ersetzen, denn alle Mitglieder, die den alten aufbewahrt haben, bräuchten dann den neuen.',
   'The new Recovery Key shown before was not taken into use. Throw away any copy of it. The current Recovery Key still works.':
@@ -320,10 +332,7 @@ const de: Record<string, string> = {
     'Eine Sicherung läuft. Wenn sie abgeschlossen ist, verliert der alte Wiederherstellungsschlüssel seine Gültigkeit.',
 
   // Admin: backup destinations (views/Admin*.vue, components/admin/).
-  'Manage backup destinations': 'Sicherungsziele verwalten',
   'Backup destinations': 'Sicherungsziele',
-  'Back to Backup Vault': 'Zurück zum Backup-Tresor',
-  'Back to backup destinations': 'Zurück zu den Sicherungszielen',
   'Add a backup destination': 'Sicherungsziel hinzufügen',
   'There are no backup destinations yet. Nobody can set up backups until there is one.':
     'Es gibt noch keine Sicherungsziele. Solange es keines gibt, kann niemand Sicherungen einrichten.',

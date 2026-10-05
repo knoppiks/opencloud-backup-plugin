@@ -7,10 +7,13 @@
 // shown once. Neither is ever in a store, a route, the URL or browser storage
 // (lint bans storage in this file), and both are gone when the page is left.
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { useGettext } from 'vue3-gettext'
 import ActionError from '../components/ActionError.vue'
 import LostKeyNotice from '../components/LostKeyNotice.vue'
 import RecoveryKeyDisplay from '../components/RecoveryKeyDisplay.vue'
 import RecoveryKeyGate from '../components/RecoveryKeyGate.vue'
+import PageLayout from '../components/PageLayout.vue'
+import { recoveryKeyCrumb, spaceCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
 import { useBackupApi } from '../composables/useBackupApi'
 import { performRecoveryKeyRotation, recoveryKeyOpens } from '../crypto'
@@ -19,7 +22,23 @@ import { RecoveryKeyRotation, type RotationState } from '../recoverykey/rotation
 
 const props = defineProps<{ spaceId: string }>()
 
+const { $gettext } = useGettext()
 const state = shallowRef<RotationState>({ step: 'loading' })
+/**
+ * crumbs is the page's breadcrumb trail. It names the Space once rotation has
+ * read it, which happens with a state change: reading `state` is what makes
+ * this follow, since rotation.spaceName itself is not reactive.
+ */
+const crumbs = computed(() => {
+  void state.value
+  return spaceCrumbs(
+    $gettext,
+    props.spaceId,
+    rotation.spaceName,
+    recoveryKeyCrumb($gettext, props.spaceId),
+    { text: $gettext('Replace the Recovery Key') }
+  )
+})
 const rotation = new RecoveryKeyRotation(props.spaceId, {
   api: useBackupApi(),
   rotate: (options) => performRecoveryKeyRotation(options),
@@ -59,22 +78,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="ext:p-4 ext:flex ext:flex-col ext:gap-4 ext:max-w-2xl">
-    <router-link
-      :to="{ name: 'backup-vault-recovery-key', params: { spaceId } }"
-      class="ext:text-sm"
-      data-testid="back"
-    >
-      {{ $gettext('Back to the Recovery Key') }}
-    </router-link>
-
-    <h1 class="ext:text-xl ext:font-semibold">
-      <template v-if="rotation.spaceName">
-        {{ $gettext('Replace the Recovery Key for %{space}', { space: rotation.spaceName }) }}
-      </template>
-      <template v-else>{{ $gettext('Replace the Recovery Key') }}</template>
-    </h1>
-
+  <PageLayout :crumbs="crumbs" narrow>
     <RequestState :loading="state.step === 'loading'" :error="loadError" @retry="rotation.start()">
       <section v-if="state.step === 'not_set_up'" data-step="not_set_up">
         <p>
@@ -301,5 +305,5 @@ onBeforeUnmount(() => {
         </router-link>
       </section>
     </RequestState>
-  </main>
+  </PageLayout>
 </template>
