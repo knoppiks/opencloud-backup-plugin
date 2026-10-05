@@ -35,7 +35,9 @@ type SnapshotID string
 type Info struct {
 	ID        SnapshotID
 	StartTime time.Time
-	// FileCount and TotalBytes are logical (pre-dedup) counts.
+	// FileCount and TotalBytes are logical (pre-dedup) counts of everything
+	// the snapshot contains — what a restore of it brings back — whether or
+	// not a file changed since the previous snapshot.
 	FileCount  int64
 	TotalBytes int64
 }

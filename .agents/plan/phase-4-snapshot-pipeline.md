@@ -177,6 +177,23 @@ The Phase-2 CS3 client left the data path stubbed. Phase 4 completed it:
   has no reason to set it; values above kopia's maximum are refused at
   construction rather than mid-run.
 
+## Amendment — snapshot statistics (issue #57)
+
+- **A snapshot's file count and size come from the root directory summary**
+  (`RootEntry.DirSummary`), not from kopia's upload `Stats`. `Stats.TotalFileCount`
+  counts only files read in that run; files reused unchanged from the previous
+  snapshot go to `CachedFiles` while their size still lands in `TotalFileSize`.
+  Every backup after the first therefore reported "0 files, 2.7 GB". The summary
+  is aggregated from the stored tree, so it matches what a restore brings back.
+  `Stats` (read + cached files) remains only as a fallback for a manifest
+  without a root summary.
+- Everything that reads manifests — restore picker, `decrypt` CLI, new job
+  records — is correct for old snapshots too, because it reads the manifest
+  every time.
+- **Not backfilled:** job records written before the fix keep their recorded
+  "0 files". They age out with the run-history window (365 days). This was a
+  deliberate choice to avoid a migration over the state store.
+
 ## Risks — status
 
 - Option B couples us to kopia's `fs` interfaces (not a stability-guaranteed

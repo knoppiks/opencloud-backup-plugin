@@ -737,10 +737,31 @@ func sourceInfo(ref SpaceRef) ksnapshot.SourceInfo {
 
 // toInfo projects a kopia manifest onto our key-material-free Info.
 func toInfo(m *ksnapshot.Manifest) Info {
+	files, bytes := logicalTotals(m)
 	return Info{
 		ID:         SnapshotID(m.ID),
 		StartTime:  m.StartTime.ToTime(),
-		FileCount:  int64(m.Stats.TotalFileCount),
-		TotalBytes: m.Stats.TotalFileSize,
+		FileCount:  files,
+		TotalBytes: bytes,
 	}
+}
+
+// logicalTotals returns how many files a snapshot contains and their combined
+// size.
+//
+// The root directory's summary is the source: kopia aggregates it from the
+// stored tree, so it describes exactly what a restore brings back. The upload
+// counters in Stats do not: TotalFileCount counts only files read during this
+// run, while a file reused unchanged from the previous snapshot is counted in
+// CachedFiles instead — yet its size still lands in TotalFileSize. Reading
+// TotalFileCount alone reports "0 files, 2.7 GB" for an unchanged Space.
+//
+// Stats is only a fallback for a manifest without a root summary, and then
+// both of its file counters are added up.
+func logicalTotals(m *ksnapshot.Manifest) (files, bytes int64) {
+	if m.RootEntry != nil && m.RootEntry.DirSummary != nil {
+		s := m.RootEntry.DirSummary
+		return s.TotalFileCount, s.TotalFileSize
+	}
+	return int64(m.Stats.TotalFileCount) + int64(m.Stats.CachedFiles), m.Stats.TotalFileSize
 }
