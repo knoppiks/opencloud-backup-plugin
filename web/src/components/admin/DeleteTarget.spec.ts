@@ -2,40 +2,49 @@ import { flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../../api'
 import { mountWithHost } from '../../test/host'
+import { modalsDouble, type ModalsDouble } from '../../test/modals'
 import { fakeAdminApi, TARGET_ID, type FakeAdminApi } from '../../test/fixtures'
 import DeleteTarget from './DeleteTarget.vue'
 
-const host = vi.hoisted(() => ({ api: undefined as unknown }))
+const host = vi.hoisted(() => ({
+  api: undefined as unknown,
+  modals: undefined as unknown as ModalsDouble
+}))
 vi.mock('../../composables/useAdminApi', () => ({ useAdminApi: () => host.api }))
+vi.mock('@opencloud-eu/web-pkg', () => ({ useModals: () => host.modals.store }))
 
 let api: FakeAdminApi
 beforeEach(() => {
   api = fakeAdminApi()
   host.api = api
+  host.modals = modalsDouble()
 })
 
+function mountDelete() {
+  return mountWithHost(DeleteTarget, { props: { targetId: TARGET_ID, targetName: 'Buddy' } })
+}
+
+/** confirmDelete asks, then presses the dialog's confirm button. */
 async function confirmDelete() {
-  const wrapper = mountWithHost(DeleteTarget, {
-    props: { targetId: TARGET_ID, targetName: 'Buddy' }
-  })
+  const wrapper = mountDelete()
   await wrapper.find('[data-testid="delete"]').trigger('click')
-  await wrapper.find('[data-testid="confirm"]').trigger('click')
+  await host.modals.last().onConfirm!(undefined)
   await flushPromises()
   return wrapper
 }
 
 describe('DeleteTarget', () => {
-  it('asks first and deletes nothing until confirmed', async () => {
-    const wrapper = mountWithHost(DeleteTarget, {
-      props: { targetId: TARGET_ID, targetName: 'Buddy' }
-    })
+  it('asks in the host’s dialog and deletes nothing until confirmed', async () => {
+    const wrapper = mountDelete()
+    expect(host.modals.dispatched).toHaveLength(0)
+
     await wrapper.find('[data-testid="delete"]').trigger('click')
 
-    expect(wrapper.find('[data-testid="confirm-delete"]').text()).toContain('Delete “Buddy”?')
-    expect(api.deleteTarget).not.toHaveBeenCalled()
-
-    await wrapper.find('[data-testid="cancel-delete"]').trigger('click')
-    expect(wrapper.find('[data-testid="confirm-delete"]').exists()).toBe(false)
+    expect(host.modals.dispatched).toHaveLength(1)
+    const modal = host.modals.last()
+    expect(modal.title).toBe('Delete “Buddy”?')
+    expect(modal.message).toContain('The backups already stored in the bucket are not deleted.')
+    expect(modal.confirmText).toBe('Delete')
     expect(api.deleteTarget).not.toHaveBeenCalled()
   })
 
@@ -44,6 +53,13 @@ describe('DeleteTarget', () => {
     const wrapper = await confirmDelete()
     expect(api.deleteTarget).toHaveBeenCalledWith(TARGET_ID)
     expect(wrapper.emitted('deleted')).toHaveLength(1)
+  })
+
+  it('never throws into the dialog, so it closes whatever the answer', async () => {
+    api.deleteTarget.mockRejectedValue(new ApiError('unavailable', 'x', 503))
+    const wrapper = mountDelete()
+    await wrapper.find('[data-testid="delete"]').trigger('click')
+    await expect(host.modals.last().onConfirm!(undefined)).resolves.toBeUndefined()
   })
 
   it('shows the count of Spaces in the way, and what to do', async () => {
@@ -82,5 +98,12 @@ describe('DeleteTarget', () => {
       'Only administrators can manage backup destinations'
     )
     expect(wrapper.emitted('deleted')).toBeUndefined()
+  })
+
+  it('clears an earlier failure when asked again', async () => {
+    api.deleteTarget.mockRejectedValue(new ApiError('forbidden', 'x', 403))
+    const wrapper = await confirmDelete()
+    await wrapper.find('[data-testid="delete"]').trigger('click')
+    expect(wrapper.find('[data-testid="action-error"]').exists()).toBe(false)
   })
 })

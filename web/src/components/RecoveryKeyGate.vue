@@ -13,6 +13,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { RK_PREFIX } from '../crypto'
 import { gateHint } from '../recoverykey/gate'
+import NoticeBanner from './NoticeBanner.vue'
 
 const props = defineProps<{
   /** groups are 0-based indices into the key's seven groups. */
@@ -42,7 +43,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <form class="ext:flex ext:flex-col ext:gap-2" @submit.prevent="emit('submit', [...answers])">
+  <form class="ext:flex ext:flex-col ext:gap-3" @submit.prevent="emit('submit', [...answers])">
     <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Check that you saved it') }}</h2>
     <p>
       {{
@@ -78,9 +79,12 @@ onBeforeUnmount(() => {
         :data-testid="`gate-${group + 1}`"
       />
     </div>
-    <p v-if="mismatch" role="alert" data-testid="gate-mismatch">
-      {{ $gettext('That does not match. Look at your saved copy and try again.') }}
-    </p>
+    <NoticeBanner
+      v-if="mismatch"
+      tone="danger"
+      :message="$gettext('That does not match. Look at your saved copy and try again.')"
+      data-testid="gate-mismatch"
+    />
     <div class="ext:flex ext:gap-2">
       <oc-button
         appearance="outline"

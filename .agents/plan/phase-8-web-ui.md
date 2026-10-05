@@ -137,8 +137,10 @@ Phases 2/3/5/6 (APIs).
 - [x] Plaintext RK provably never sent. Every request of the family member's
       session is recorded, for the whole journey rather than only the
       ceremony. (E2E `journey.e2e.ts`)
-- [ ] UI reviewed against OpenCloud design system (native look — success
-      metric 7).
+- [x] UI reviewed against OpenCloud design system (native look — success
+      metric 7). Done in 8g (#59 shell and pages, #60 forms and flows); the
+      screenshot tour (`screens.e2e.ts`) is the record, in light and dark.
+      See `phase-8g-ui-design.md`.
 
 ## Sub-phases and sequencing
 

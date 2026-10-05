@@ -9,8 +9,8 @@
 import { computed, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { ApiError, isApiError } from '../api'
-import { errorTitle } from '../api/errortext'
 import { useBackupApi } from '../composables/useBackupApi'
+import ActionError from './ActionError.vue'
 import { MIN_RETENTION_DAYS, parseRetentionDays } from '../status/retention'
 
 const props = defineProps<{
@@ -93,7 +93,7 @@ async function save(): Promise<void> {
       </oc-button>
     </div>
 
-    <form v-else class="ext:flex ext:flex-col ext:gap-2" @submit.prevent="save">
+    <form v-else class="ext:flex ext:flex-col ext:gap-3" @submit.prevent="save">
       <oc-text-input
         v-model="input"
         type="number"
@@ -107,12 +107,7 @@ async function save(): Promise<void> {
         "
         :disabled="saving"
       />
-      <p v-if="saveError" role="alert" class="ext:text-sm ext:text-role-error">
-        {{ errorTitle(saveError.code, $gettext) }}
-        <span v-if="saveError.serverMessage" class="ext:block ext:text-role-on-surface-variant">
-          {{ saveError.serverMessage }}
-        </span>
-      </p>
+      <ActionError v-if="saveError" :error="saveError" />
       <div class="ext:flex ext:gap-2">
         <oc-button
           submit="submit"

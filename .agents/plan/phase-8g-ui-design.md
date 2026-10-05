@@ -139,4 +139,52 @@ Compared with the Files app (left nav, header bar, padded content, tables):
     cards, recent activity as `oc-table` (`status/runtext.ts`).
   - [x] Full e2e green (13 tests) on the fixture, screenshots reviewed in
     light and dark.
-- [ ] PR B — issue #60
+- [x] PR B — issue #60
+  - [x] Host stubs for `oc-radio`, `oc-checkbox`, `oc-select`, `oc-avatar`,
+    measured against design system 7.4: radio and checkbox put attributes
+    on a wrapping `<span>` (the native input sits inside, so selectors are
+    `[data-testid=…] input`); `oc-select` is vue-select, its model is the
+    option object, and `data-testid` lands on its outer element *and* on
+    vue-select's root (`.first()` in e2e). `src/test/modals.ts` fakes
+    web-pkg's modal store.
+  - [x] Setup wizard: `StepIndicator` (always three steps; an automatically
+    chosen destination shows as done; none outside the sequence —
+    `wizard/progress.ts`), `oc-radio` for destination and how often,
+    `oc-select` for weekday and time. Admins without a destination get the
+    overview's admin notice and action (decision 7) instead of "ask your
+    administrator".
+  - [x] Restore: picker as `oc-table` with a radio column (hidden label "Backup
+    from …"; `restore/snapshotrow.ts`), confirm step as a summary panel,
+    outcomes as notices.
+  - [x] Recovery Key / Replace / gate: layout only. Every `$gettext` msgid in
+    those files is unchanged against `main` (checked by script); the hand-made
+    `role=alert` paragraphs became `NoticeBanner`s that keep their role and
+    test ids.
+  - [x] Admin: destinations as `oc-table` (`admin/targetrow.ts`) with "Add a
+    backup destination" in the header actions; edit page sections
+    Connection / Access keys / Who can back up here / Danger zone;
+    `oc-checkbox`, `oc-radio`, `oc-avatar` for people.
+  - [x] Also (owner, 2026-10-05): `RetentionEditor`'s save error is an
+    `ActionError`, `ConnectionCheck`'s results a notice (success only when
+    every pair works, `checkTone`).
+  - [x] e2e: selectors moved; the journey picks weekly/Wednesday/03:00 with the
+    host's controls and asserts the PUT; a new admin test deletes a
+    throwaway destination through the dialog (cancel first); the tour adds
+    the restore confirm step and the delete dialog. Viewport raised to
+    1440×1900 so the destination page fits.
+
+  **Deviations from the plan, on purpose:**
+  - **No time field in the design system** (`OcTextInput.type` has no
+    `time`, `OcDatepicker` is dates only). The time is an `oc-select` of half
+    hours (`wizard/timeoptions.ts`). A stored time off that grid is added to
+    the list, not rounded, so opening the wizard never changes it.
+  - **Delete via web-pkg `useModals().dispatchModal`**, not an `<oc-modal>` in
+    the template: it is what Files uses (focus trap, Esc, stacking). The
+    delete runs in `onConfirm` and never throws into it, so the dialog
+    closes whatever the answer and the outcome (in use, error) shows on the
+    page. On 7.5.0 the host's dialog has no Cancel button, only the close
+    "×" (accessible name "Cancel").
+  - **`NoticeBanner.title` is optional**: one-sentence notices are said as
+    the message, not in bold.
+  - Connection and keys stay one form with one save: the server takes them
+    in one request.

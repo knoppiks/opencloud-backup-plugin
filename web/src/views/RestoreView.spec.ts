@@ -68,11 +68,14 @@ describe('RestoreView picker', () => {
       'Family photos',
       'Restore files'
     ])
-    const options = wrapper.findAll('[data-testid="snapshot-picker"] label')
-    expect(options).toHaveLength(2)
-    expect(options[0]!.text()).toContain('1,200 files, 3.4 GB')
-    expect(options[0]!.text()).toMatch(/2026|Today|Yesterday/)
-    expect(options[1]!.text()).toContain('900 files')
+    const rows = wrapper.findAll('[data-testid="snapshot-picker"] tbody tr')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.find('.oc-table-data-cell-files').text()).toBe('1,200')
+    expect(rows[0]!.find('.oc-table-data-cell-size').text()).toBe('3.4 GB')
+    expect(rows[0]!.find('.oc-table-data-cell-when').text()).toMatch(/2026|Today|Yesterday/)
+    expect(rows[1]!.find('.oc-table-data-cell-files').text()).toBe('900')
+    // Each choice is named by its date for a screen reader.
+    expect(rows[0]!.find('input').attributes('aria-label')).toMatch(/^Backup from /)
     const radios = wrapper.findAll<HTMLInputElement>('input[type="radio"]')
     expect(radios[0]!.element.checked).toBe(true)
     expect(radios[1]!.element.checked).toBe(false)
@@ -114,6 +117,16 @@ describe('RestoreView confirmation', () => {
     expect(fake.restore).not.toHaveBeenCalled()
   })
 
+  it('confirms the backup picked in the table', async () => {
+    const wrapper = await mountPage()
+    await wrapper
+      .find('tr[data-item-id="k-older"] [data-testid="snapshot-choice"] input')
+      .setValue()
+    await wrapper.find('[data-testid="review"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="confirm-size"]').text()).toMatch(/^900 files, /)
+  })
+
   it('goes back to the picker without sending anything', async () => {
     const wrapper = await toConfirm()
     await wrapper.find('[data-testid="choose-other"]').trigger('click')
@@ -144,7 +157,7 @@ describe('RestoreView confirmation', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="snapshot-gone"]').attributes('role')).toBe('alert')
-    expect(wrapper.findAll('[data-testid="snapshot-picker"] label')).toHaveLength(1)
+    expect(wrapper.findAll('[data-testid="snapshot-picker"] tbody tr')).toHaveLength(1)
   })
 })
 

@@ -50,6 +50,9 @@ describe('UserPicker', () => {
     expect(directory.search).toHaveBeenCalledTimes(1)
     expect(directory.search).toHaveBeenCalledWith('alic')
     expect(wrapper.find('[data-testid="matches"]').text()).toContain('Alice')
+    expect(
+      wrapper.find('[data-testid="matches"] [data-avatar]').attributes('data-avatar')
+    ).toContain('Alice')
   })
 
   it('does not search below the minimum length the server asks for', async () => {

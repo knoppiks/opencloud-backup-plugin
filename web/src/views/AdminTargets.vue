@@ -1,25 +1,46 @@
 <script setup lang="ts">
-// Admin: every backup destination, with where it points. Never its keys: the
-// API does not return them (decisions.md #14).
+// Admin: every backup destination, with where it points, as a table like
+// Files (Phase 8g). Never its keys: the API does not return them
+// (decisions.md #14).
 //
 // This page manages destinations and who may use them, nothing else. It shows
 // no Space, no run and no user data (decisions.md #15).
-import { onMounted, ref } from 'vue'
+//
+// `oc-*` elements are host globals: see components/RequestState.vue.
+import { computed, onMounted, ref } from 'vue'
+import { useGettext } from 'vue3-gettext'
 import { asApiError, type AdminTarget, type ApiError } from '../api'
+import { targetRow } from '../admin/targetrow'
 import { adminErrorAdvice, adminErrorTitle } from '../admin/wording'
 import AdminOnly from '../components/admin/AdminOnly.vue'
+import EmptyState from '../components/EmptyState.vue'
 import PageLayout from '../components/PageLayout.vue'
 import { destinationsCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
 import { useAdminApi } from '../composables/useAdminApi'
 import { useIsAdmin } from '../composables/useIsAdmin'
 
+const { $gettext } = useGettext()
 const api = useAdminApi()
 const isAdmin = useIsAdmin()
 
 const loading = ref(true)
 const error = ref<ApiError | undefined>(undefined)
 const targets = ref<AdminTarget[]>([])
+
+const rows = computed(() => targets.value.map((t) => targetRow(t, $gettext)))
+
+/** fields are the columns; the location gives way on narrow screens. */
+const fields = computed(() => [
+  { name: 'name', title: $gettext('Name'), type: 'slot', width: 'expand' },
+  {
+    name: 'location',
+    title: $gettext('Location'),
+    thClass: 'ext:hidden ext:md:table-cell',
+    tdClass: 'ext:hidden ext:md:table-cell ext:text-role-on-surface-variant ext:break-all'
+  },
+  { name: 'keyPairs', title: $gettext('Access keys'), width: 'shrink', wrap: 'nowrap' }
+])
 
 async function load(): Promise<void> {
   loading.value = true
@@ -33,11 +54,6 @@ async function load(): Promise<void> {
   }
 }
 
-/** location is "endpoint / bucket / prefix", as far as it goes. */
-function location(target: AdminTarget): string {
-  return [target.endpoint, target.bucket, target.prefix].filter(Boolean).join(' / ')
-}
-
 onMounted(() => {
   if (isAdmin) {
     void load()
@@ -46,7 +62,18 @@ onMounted(() => {
 </script>
 
 <template>
-  <PageLayout :crumbs="destinationsCrumbs($gettext)" narrow>
+  <PageLayout :crumbs="destinationsCrumbs($gettext)">
+    <template v-if="isAdmin" #actions>
+      <oc-button
+        type="router-link"
+        :to="{ name: 'backup-vault-admin-target-new' }"
+        appearance="filled"
+        data-testid="add"
+      >
+        <oc-icon name="add" fill-type="line" size="small" />
+        {{ $gettext('Add a backup destination') }}
+      </oc-button>
+    </template>
     <AdminOnly>
       <RequestState
         :loading="loading"
@@ -55,44 +82,28 @@ onMounted(() => {
         :advice="adminErrorAdvice"
         @retry="load"
       >
-        <p v-if="targets.length === 0" data-testid="no-destinations">
-          {{
+        <EmptyState
+          v-if="rows.length === 0"
+          icon="server"
+          :message="
             $gettext(
               'There are no backup destinations yet. Nobody can set up backups until there is one.'
             )
-          }}
-        </p>
-        <ul v-else class="ext:flex ext:flex-col ext:gap-2" data-testid="destinations">
-          <li
-            v-for="target in targets"
-            :key="target.id"
-            class="ext:rounded ext:border ext:p-3"
-            :data-target-id="target.id"
-          >
+          "
+          data-testid="no-destinations"
+        />
+        <oc-table v-else :data="rows" :fields="fields" id-key="id" data-testid="destinations">
+          <template #name="{ item }">
             <router-link
-              :to="{ name: 'backup-vault-admin-target', params: { targetId: target.id } }"
-              class="ext:font-medium"
+              :to="{ name: 'backup-vault-admin-target', params: { targetId: item.id } }"
+              class="ext:inline-flex ext:items-center ext:gap-2 ext:font-medium ext:hover:underline"
+              data-testid="destination-link"
             >
-              {{ target.name }}
+              <oc-icon name="hard-drive-2" fill-type="line" />
+              {{ item.name }}
             </router-link>
-            <p class="ext:text-sm ext:text-role-on-surface-variant" data-testid="location">
-              {{ location(target) }}
-            </p>
-            <p class="ext:text-sm ext:text-role-on-surface-variant" data-testid="key-pairs">
-              {{
-                target.maintenance_configured
-                  ? $gettext('Separate maintenance keys')
-                  : $gettext('One key pair for everything')
-              }}
-            </p>
-          </li>
-        </ul>
-
-        <div class="ext:mt-3">
-          <router-link :to="{ name: 'backup-vault-admin-target-new' }" data-testid="add">
-            {{ $gettext('Add a backup destination') }}
-          </router-link>
-        </div>
+          </template>
+        </oc-table>
       </RequestState>
     </AdminOnly>
   </PageLayout>

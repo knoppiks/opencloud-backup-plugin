@@ -1,7 +1,9 @@
 <script setup lang="ts">
-// Admin: one backup destination — its settings and keys, who may use it, and
-// deleting it. Three independent saves, because they are three independent
-// routes on the server and a failure in one should not cost the others.
+// Admin: one backup destination — its connection and keys, who may use it,
+// and deleting it, each under its own heading (Phase 8g). Three independent
+// saves, because they are three independent routes on the server and a
+// failure in one should not cost the others. Connection and keys share one
+// save: the server takes them in one request.
 import { useRouter } from '@opencloud-eu/web-pkg'
 import { onMounted, ref } from 'vue'
 import { asApiError, type AdminTarget, type ApiError } from '../api'
@@ -69,12 +71,13 @@ onMounted(() => {
         @retry="load"
       >
         <template v-if="target">
-          <section class="ext:flex ext:flex-col ext:gap-3" data-testid="settings">
-            <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Settings') }}</h2>
-            <TargetSettingsForm :target="target" @saved="saved" />
-          </section>
-          <TargetAudience :target-id="target.id" />
-          <DeleteTarget :target-id="target.id" :target-name="target.name" @deleted="deleted" />
+          <div class="ext:flex ext:flex-col ext:gap-8">
+            <div data-testid="settings">
+              <TargetSettingsForm :target="target" @saved="saved" />
+            </div>
+            <TargetAudience :target-id="target.id" />
+            <DeleteTarget :target-id="target.id" :target-name="target.name" @deleted="deleted" />
+          </div>
         </template>
       </RequestState>
     </AdminOnly>

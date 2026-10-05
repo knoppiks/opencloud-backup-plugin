@@ -6,10 +6,12 @@
 // the Vitest defaults. The `name` is the federation remote name, the entry
 // chunk name, and the app id the host mounts our routes under, all at once.
 //
-// Pinned against OpenCloud 7.3.0 / extension-sdk 7.2.0 (see
-// .agents/plan/phase-0-findings.md). The host provides the shared packages at
-// runtime, so their versions here must stay on the same major as the OpenCloud
-// release we target.
+// Built with extension-sdk 7.2.0 and verified against OpenCloud 7.3.0–7.5.0
+// (the e2e fixture runs 7.5.0, whose host ships design system 7.4; see
+// .agents/plan/phase-0-findings.md and phase-8g-ui-design.md). The host
+// provides the shared packages and every `oc-*` component at runtime, so their
+// versions here must stay on the same major as the OpenCloud release we
+// target.
 import { defineConfig } from '@opencloud-eu/extension-sdk'
 
 export default defineConfig({

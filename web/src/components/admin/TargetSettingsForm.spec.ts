@@ -74,7 +74,7 @@ describe('TargetSettingsForm: creating', () => {
     fake.createTarget.mockResolvedValue(created)
     const wrapper = mountForm()
     await fillSettings(wrapper)
-    await wrapper.find('[data-testid="path-style"]').setValue(true)
+    await wrapper.find('[data-testid="path-style"] input').setValue(true)
     await typePair(wrapper, 'backup-keys', 'backup-id', BACKUP_SECRET)
 
     await submit(wrapper)
@@ -152,9 +152,9 @@ describe('TargetSettingsForm: editing', () => {
     expect(value('name')).toBe('Buddy')
     expect(value('endpoint')).toBe('buddy.example.org:3900')
     expect(value('prefix')).toBe('family/')
-    expect((wrapper.find('[data-testid="path-style"]').element as HTMLInputElement).checked).toBe(
-      true
-    )
+    expect(
+      (wrapper.find('[data-testid="path-style"] input').element as HTMLInputElement).checked
+    ).toBe(true)
     // Closed: there are no key fields to fill at all.
     expect(wrapper.find('[data-testid="keys-stored"]').exists()).toBe(true)
     expect(wrapper.findAll('input[type="password"]')).toHaveLength(0)

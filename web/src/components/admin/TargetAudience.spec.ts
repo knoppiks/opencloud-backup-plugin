@@ -67,8 +67,12 @@ describe('TargetAudience', () => {
       expect.stringContaining('Alice'),
       expect.stringContaining('Bob')
     ])
-    expect((wrapper.find('[data-testid="mode-people"]').element as HTMLInputElement).checked).toBe(
-      true
+    expect(
+      (wrapper.find('[data-testid="mode-people"] input').element as HTMLInputElement).checked
+    ).toBe(true)
+    // Shown with their avatar, as the host's share dialogs show people.
+    expect(wrapper.find('[data-user-id="u-1"] [data-avatar]').attributes('data-avatar')).toContain(
+      'Alice'
     )
   })
 
@@ -89,7 +93,7 @@ describe('TargetAudience', () => {
     const wrapper = await mountAudience([{ scope: 'all_users' }])
     expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
 
-    await wrapper.find('[data-testid="mode-people"]').trigger('change')
+    await wrapper.find('[data-testid="mode-people"] input').trigger('change')
     expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
   })
 
@@ -121,7 +125,7 @@ describe('TargetAudience', () => {
 
   it('saves everyone as one all_users grant', async () => {
     const wrapper = await mountAudience([])
-    await wrapper.find('[data-testid="mode-everyone"]').trigger('change')
+    await wrapper.find('[data-testid="mode-everyone"] input').trigger('change')
     await save(wrapper)
     expect(sentGrants()).toEqual([{ scope: 'all_users' }])
   })
@@ -130,7 +134,7 @@ describe('TargetAudience', () => {
     const wrapper = await mountAudience([{ scope: 'user', user_id: 'u-1' }])
     expect(wrapper.find('[data-testid="redundant-people"]').exists()).toBe(false)
 
-    await wrapper.find('[data-testid="mode-everyone"]').trigger('change')
+    await wrapper.find('[data-testid="mode-everyone"] input').trigger('change')
     expect(wrapper.find('[data-testid="redundant-people"]').exists()).toBe(true)
 
     await save(wrapper)
@@ -152,7 +156,7 @@ describe('TargetAudience', () => {
   it('shows a failed save in admin wording and keeps the edit', async () => {
     api.replaceGrants.mockRejectedValue(new ApiError('forbidden', 'x', 403))
     const wrapper = await mountAudience([])
-    await wrapper.find('[data-testid="mode-everyone"]').trigger('change')
+    await wrapper.find('[data-testid="mode-everyone"] input').trigger('change')
 
     await save(wrapper)
 
@@ -160,7 +164,7 @@ describe('TargetAudience', () => {
       'Only administrators can manage backup destinations'
     )
     expect(
-      (wrapper.find('[data-testid="mode-everyone"]').element as HTMLInputElement).checked
+      (wrapper.find('[data-testid="mode-everyone"] input').element as HTMLInputElement).checked
     ).toBe(true)
   })
 
@@ -174,7 +178,7 @@ describe('TargetAudience', () => {
     await wrapper.find('[role="alert"] button').trigger('click')
     await flushPromises()
     expect(
-      (wrapper.find('[data-testid="mode-everyone"]').element as HTMLInputElement).checked
+      (wrapper.find('[data-testid="mode-everyone"] input').element as HTMLInputElement).checked
     ).toBe(true)
   })
 })

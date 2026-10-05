@@ -5,6 +5,7 @@ import { flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api'
 import { mountWithHost } from '../test/host'
+import { modalsDouble, type ModalsDouble } from '../test/modals'
 import {
   adminTarget,
   fakeAdminApi,
@@ -19,7 +20,8 @@ import AdminTargets from './AdminTargets.vue'
 const host = vi.hoisted(() => ({
   api: undefined as unknown,
   admin: true,
-  router: { replace: undefined as unknown as ReturnType<typeof vi.fn> }
+  router: { replace: undefined as unknown as ReturnType<typeof vi.fn> },
+  modals: undefined as unknown as ModalsDouble
 }))
 vi.mock('../composables/useAdminApi', () => ({ useAdminApi: () => host.api }))
 vi.mock('../composables/useIsAdmin', () => ({ useIsAdmin: () => host.admin }))
@@ -27,7 +29,10 @@ vi.mock('../composables/useUserDirectory', () => ({
   useUserDirectory: () => fakeDirectory(),
   useUserSearchMinLength: () => 1
 }))
-vi.mock('@opencloud-eu/web-pkg', () => ({ useRouter: () => host.router }))
+vi.mock('@opencloud-eu/web-pkg', () => ({
+  useRouter: () => host.router,
+  useModals: () => host.modals.store
+}))
 
 let api: FakeAdminApi
 beforeEach(() => {
@@ -35,6 +40,7 @@ beforeEach(() => {
   host.api = api
   host.admin = true
   host.router.replace = vi.fn(async () => undefined)
+  host.modals = modalsDouble()
 })
 
 async function mounted<T>(component: T, props: Record<string, unknown> = {}) {
@@ -80,13 +86,13 @@ describe('AdminTargets', () => {
       adminTarget({ id: 't-2', name: 'Offsite', maintenance_configured: true })
     ])
     const wrapper = await mounted(AdminTargets)
-    const items = wrapper.findAll('[data-testid="destinations"] li')
+    const items = wrapper.findAll('[data-testid="destinations"] tbody tr')
 
     expect(items).toHaveLength(2)
-    expect(items[0]!.find('[data-testid="location"]').text()).toBe(
+    expect(items[0]!.find('.oc-table-data-cell-location').text()).toBe(
       'buddy.example.org:3900 / backups / family/'
     )
-    expect(items[1]!.find('[data-testid="key-pairs"]').text()).toBe('Separate maintenance keys')
+    expect(items[1]!.find('.oc-table-data-cell-keyPairs').text()).toBe('Separate maintenance keys')
     expect(JSON.parse(items[0]!.find('a').attributes('data-to')!)).toEqual({
       name: 'backup-vault-admin-target',
       params: { targetId: TARGET_ID }
@@ -137,6 +143,13 @@ describe('AdminTargetEdit', () => {
     expect(wrapper.find('[data-testid="settings"] form').exists()).toBe(true)
     expect(wrapper.find('[data-testid="audience"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="delete-target"]').exists()).toBe(true)
+    // One section each: connection, keys, who may use it, deletion.
+    expect(wrapper.findAll('h2').map((h) => h.text())).toEqual([
+      'Connection',
+      'Access keys',
+      'Who can back up here',
+      'Danger zone'
+    ])
     // Write-only: an edit page has no key field until the admin asks for one.
     expect(wrapper.findAll('input[type="password"]')).toHaveLength(0)
   })
@@ -165,7 +178,7 @@ describe('AdminTargetEdit', () => {
     const wrapper = await mounted(AdminTargetEdit, { targetId: TARGET_ID })
 
     await wrapper.find('[data-testid="delete"]').trigger('click')
-    await wrapper.find('[data-testid="confirm"]').trigger('click')
+    await host.modals.last().onConfirm!(undefined)
     await flushPromises()
 
     expect(host.router.replace).toHaveBeenCalledWith({ name: 'backup-vault-admin-targets' })

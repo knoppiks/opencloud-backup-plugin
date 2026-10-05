@@ -35,8 +35,9 @@ test('an administrator creates the destination and grants it to one person', asy
   await page.locator('input[data-testid="bucket"]').fill(GARAGE.bucket)
   await page.locator('input[data-testid="region"]').fill(GARAGE.region)
   await page.locator('input[data-testid="prefix"]').fill(prefix)
-  await page.locator('[data-testid="path-style"]').check()
-  await page.locator('[data-testid="disable-tls"]').check()
+  // The host's checkbox carries the test id on its wrapper (8g).
+  await page.locator('[data-testid="path-style"] input').check()
+  await page.locator('[data-testid="disable-tls"] input').check()
   const backupKeys = page.locator('[data-testid="backup-keys"]')
   await backupKeys.locator('input[data-testid="access-key-id"]').fill(keys.accessKeyId)
   await backupKeys.locator('input[data-testid="secret-access-key"]').fill(keys.secretAccessKey)
@@ -99,6 +100,42 @@ test('the family member sees the destination and none of its administration', as
   await expect(page.locator('[data-testid="not-admin"]')).toBeVisible()
   await expect(page.locator('[data-testid="destinations"]')).toHaveCount(0)
   expect(await apiStatus(page, '/admin/targets')).toBe(403)
+
+  await context.close()
+})
+
+test('an administrator deletes a destination through the host’s dialog', async ({ browser }) => {
+  const { prefix } = runContext()
+  const keys = garageKeys()
+  const { context, page } = await signIn(browser, ADMIN)
+
+  // A destination of its own, granted to nobody, so the journey's is untouched.
+  await openVault(page, '/admin/targets/new')
+  await page.locator('input[data-testid="name"]').fill('Throwaway')
+  await page.locator('input[data-testid="endpoint"]').fill(GARAGE.endpoint)
+  await page.locator('input[data-testid="bucket"]').fill(GARAGE.bucket)
+  await page.locator('input[data-testid="prefix"]').fill(`${prefix}throwaway/`)
+  const backupKeys = page.locator('[data-testid="backup-keys"]')
+  await backupKeys.locator('input[data-testid="access-key-id"]').fill(keys.accessKeyId)
+  await backupKeys.locator('input[data-testid="secret-access-key"]').fill(keys.secretAccessKey)
+  await page.locator('[data-testid="save"]').click()
+  await page.waitForURL(/\/backup-vault\/admin\/targets\/[0-9a-f]{32}$/)
+  const targetId = page.url().split('/').pop()!
+
+  // Cancelling the dialog deletes nothing.
+  await page.locator('[data-testid="delete"]').click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('Delete “Throwaway”?')
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(await apiStatus(page, `/admin/targets/${targetId}`)).toBe(200)
+
+  await page.locator('[data-testid="delete"]').click()
+  await page.getByRole('dialog').locator('.oc-modal-body-actions-confirm').click()
+  await page.waitForURL(/\/backup-vault\/admin\/targets$/)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  expect(await apiStatus(page, `/admin/targets/${targetId}`)).toBe(404)
+  await expect(page.locator('[data-testid="destinations"]')).not.toContainText('Throwaway')
 
   await context.close()
 })

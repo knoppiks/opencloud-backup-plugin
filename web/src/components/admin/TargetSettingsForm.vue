@@ -27,6 +27,7 @@ import {
 import { adminErrorAdvice, adminErrorTitle } from '../../admin/wording'
 import { useAdminApi } from '../../composables/useAdminApi'
 import ActionError from '../ActionError.vue'
+import NoticeBanner from '../NoticeBanner.vue'
 import ConnectionCheck from './ConnectionCheck.vue'
 import KeyPairFields from './KeyPairFields.vue'
 
@@ -113,66 +114,63 @@ onBeforeUnmount(forgetKeys)
 </script>
 
 <template>
-  <form class="ext:flex ext:flex-col ext:gap-3" novalidate @submit.prevent="save">
-    <oc-text-input
-      v-model="settings.name"
-      :label="$gettext('Name')"
-      :description-message="$gettext('People see this name when they choose where to back up.')"
-      :error-message="problemFor('name')"
-      :disabled="saving"
-      data-testid="name"
-    />
-    <oc-text-input
-      v-model="settings.endpoint"
-      :label="$gettext('Endpoint')"
-      :description-message="
-        $gettext('Address of the S3 service, e.g. s3.example.org or garage:3900')
-      "
-      :error-message="problemFor('endpoint')"
-      :disabled="saving"
-      data-testid="endpoint"
-    />
-    <oc-text-input
-      v-model="settings.bucket"
-      :label="$gettext('Bucket')"
-      :error-message="problemFor('bucket')"
-      :disabled="saving"
-      data-testid="bucket"
-    />
-    <oc-text-input
-      v-model="settings.region"
-      :label="$gettext('Region (optional)')"
-      :disabled="saving"
-      data-testid="region"
-    />
-    <oc-text-input
-      v-model="settings.prefix"
-      :label="$gettext('Prefix (optional)')"
-      :description-message="$gettext('A folder inside the bucket to keep the backups in.')"
-      :disabled="saving"
-      data-testid="prefix"
-    />
-    <label class="ext:flex ext:gap-2">
-      <input
+  <form class="ext:flex ext:flex-col ext:gap-8" novalidate @submit.prevent="save">
+    <section class="ext:flex ext:flex-col ext:gap-3" data-testid="connection">
+      <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Connection') }}</h2>
+      <oc-text-input
+        v-model="settings.name"
+        :label="$gettext('Name')"
+        :description-message="$gettext('People see this name when they choose where to back up.')"
+        :error-message="problemFor('name')"
+        :disabled="saving"
+        data-testid="name"
+      />
+      <oc-text-input
+        v-model="settings.endpoint"
+        :label="$gettext('Endpoint')"
+        :description-message="
+          $gettext('Address of the S3 service, e.g. s3.example.org or garage:3900')
+        "
+        :error-message="problemFor('endpoint')"
+        :disabled="saving"
+        data-testid="endpoint"
+      />
+      <oc-text-input
+        v-model="settings.bucket"
+        :label="$gettext('Bucket')"
+        :error-message="problemFor('bucket')"
+        :disabled="saving"
+        data-testid="bucket"
+      />
+      <oc-text-input
+        v-model="settings.region"
+        :label="$gettext('Region (optional)')"
+        :disabled="saving"
+        data-testid="region"
+      />
+      <oc-text-input
+        v-model="settings.prefix"
+        :label="$gettext('Prefix (optional)')"
+        :description-message="$gettext('A folder inside the bucket to keep the backups in.')"
+        :disabled="saving"
+        data-testid="prefix"
+      />
+      <oc-checkbox
         v-model="settings.usePathStyle"
-        type="checkbox"
+        :label="$gettext('Use path-style addresses (needed by most self-hosted S3 services)')"
         :disabled="saving"
         data-testid="path-style"
       />
-      {{ $gettext('Use path-style addresses (needed by most self-hosted S3 services)') }}
-    </label>
-    <label class="ext:flex ext:gap-2">
-      <input
+      <oc-checkbox
         v-model="settings.disableTls"
-        type="checkbox"
+        :label="$gettext('Connect without TLS (only inside a trusted network)')"
         :disabled="saving"
         data-testid="disable-tls"
       />
-      {{ $gettext('Connect without TLS (only inside a trusted network)') }}
-    </label>
+    </section>
 
     <section class="ext:flex ext:flex-col ext:gap-3" data-testid="keys">
-      <h3 class="ext:font-semibold">{{ $gettext('Access keys') }}</h3>
+      <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Access keys') }}</h2>
 
       <template v-if="!replacingKeys">
         <p class="ext:text-sm ext:text-role-on-surface-variant" data-testid="keys-stored">
@@ -190,18 +188,17 @@ onBeforeUnmount(forgetKeys)
       </template>
 
       <template v-else>
-        <p
+        <NoticeBanner
           v-if="target?.maintenance_configured"
+          tone="warning"
           role="note"
-          class="ext:text-sm"
-          data-testid="replace-both-warning"
-        >
-          {{
+          :message="
             $gettext(
               'Saving replaces both key pairs. If you leave the maintenance keys empty, the stored maintenance keys are removed and the backup keys are used for both.'
             )
-          }}
-        </p>
+          "
+          data-testid="replace-both-warning"
+        />
         <KeyPairFields
           v-model="credentials.backup"
           :legend="$gettext('Backup keys')"
@@ -242,15 +239,22 @@ onBeforeUnmount(forgetKeys)
       </template>
     </section>
 
-    <ActionError
-      v-if="saveError"
-      :error="saveError"
-      :title="adminErrorTitle"
-      :advice="adminErrorAdvice"
-    />
-    <p v-if="savedNotice" role="status" data-testid="saved">{{ $gettext('Saved.') }}</p>
+    <div class="ext:flex ext:flex-col ext:items-start ext:gap-3">
+      <ActionError
+        v-if="saveError"
+        class="ext:self-stretch"
+        :error="saveError"
+        :title="adminErrorTitle"
+        :advice="adminErrorAdvice"
+      />
+      <NoticeBanner
+        v-if="savedNotice"
+        class="ext:self-stretch"
+        tone="success"
+        :message="$gettext('Saved.')"
+        data-testid="saved"
+      />
 
-    <div>
       <oc-button
         submit="submit"
         appearance="filled"

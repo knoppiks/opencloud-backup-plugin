@@ -5,8 +5,9 @@
 // administrator, and the server's answer is the one that counts — the client
 // gate only decides what is offered (8e decision 1).
 
-import type { ApiFailureCode } from '../api'
+import type { ApiFailureCode, CheckResult } from '../api'
 import { errorAdvice, errorTitle, type Gettext } from '../api/errortext'
+import type { Tone } from '../layout/tone'
 
 /** adminErrorTitle is errorTitle as the admin view says it. */
 export function adminErrorTitle(code: ApiFailureCode, $gettext: Gettext): string {
@@ -63,6 +64,14 @@ export function checkRoleText(role: string, $gettext: Gettext): string {
     default:
       return role
   }
+}
+
+/**
+ * checkTone is how a connection check's results are drawn: success only when
+ * every key pair works, danger as soon as one does not.
+ */
+export function checkTone(results: Pick<CheckResult, 'outcome'>[]): Tone {
+  return results.every((r) => r.outcome === 'ok') ? 'success' : 'danger'
 }
 
 /** checkOutcomeText is the one word (or few) a check result says. */
