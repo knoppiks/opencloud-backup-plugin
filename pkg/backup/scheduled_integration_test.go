@@ -320,7 +320,7 @@ func TestIntegration_ScheduledRunNeedsNoUserSession(t *testing.T) {
 		if run.Trigger != jobs.TriggerSchedule {
 			t.Fatalf("trigger = %q, want the run to be recorded as scheduled", run.Trigger)
 		}
-		if run.SnapshotID == "" || run.FileCount == 0 || run.TotalBytes == 0 {
+		if run.SnapshotID == "" || run.FileCount != 2 || run.TotalBytes == 0 {
 			t.Fatalf("run did not record its outcome: %+v", run)
 		}
 

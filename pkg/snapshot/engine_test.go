@@ -158,6 +158,83 @@ func TestSnapshot_SecondRunReusesUnchangedFiles(t *testing.T) {
 	}
 }
 
+// A file reused unchanged from the previous snapshot is still in the snapshot,
+// so it counts. kopia's upload counters leave such files out of the file count
+// while adding their size, which made an unchanged Space report "0 files" next
+// to its full size (issue #57).
+func TestSnapshot_UnchangedFilesAreCounted(t *testing.T) {
+	ctx := context.Background()
+	e, _ := newTestEngine(t)
+	r := testRepo(t, "space-1")
+	src := treeSource(t)
+
+	first, err := e.Snapshot(ctx, r, src)
+	if err != nil {
+		t.Fatalf("first Snapshot: %v", err)
+	}
+	second, err := e.Snapshot(ctx, r, src)
+	if err != nil {
+		t.Fatalf("second Snapshot: %v", err)
+	}
+	if src.openCount("readme.txt") != 1 {
+		t.Fatalf("readme.txt read %d times; the second run must reuse it for this test to mean anything",
+			src.openCount("readme.txt"))
+	}
+
+	assertTotals(t, "second snapshot", second, first.FileCount, first.TotalBytes)
+
+	listed, err := e.List(ctx, r)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("want 2 snapshots, got %d", len(listed))
+	}
+	for _, info := range listed {
+		assertTotals(t, "listed snapshot "+string(info.ID), info, 3, first.TotalBytes)
+	}
+}
+
+func assertTotals(t *testing.T, what string, info Info, files, bytes int64) {
+	t.Helper()
+	if info.FileCount != files || info.TotalBytes != bytes {
+		t.Fatalf("%s: %d files, %d bytes; want %d files, %d bytes",
+			what, info.FileCount, info.TotalBytes, files, bytes)
+	}
+}
+
+func TestLogicalTotals_PrefersRootSummary(t *testing.T) {
+	m := &ksnapshot.Manifest{
+		RootEntry: &ksnapshot.DirEntry{
+			DirSummary: &fs.DirectorySummary{TotalFileCount: 8235, TotalFileSize: 2_700_000_000},
+		},
+		// What kopia records for a run that reused every file.
+		Stats: ksnapshot.Stats{TotalFileCount: 0, CachedFiles: 8235, TotalFileSize: 2_700_000_000},
+	}
+	files, bytes := logicalTotals(m)
+	if files != 8235 || bytes != 2_700_000_000 {
+		t.Fatalf("got %d files, %d bytes; want the root summary", files, bytes)
+	}
+}
+
+func TestLogicalTotals_FallsBackToStatsWithoutSummary(t *testing.T) {
+	for name, root := range map[string]*ksnapshot.DirEntry{
+		"no root entry":   nil,
+		"no root summary": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := &ksnapshot.Manifest{
+				RootEntry: root,
+				Stats:     ksnapshot.Stats{TotalFileCount: 2, CachedFiles: 5, TotalFileSize: 700},
+			}
+			files, bytes := logicalTotals(m)
+			if files != 7 || bytes != 700 {
+				t.Fatalf("got %d files, %d bytes; want 7 files (read + cached), 700 bytes", files, bytes)
+			}
+		})
+	}
+}
+
 // A same-mtime content change must still be detected, because the adapter
 // exposes files as fs.File (kopia compares size) rather than fs.StreamingFile.
 func TestSnapshot_DetectsSizeChangeWithUnchangedMTime(t *testing.T) {
