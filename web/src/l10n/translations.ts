@@ -49,8 +49,19 @@ const de: Record<string, string> = {
   'Try again': 'Erneut versuchen',
   'There is nothing here yet.': 'Hier ist noch nichts.',
   'You do not have any spaces to back up.': 'Sie haben keine Spaces, die gesichert werden können.',
-  'No backup destination has been shared with you yet. Ask your administrator to grant you one.':
-    'Es wurde noch kein Sicherungsziel für Sie freigegeben. Bitten Sie Ihre Administration darum.',
+
+  // Setup steps (components/StepIndicator.vue, wizard/progress.ts).
+  'Setup steps': 'Einrichtungsschritte',
+  Destination: 'Ziel',
+  Schedule: 'Zeitplan',
+  '(done)': '(erledigt)',
+  '(step %{number} of %{total})': '(Schritt %{number} von %{total})',
+  // Restore picker table (views/RestoreView.vue).
+  Choose: 'Auswählen',
+  Date: 'Datum',
+  Files: 'Dateien',
+  Size: 'Größe',
+  'Backup from %{when}': 'Sicherung: %{when}',
 
   // Failure states (components/RequestState.vue).
   'The backup service cannot be reached': 'Der Sicherungsdienst ist nicht erreichbar',
@@ -338,7 +349,12 @@ const de: Record<string, string> = {
     'Es gibt noch keine Sicherungsziele. Solange es keines gibt, kann niemand Sicherungen einrichten.',
   'Separate maintenance keys': 'Eigene Wartungsschlüssel',
   'One key pair for everything': 'Ein Schlüsselpaar für alles',
-  Settings: 'Einstellungen',
+  // Destinations table and edit page sections (views/AdminTargets.vue,
+  // components/admin/*).
+  Location: 'Ort',
+  Connection: 'Verbindung',
+  'Connection check': 'Verbindungstest',
+  'Danger zone': 'Gefahrenbereich',
   'Only administrators can manage backup destinations':
     'Nur Administratoren können Sicherungsziele verwalten',
   'Sign in with an administrator account to continue.':

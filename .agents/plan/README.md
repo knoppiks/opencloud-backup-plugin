@@ -56,10 +56,11 @@ implemented**:
   offline take-out with the browser's key before and after rotation, and the
   network-level check that no Recovery Key is ever sent.
 
-Still open for Phase 8: the E2E job green in CI, and a review of the UI against
-the OpenCloud design system — planned as **8g** in
-[phase-8g-ui-design.md](phase-8g-ui-design.md). Issue #35 was closed by the
-merge of 8a–8d and no longer tracks the rest.
+The review of the UI against the OpenCloud design system is **8g**
+([phase-8g-ui-design.md](phase-8g-ui-design.md)): PR A (#59) the app shell
+and pages, PR B (#60) the forms and flows. Still open for Phase 8: the E2E job
+green in CI. Issue #35 was closed by the merge of 8a–8d and no longer tracks
+the rest.
 
 **Deployment readiness:** [deployment-readiness.md](deployment-readiness.md)
 records what stood between 8d and a first real deployment (CSP, publishing,

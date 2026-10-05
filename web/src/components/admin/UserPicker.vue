@@ -9,6 +9,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { searchTerm, type DirectoryUser } from '../../admin/directory'
 import { useUserDirectory, useUserSearchMinLength } from '../../composables/useUserDirectory'
+import NoticeBanner from '../NoticeBanner.vue'
 
 /** SEARCH_DELAY_MS matches the debounce of upstream share dialogs. */
 const SEARCH_DELAY_MS = 500
@@ -92,15 +93,19 @@ onBeforeUnmount(() => globalThis.clearTimeout(timer))
     <p v-if="searching" class="ext:text-sm" data-testid="searching">
       {{ $gettext('Searching…') }}
     </p>
-    <p v-else-if="failed" role="alert" class="ext:text-sm" data-testid="search-failed">
-      {{ $gettext('Could not search for people. Try again in a moment.') }}
-    </p>
+    <NoticeBanner
+      v-else-if="failed"
+      tone="danger"
+      :message="$gettext('Could not search for people. Try again in a moment.')"
+      data-testid="search-failed"
+    />
     <p v-else-if="searched && results.length === 0" class="ext:text-sm" data-testid="no-matches">
       {{ $gettext('Nobody matches.') }}
     </p>
-    <ul v-if="results.length > 0" class="ext:flex ext:flex-col ext:gap-1" data-testid="matches">
-      <li v-for="user in results" :key="user.id" class="ext:flex ext:items-center ext:gap-2">
-        <span>
+    <ul v-if="results.length > 0" class="ext:flex ext:flex-col ext:gap-2" data-testid="matches">
+      <li v-for="user in results" :key="user.id" class="ext:flex ext:items-center ext:gap-3">
+        <oc-avatar :user-name="user.displayName" :width="32" />
+        <span class="ext:flex-1 ext:min-w-0">
           {{ user.displayName }}
           <span v-if="user.mail" class="ext:text-role-on-surface-variant">· {{ user.mail }}</span>
         </span>

@@ -80,6 +80,12 @@ describe('NoticeBanner', () => {
     const wrapper = mountWithHost(NoticeBanner, { props: { title: 'Title' } })
     expect(wrapper.find('[data-testid="notice-message"]').exists()).toBe(false)
   })
+
+  it('says a one-sentence notice as its message, without a title', () => {
+    const wrapper = mountWithHost(NoticeBanner, { props: { message: 'Only this.' } })
+    expect(wrapper.find('[data-testid="notice-title"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="notice-message"]').text()).toBe('Only this.')
+  })
 })
 
 describe('ActionError', () => {

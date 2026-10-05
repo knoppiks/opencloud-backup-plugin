@@ -18,6 +18,8 @@ import SetupWizard from './SetupWizard.vue'
 
 const api = vi.hoisted(() => ({ current: undefined as unknown }))
 vi.mock('../composables/useBackupApi', () => ({ useBackupApi: () => api.current }))
+const gate = vi.hoisted(() => ({ admin: false }))
+vi.mock('../composables/useIsAdmin', () => ({ useIsAdmin: () => gate.admin }))
 
 // Real Argon2id at the default parameters takes seconds; crypto/ceremony.spec.ts
 // tests the real ceremony, including its self-verification.
@@ -64,6 +66,18 @@ async function mountWizard(language?: string) {
 
 const step = (wrapper: VueWrapper) => wrapper.find('[data-step]').attributes('data-step')
 
+/** selectedText is the label of the option a dropdown shows as chosen. */
+function selectedText(wrapper: VueWrapper, testid: string): string | undefined {
+  const select = wrapper.find(`[data-testid="${testid}"] select`).element as HTMLSelectElement
+  return select.selectedOptions[0]?.textContent ?? undefined
+}
+
+/** currentStep is the step the indicator marks as current, if it shows one. */
+function currentStep(wrapper: VueWrapper): string | undefined {
+  const steps = wrapper.find('[data-testid="steps"]')
+  return steps.exists() ? steps.find('[aria-current="step"]').text() : undefined
+}
+
 /** passGate answers whichever two groups the gate asked for. */
 async function passGate(wrapper: VueWrapper, key: string) {
   const groups = key.split('-').slice(1)
@@ -77,6 +91,7 @@ async function passGate(wrapper: VueWrapper, key: string) {
 }
 
 beforeEach(() => {
+  gate.admin = false
   fake = fakeApi()
   api.current = fake
   fake.setBackupConfig.mockResolvedValue({})
@@ -158,6 +173,18 @@ describe('SetupWizard targets', () => {
     const wrapper = await mountWizard()
     expect(step(wrapper)).toBe('no_targets')
     expect(wrapper.text()).toContain('Ask your administrator')
+    expect(wrapper.find('[data-testid="no-targets-admin"]').exists()).toBe(false)
+  })
+
+  it('offers an administrator the way to a destination instead', async () => {
+    gate.admin = true
+    given(unset(), 'manager', [])
+    const wrapper = await mountWizard()
+    expect(step(wrapper)).toBe('no_targets')
+    expect(wrapper.text()).not.toContain('Ask your administrator')
+    expect(wrapper.find('[data-testid="no-targets-admin"]').attributes('data-to')).toBe(
+      JSON.stringify({ name: 'backup-vault-admin-targets' })
+    )
   })
 })
 
@@ -187,7 +214,7 @@ describe('SetupWizard ceremony', () => {
     expect(wrapper.find('[data-testid="timezone"]').text()).toBe(
       'Times are in the server’s time zone (Europe/Berlin).'
     )
-    expect((wrapper.find('[data-testid="time"]').element as HTMLInputElement).value).toBe('02:30')
+    expect(selectedText(wrapper, 'time')).toBe('02:30')
 
     const scheduled = status({ next_run: '2026-09-25T00:30:00Z' })
     delete scheduled.last_successful_run
@@ -340,12 +367,12 @@ describe('SetupWizard done and wording', () => {
   it('offers weekdays when weekly is chosen, Sunday first', async () => {
     given(status({ enabled: false }))
     const wrapper = await mountWizard()
-    await wrapper.find('[data-testid="kind-weekly"]').trigger('change')
+    await wrapper.find('[data-testid="kind-weekly"] input').trigger('change')
     const days = wrapper.findAll('[data-testid="weekday"] option').map((o) => o.text())
     expect(days[0]).toBe('Sunday')
     expect(days).toHaveLength(7)
 
-    await wrapper.find('[data-testid="weekday"]').setValue('3')
+    await wrapper.find('[data-testid="weekday"] select').setValue('3')
     fake.status.mockResolvedValueOnce(status())
     await wrapper.find('form[data-step="schedule"]').trigger('submit')
     await flushPromises()
@@ -353,5 +380,59 @@ describe('SetupWizard done and wording', () => {
       enabled: true,
       preset: { kind: 'weekly', hour: 2, minute: 30, weekday: 3 }
     })
+  })
+})
+
+describe('SetupWizard controls and progress', () => {
+  it('shows where in the three steps the wizard is', async () => {
+    given(unset(), 'manager', [ONE, TWO])
+    const wrapper = await mountWizard()
+    expect(currentStep(wrapper)).toContain('Destination')
+    expect(wrapper.findAll('[data-testid="steps"] li')).toHaveLength(3)
+
+    await wrapper.find('[data-testid="target-t-1"] input').trigger('change')
+    await wrapper.find('[data-testid="target-continue"]').trigger('click')
+    await flushPromises()
+    expect(currentStep(wrapper)).toContain('Recovery Key')
+  })
+
+  it('counts an automatically chosen destination as a done step', async () => {
+    given(unset())
+    const wrapper = await mountWizard()
+    const states = wrapper
+      .findAll('[data-testid="steps"] li')
+      .map((li) => li.attributes('data-state'))
+    expect(states).toEqual(['done', 'current', 'upcoming'])
+  })
+
+  it('shows no steps where there is nothing to step through', async () => {
+    given(status())
+    const keyed = await mountWizard()
+    given(unset(), 'viewer')
+    const viewer = await mountWizard()
+    expect(currentStep(viewer)).toBeUndefined()
+    // A finished setup shows every step done, none current.
+    expect(keyed.findAll('[data-testid="steps"] li[data-state="done"]')).toHaveLength(3)
+  })
+
+  it('schedules at a time picked from the dropdown', async () => {
+    given(status({ enabled: false }))
+    const wrapper = await mountWizard()
+    const times = wrapper.findAll('[data-testid="time"] option').map((o) => o.text())
+    expect(times).toHaveLength(48)
+    await wrapper.find('[data-testid="time"] select').setValue(String(times.indexOf('21:00')))
+    fake.status.mockResolvedValueOnce(status())
+    await wrapper.find('form[data-step="schedule"]').trigger('submit')
+    await flushPromises()
+    expect(fake.setSchedule).toHaveBeenCalledWith(SPACE_ID, {
+      enabled: true,
+      preset: { kind: 'daily', hour: 21, minute: 0 }
+    })
+  })
+
+  it('keeps a stored time that is not on the half hour', async () => {
+    given(status({ enabled: false, preset: { kind: 'daily', hour: 6, minute: 45 } }))
+    const wrapper = await mountWizard()
+    expect(selectedText(wrapper, 'time')).toBe('06:45')
   })
 })

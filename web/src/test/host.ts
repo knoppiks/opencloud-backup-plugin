@@ -169,10 +169,111 @@ const table = defineComponent({
   }
 })
 
+// Like the real OcRadio (design system 7.4): attributes land on the wrapping
+// span, the native radio sits inside it and is checked when the model equals
+// `option`. Specs reach it with `[data-testid=…] input`.
+const radio = defineComponent({
+  name: 'OcRadioStub',
+  props: {
+    modelValue: { type: null, default: undefined },
+    option: { type: null, default: undefined },
+    label: { type: String, required: true },
+    hideLabel: Boolean,
+    disabled: Boolean
+  },
+  emits: ['update:modelValue'],
+  setup(props, { emit }) {
+    return () =>
+      h('span', [
+        h('label', [
+          h('input', {
+            type: 'radio',
+            checked: props.modelValue === props.option,
+            disabled: props.disabled,
+            'aria-label': props.hideLabel ? props.label : null,
+            onChange: () => emit('update:modelValue', props.option)
+          }),
+          props.hideLabel ? null : props.label
+        ])
+      ])
+  }
+})
+
+// Like the real OcCheckbox: attributes on the wrapping span, a native
+// checkbox inside bound to a boolean model.
+const checkbox = defineComponent({
+  name: 'OcCheckboxStub',
+  props: { modelValue: Boolean, label: { type: String, required: true }, disabled: Boolean },
+  emits: ['update:modelValue'],
+  setup(props, { emit }) {
+    return () =>
+      h('span', [
+        h('label', [
+          h('input', {
+            type: 'checkbox',
+            checked: props.modelValue,
+            disabled: props.disabled,
+            onChange: (e: Event) =>
+              emit('update:modelValue', (e.target as HTMLInputElement).checked)
+          }),
+          props.label
+        ])
+      ])
+  }
+})
+
+/** SelectOption is the option shape our views hand to oc-select. */
+interface SelectOption {
+  label: string
+}
+
+// The real OcSelect is vue-select: the model is one of `options` (an object),
+// and the selected option is shown by its `label`. Here it is a native
+// <select> whose values are option indices, so a spec picks with
+// `setValue(String(index))`.
+const select = defineComponent({
+  name: 'OcSelectStub',
+  props: {
+    modelValue: { type: Object as () => SelectOption | undefined, default: undefined },
+    options: { type: Array as () => SelectOption[], required: true },
+    label: { type: String, required: true },
+    disabled: Boolean
+  },
+  emits: ['update:modelValue'],
+  setup(props, { emit }) {
+    return () =>
+      h('label', [
+        props.label,
+        h(
+          'select',
+          {
+            value: String(props.options.findIndex((o) => o === props.modelValue)),
+            disabled: props.disabled,
+            onChange: (e: Event) =>
+              emit(
+                'update:modelValue',
+                props.options[Number((e.target as HTMLSelectElement).value)]
+              )
+          },
+          props.options.map((o, i) =>
+            h('option', { value: String(i), selected: o === props.modelValue }, o.label)
+          )
+        )
+      ])
+  }
+})
+
 /** hostStubs are the host-provided globals, as test doubles. */
 export const hostStubs: Record<string, Component> = {
+  'oc-avatar': defineComponent({
+    props: { userName: String, width: Number },
+    setup: (props) => () => h('span', { 'data-avatar': props.userName })
+  }),
   'oc-breadcrumb': breadcrumb,
   'oc-button': button,
+  'oc-checkbox': checkbox,
+  'oc-radio': radio,
+  'oc-select': select,
   'oc-icon': defineComponent({
     props: { name: String },
     setup: (props) => () => h('i', { 'data-icon': props.name })

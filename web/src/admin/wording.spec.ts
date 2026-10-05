@@ -5,6 +5,7 @@ import {
   adminErrorTitle,
   checkOutcomeText,
   checkRoleText,
+  checkTone,
   spacesInUse
 } from './wording'
 
@@ -58,5 +59,13 @@ describe('check wording', () => {
     expect(checkRoleText('backup', $gettext)).toBe('Backup keys')
     expect(checkRoleText('maintenance', $gettext)).toBe('Maintenance keys')
     expect(checkRoleText('other', $gettext)).toBe('other')
+  })
+})
+
+describe('checkTone', () => {
+  it('is a success only when every key pair works', () => {
+    expect(checkTone([{ outcome: 'ok' }, { outcome: 'ok' }])).toBe('success')
+    expect(checkTone([{ outcome: 'ok' }, { outcome: 'denied' }])).toBe('danger')
+    expect(checkTone([{ outcome: 'unreachable' }])).toBe('danger')
   })
 })

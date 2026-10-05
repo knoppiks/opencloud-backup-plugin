@@ -21,7 +21,7 @@ const THEMES = ['light', 'dark'] as const
  * VIEWPORT is a desktop width and tall enough for the longest page: the
  * host scrolls inside its own container, so `fullPage` cannot extend it.
  */
-const VIEWPORT = { width: 1440, height: 1400 }
+const VIEWPORT = { width: 1440, height: 1900 }
 
 interface Space {
   id: string
@@ -75,6 +75,11 @@ for (const theme of THEMES) {
     await shoot(page, `${prefix}-space`, space)
     await shoot(page, `${prefix}-setup`, `${space}/setup`)
     await shoot(page, `${prefix}-restore`, `${space}/restore`)
+    // The confirm step: only reviewed, nothing is started.
+    await page.locator('[data-testid="snapshot-choice"] input').first().check()
+    await page.locator('[data-testid="review"]').click()
+    await expect(page.locator('[data-step="confirm"]')).toBeVisible()
+    await page.screenshot({ path: join(screensDir(), `${prefix}-restore-confirm.png`) })
     await shoot(page, `${prefix}-recovery-key`, `${space}/recovery-key`)
     await shoot(page, `${prefix}-recovery-key-replace`, `${space}/recovery-key/replace`)
     await shoot(page, `${prefix}-admin-refused`, '/admin/targets')
@@ -99,6 +104,13 @@ for (const theme of THEMES) {
     const { targets } = await apiJson<{ targets: { id: string }[] }>(page, '/admin/targets')
     if (targets[0]) {
       await shoot(page, `${prefix}-destination-edit`, `/admin/targets/${targets[0].id}`)
+      // The delete dialog, cancelled: nothing is deleted.
+      await page.locator('[data-testid="delete"]').click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
+      await page.screenshot({ path: join(screensDir(), `${prefix}-destination-delete.png`) })
+      await dialog.getByRole('button', { name: 'Cancel' }).click()
+      await expect(dialog).toHaveCount(0)
     }
 
     await context.close()

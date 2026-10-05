@@ -6,16 +6,23 @@
 // unmount, which is what keeps the Recovery Key in component state only: it is
 // never in a store, a route, the URL or browser storage (8d decision 3; lint
 // bans storage here), and it is gone when the page is left.
+//
+// Every control is the host's own (`oc-radio`, `oc-select`; Phase 8g). The
+// design system has no time field, so the time is a dropdown of half hours
+// (wizard/timeoptions.ts).
 import { computed, onBeforeUnmount, onMounted, shallowRef } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import ActionError from '../components/ActionError.vue'
+import NoticeBanner from '../components/NoticeBanner.vue'
 import RecoveryKeyDisplay from '../components/RecoveryKeyDisplay.vue'
 import RecoveryKeyGate from '../components/RecoveryKeyGate.vue'
 import PageLayout from '../components/PageLayout.vue'
+import StepIndicator from '../components/StepIndicator.vue'
 import { spaceCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
 import { useBackupApi } from '../composables/useBackupApi'
 import { useFormat } from '../composables/useFormat'
+import { useIsAdmin } from '../composables/useIsAdmin'
 import { performSetupCeremony, recoveryKeyOpens } from '../crypto'
 import {
   cryptoRandomInt,
@@ -24,12 +31,16 @@ import {
   type ScheduleChoice,
   type WizardState
 } from '../wizard/machine'
+import { wizardProgress, wizardStepNames } from '../wizard/progress'
+import { selectedTime, timeOptions, type TimeOption } from '../wizard/timeoptions'
 
 const props = defineProps<{ spaceId: string }>()
 
 const gettext = useGettext()
 const { $gettext } = gettext
 const format = useFormat()
+/** isAdmin only decides what is offered, never what is allowed (8e decision 4). */
+const isAdmin = useIsAdmin()
 
 const state = shallowRef<WizardState>({ step: 'loading' })
 /**
@@ -56,26 +67,49 @@ const loadError = computed(() =>
   state.value.step === 'load_failed' ? state.value.error : undefined
 )
 
-function onTimeChange(choice: ScheduleChoice, value: string): void {
-  const [hour, minute] = value.split(':').map(Number)
-  if (Number.isInteger(hour) && Number.isInteger(minute)) {
-    wizard.chooseSchedule({ ...choice, hour: hour as number, minute: minute as number })
-  }
-}
+/** progress is the step the indicator marks, or undefined to show none. */
+const progress = computed(() => wizardProgress(state.value))
+const stepNames = computed(() => wizardStepNames($gettext))
 
-function timeOf(choice: ScheduleChoice): string {
-  return `${String(choice.hour).padStart(2, '0')}:${String(choice.minute).padStart(2, '0')}`
+/** WeekdayOption is one entry of the weekday dropdown; value 0 is Sunday. */
+interface WeekdayOption {
+  value: number
+  label: string
 }
 
 /** weekdays are named by the browser in the user's language; 0 is Sunday. */
-const weekdays = computed(() => {
+const weekdays = computed<WeekdayOption[]>(() => {
   const name = new Intl.DateTimeFormat(gettext.current || 'en', {
     weekday: 'long',
     timeZone: 'UTC'
   })
   // 2026-09-20 is a Sunday.
-  return Array.from({ length: 7 }, (_, day) => name.format(new Date(Date.UTC(2026, 8, 20 + day))))
+  return Array.from({ length: 7 }, (_, day) => ({
+    value: day,
+    label: name.format(new Date(Date.UTC(2026, 8, 20 + day)))
+  }))
 })
+
+/** times are the offered times; the stored one is always among them. */
+const times = computed(() =>
+  state.value.step === 'schedule' ? timeOptions(state.value.choice) : []
+)
+
+function chooseKind(choice: ScheduleChoice, kind: ScheduleChoice['kind']): void {
+  wizard.chooseSchedule({ ...choice, kind })
+}
+
+function chooseWeekday(choice: ScheduleChoice, day: WeekdayOption | null): void {
+  if (day) {
+    wizard.chooseSchedule({ ...choice, weekday: day.value })
+  }
+}
+
+function chooseTime(choice: ScheduleChoice, time: TimeOption | null): void {
+  if (time) {
+    wizard.chooseSchedule({ ...choice, hour: time.hour, minute: time.minute })
+  }
+}
 
 onMounted(() => wizard.start())
 onBeforeUnmount(() => wizard.dispose())
@@ -83,89 +117,122 @@ onBeforeUnmount(() => wizard.dispose())
 
 <template>
   <PageLayout :crumbs="crumbs" narrow>
+    <StepIndicator v-if="progress !== undefined" :steps="stepNames" :current="progress" />
     <RequestState :loading="state.step === 'loading'" :error="loadError" @retry="wizard.start()">
       <!-- Viewer -->
-      <section v-if="state.step === 'not_allowed'" data-step="not_allowed">
-        <p>{{ $gettext('Only editors and managers of this space can set up backup.') }}</p>
-      </section>
+      <NoticeBanner
+        v-if="state.step === 'not_allowed'"
+        tone="info"
+        :message="$gettext('Only editors and managers of this space can set up backup.')"
+        data-step="not_allowed"
+      />
 
-      <!-- No destination granted -->
-      <section v-else-if="state.step === 'no_targets'" data-step="no_targets">
-        <p>
-          {{
-            $gettext(
-              'No backup destination has been shared with you yet. Ask your administrator to grant you one.'
-            )
-          }}
-        </p>
-      </section>
+      <!-- No destination granted. An admin is the one who can change that,
+           so they are offered the way (8g decision 7). -->
+      <NoticeBanner
+        v-else-if="state.step === 'no_targets'"
+        tone="warning"
+        :title="$gettext('No backup destination is available to you yet')"
+        :message="
+          isAdmin
+            ? $gettext('Add a backup destination, or share an existing one with yourself.')
+            : $gettext(
+                'Ask your administrator to share one with you. Until then, no space can be set up.'
+              )
+        "
+        data-step="no_targets"
+      >
+        <template v-if="isAdmin" #actions>
+          <oc-button
+            type="router-link"
+            :to="{ name: 'backup-vault-admin-targets' }"
+            appearance="outline"
+            data-testid="no-targets-admin"
+          >
+            {{ $gettext('Add or share a destination') }}
+          </oc-button>
+        </template>
+      </NoticeBanner>
 
       <!-- Step 1: destination -->
-      <section v-else-if="state.step === 'pick_target'" data-step="pick_target">
+      <section
+        v-else-if="state.step === 'pick_target'"
+        class="ext:flex ext:flex-col ext:gap-3"
+        data-step="pick_target"
+      >
         <template v-if="state.targets.length > 1">
           <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Where should backups go?') }}</h2>
-          <fieldset class="ext:mt-2 ext:flex ext:flex-col ext:gap-1" data-testid="target-picker">
+          <fieldset class="ext:flex ext:flex-col ext:gap-2" data-testid="target-picker">
             <legend class="ext:sr-only">{{ $gettext('Backup destination') }}</legend>
-            <label v-for="target in state.targets" :key="target.id" class="ext:flex ext:gap-2">
-              <input
-                type="radio"
-                name="target"
-                :value="target.id"
-                :checked="state.selected === target.id"
-                :disabled="state.saving"
-                @change="wizard.selectTarget(target.id)"
-              />
-              {{ target.name }}
-            </label>
+            <oc-radio
+              v-for="target in state.targets"
+              :key="target.id"
+              :model-value="state.selected"
+              :option="target.id"
+              :label="target.name"
+              :disabled="state.saving"
+              :data-testid="`target-${target.id}`"
+              @update:model-value="wizard.selectTarget(target.id)"
+            />
           </fieldset>
         </template>
         <p v-else-if="state.saving" class="ext:flex ext:items-center ext:gap-2">
           <oc-spinner />
           {{ $gettext('Saving…') }}
         </p>
-        <ActionError v-if="state.error" class="ext:mt-2" :error="state.error" />
-        <oc-button
-          v-if="state.targets.length > 1 || state.error"
-          class="ext:mt-3"
-          appearance="filled"
-          :disabled="state.saving || state.selected === undefined"
-          :show-spinner="state.saving"
-          data-testid="target-continue"
-          @click="wizard.confirmTarget()"
-        >
-          {{ state.error ? $gettext('Try again') : $gettext('Continue') }}
-        </oc-button>
+        <ActionError v-if="state.error" :error="state.error" />
+        <div v-if="state.targets.length > 1 || state.error">
+          <oc-button
+            appearance="filled"
+            :disabled="state.saving || state.selected === undefined"
+            :show-spinner="state.saving"
+            data-testid="target-continue"
+            @click="wizard.confirmTarget()"
+          >
+            {{ state.error ? $gettext('Try again') : $gettext('Continue') }}
+          </oc-button>
+        </div>
       </section>
 
       <!-- Step 2, editor: a manager has to continue -->
-      <section v-else-if="state.step === 'needs_manager'" data-step="needs_manager">
-        <p class="ext:font-medium">
-          {{ $gettext('A manager of this space has to finish setup.') }}
-        </p>
-        <p>
-          {{
-            $gettext(
-              'The backup destination is chosen. Creating the Recovery Key needs a manager of this space.'
-            )
-          }}
-        </p>
-      </section>
+      <NoticeBanner
+        v-else-if="state.step === 'needs_manager'"
+        tone="info"
+        :title="$gettext('A manager of this space has to finish setup.')"
+        :message="
+          $gettext(
+            'The backup destination is chosen. Creating the Recovery Key needs a manager of this space.'
+          )
+        "
+        data-step="needs_manager"
+      />
 
       <!-- Step 2: Recovery Key, introduction -->
-      <section v-else-if="state.step === 'key_intro'" data-step="key_intro">
+      <section
+        v-else-if="state.step === 'key_intro'"
+        class="ext:flex ext:flex-col ext:gap-3"
+        data-step="key_intro"
+      >
         <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Your Recovery Key') }}</h2>
-        <p v-if="state.discardPrevious" role="alert" data-testid="discard-previous">
-          {{
+        <NoticeBanner
+          v-if="state.discardPrevious"
+          tone="warning"
+          role="alert"
+          :message="
             $gettext(
               'The Recovery Key shown before was not taken into use. Throw away any copy of it; a new one will be created.'
             )
-          }}
-        </p>
-        <p v-if="state.failure?.kind === 'ceremony'" role="alert" data-testid="ceremony-failed">
-          {{
+          "
+          data-testid="discard-previous"
+        />
+        <NoticeBanner
+          v-if="state.failure?.kind === 'ceremony'"
+          tone="danger"
+          :message="
             $gettext('Creating the Recovery Key did not work. Nothing was saved. Please try again.')
-          }}
-        </p>
+          "
+          data-testid="ceremony-failed"
+        />
         <ActionError v-if="state.failure?.kind === 'refused'" :error="state.failure.error" />
         <p>
           {{
@@ -179,14 +246,11 @@ onBeforeUnmount(() => wizard.dispose())
             $gettext('Creating it takes a few seconds, and the page may not respond while it does.')
           }}
         </p>
-        <oc-button
-          class="ext:mt-3"
-          appearance="filled"
-          data-testid="create-key"
-          @click="wizard.createKey()"
-        >
-          {{ $gettext('Create my Recovery Key') }}
-        </oc-button>
+        <div>
+          <oc-button appearance="filled" data-testid="create-key" @click="wizard.createKey()">
+            {{ $gettext('Create my Recovery Key') }}
+          </oc-button>
+        </div>
       </section>
 
       <section
@@ -200,7 +264,11 @@ onBeforeUnmount(() => wizard.dispose())
       </section>
 
       <!-- Step 2: show the key once -->
-      <section v-else-if="state.step === 'show_key'" data-step="show_key">
+      <section
+        v-else-if="state.step === 'show_key'"
+        class="ext:flex ext:flex-col ext:gap-2"
+        data-step="show_key"
+      >
         <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Save your Recovery Key now') }}</h2>
         <p>
           {{
@@ -236,103 +304,96 @@ onBeforeUnmount(() => wizard.dispose())
       />
 
       <!-- Setup may or may not have landed -->
-      <section v-else-if="state.step === 'setup_uncertain'" data-step="setup_uncertain">
-        <p class="ext:font-medium">{{ $gettext('It is not clear whether setup finished.') }}</p>
-        <ActionError :error="state.error" />
-        <p>
-          {{
+      <section
+        v-else-if="state.step === 'setup_uncertain'"
+        class="ext:flex ext:flex-col ext:gap-3"
+        data-step="setup_uncertain"
+      >
+        <NoticeBanner
+          tone="warning"
+          :title="$gettext('It is not clear whether setup finished.')"
+          :message="
             $gettext(
               'Keep the Recovery Key you saved. Checking again finds out whether this space now uses it.'
             )
-          }}
-        </p>
-        <oc-button
-          class="ext:mt-3"
-          appearance="filled"
-          :disabled="state.checking"
-          :show-spinner="state.checking"
-          data-testid="check-again"
-          @click="wizard.retryUncertain()"
-        >
-          {{ $gettext('Check again') }}
-        </oc-button>
+          "
+        />
+        <ActionError :error="state.error" />
+        <div>
+          <oc-button
+            appearance="filled"
+            :disabled="state.checking"
+            :show-spinner="state.checking"
+            data-testid="check-again"
+            @click="wizard.retryUncertain()"
+          >
+            {{ $gettext('Check again') }}
+          </oc-button>
+        </div>
       </section>
 
       <!-- Terminal: keys already exist. There is deliberately no way back. -->
-      <section v-else-if="state.step === 'already_protected'" data-step="already_protected">
-        <h2 class="ext:text-lg ext:font-semibold">
-          {{ $gettext('This space is already protected') }}
-        </h2>
-        <p>
-          {{
-            $gettext(
-              'Its backups are already locked with a Recovery Key. Setting it up again would make every existing backup unreadable, so that is not possible.'
-            )
-          }}
-        </p>
-      </section>
+      <NoticeBanner
+        v-else-if="state.step === 'already_protected'"
+        tone="info"
+        :title="$gettext('This space is already protected')"
+        :message="
+          $gettext(
+            'Its backups are already locked with a Recovery Key. Setting it up again would make every existing backup unreadable, so that is not possible.'
+          )
+        "
+        data-step="already_protected"
+      />
 
       <!-- Step 3: schedule -->
       <form
         v-else-if="state.step === 'schedule'"
         data-step="schedule"
-        class="ext:flex ext:flex-col ext:gap-3"
+        class="ext:flex ext:flex-col ext:gap-4"
         @submit.prevent="wizard.saveSchedule()"
       >
         <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('When should backups run?') }}</h2>
-        <fieldset class="ext:flex ext:gap-4">
+        <fieldset class="ext:flex ext:flex-wrap ext:gap-x-6 ext:gap-y-2">
           <legend class="ext:sr-only">{{ $gettext('How often') }}</legend>
-          <label class="ext:flex ext:gap-2">
-            <input
-              type="radio"
-              name="kind"
-              value="daily"
-              :checked="state.choice.kind === 'daily'"
-              :disabled="state.saving"
-              data-testid="kind-daily"
-              @change="wizard.chooseSchedule({ ...state.choice, kind: 'daily' })"
-            />
-            {{ $gettext('Every day') }}
-          </label>
-          <label class="ext:flex ext:gap-2">
-            <input
-              type="radio"
-              name="kind"
-              value="weekly"
-              :checked="state.choice.kind === 'weekly'"
-              :disabled="state.saving"
-              data-testid="kind-weekly"
-              @change="wizard.chooseSchedule({ ...state.choice, kind: 'weekly' })"
-            />
-            {{ $gettext('Once a week') }}
-          </label>
+          <oc-radio
+            :model-value="state.choice.kind"
+            option="daily"
+            :label="$gettext('Every day')"
+            :disabled="state.saving"
+            data-testid="kind-daily"
+            @update:model-value="chooseKind(state.choice, 'daily')"
+          />
+          <oc-radio
+            :model-value="state.choice.kind"
+            option="weekly"
+            :label="$gettext('Once a week')"
+            :disabled="state.saving"
+            data-testid="kind-weekly"
+            @update:model-value="chooseKind(state.choice, 'weekly')"
+          />
         </fieldset>
-        <label v-if="state.choice.kind === 'weekly'" class="ext:flex ext:flex-col">
-          {{ $gettext('Day') }}
-          <select
-            :value="state.choice.weekday"
+        <div class="ext:flex ext:flex-wrap ext:gap-4">
+          <oc-select
+            v-if="state.choice.kind === 'weekly'"
+            class="ext:min-w-48"
+            :model-value="weekdays[state.choice.weekday]"
+            :options="weekdays"
+            :label="$gettext('Day')"
+            :searchable="false"
             :disabled="state.saving"
             data-testid="weekday"
-            @change="
-              wizard.chooseSchedule({
-                ...state.choice,
-                weekday: Number(($event.target as HTMLSelectElement).value)
-              })
-            "
-          >
-            <option v-for="(day, index) in weekdays" :key="index" :value="index">{{ day }}</option>
-          </select>
-        </label>
-        <label class="ext:flex ext:flex-col">
-          {{ $gettext('Time') }}
-          <input
-            type="time"
-            :value="timeOf(state.choice)"
+            @update:model-value="chooseWeekday(state.choice, $event)"
+          />
+          <oc-select
+            class="ext:min-w-32"
+            :model-value="selectedTime(times, state.choice)"
+            :options="times"
+            :label="$gettext('Time')"
             :disabled="state.saving"
             data-testid="time"
-            @change="onTimeChange(state.choice, ($event.target as HTMLInputElement).value)"
+            @update:model-value="chooseTime(state.choice, $event)"
           />
-        </label>
+        </div>
         <p class="ext:text-sm ext:text-role-on-surface-variant" data-testid="timezone">
           <template v-if="state.timezone">
             {{
@@ -356,8 +417,12 @@ onBeforeUnmount(() => wizard.dispose())
       </form>
 
       <!-- Done -->
-      <section v-else-if="state.step === 'done'" data-step="done">
-        <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Backup is set up') }}</h2>
+      <NoticeBanner
+        v-else-if="state.step === 'done'"
+        tone="success"
+        :title="$gettext('Backup is set up')"
+        data-step="done"
+      >
         <p data-testid="first-run">
           <template v-if="state.status.last_successful_run">
             {{ $gettext('Backups run automatically. You can check on them at any time.') }}
@@ -376,7 +441,7 @@ onBeforeUnmount(() => wizard.dispose())
             )
           }}
         </p>
-      </section>
+      </NoticeBanner>
     </RequestState>
   </PageLayout>
 </template>

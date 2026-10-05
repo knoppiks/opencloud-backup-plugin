@@ -10,6 +10,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import ActionError from '../components/ActionError.vue'
 import LostKeyNotice from '../components/LostKeyNotice.vue'
+import NoticeBanner from '../components/NoticeBanner.vue'
 import PageLayout from '../components/PageLayout.vue'
 import { recoveryKeyCrumb, spaceCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
@@ -69,16 +70,19 @@ onBeforeUnmount(() => {
 <template>
   <PageLayout :crumbs="crumbs" narrow>
     <RequestState :loading="state.step === 'loading'" :error="loadError" @retry="page.start()">
-      <section v-if="state.step === 'not_set_up'" data-step="not_set_up">
-        <p>
-          {{ $gettext('This space has no Recovery Key yet. It is created when backup is set up.') }}
-        </p>
-      </section>
+      <NoticeBanner
+        v-if="state.step === 'not_set_up'"
+        tone="info"
+        :message="
+          $gettext('This space has no Recovery Key yet. It is created when backup is set up.')
+        "
+        data-step="not_set_up"
+      />
 
       <template v-else-if="state.step === 'ready'">
         <!-- Check my Recovery Key -->
         <form
-          class="ext:flex ext:flex-col ext:gap-2"
+          class="ext:flex ext:flex-col ext:gap-3"
           data-testid="check-form"
           @submit.prevent="page.check(input)"
         >
@@ -114,35 +118,46 @@ onBeforeUnmount(() => {
             {{ $gettext('Checking. This takes a moment…') }}
           </p>
 
-          <p v-if="result?.kind === 'opens'" role="status" data-result="opens">
-            {{ $gettext('This Recovery Key opens this space’s backups. Keep it safe.') }}
-          </p>
-          <p v-else-if="result?.kind === 'malformed'" role="alert" data-result="malformed">
-            {{
+          <NoticeBanner
+            v-if="result?.kind === 'opens'"
+            tone="success"
+            :message="$gettext('This Recovery Key opens this space’s backups. Keep it safe.')"
+            data-result="opens"
+          />
+          <NoticeBanner
+            v-else-if="result?.kind === 'malformed'"
+            tone="danger"
+            :message="
               $gettext(
                 'This is not a Recovery Key. Check it for typing mistakes: a Recovery Key has seven groups of letters and numbers.'
               )
-            }}
-          </p>
-          <div v-else-if="result?.kind === 'wrong'" role="alert" data-result="wrong">
-            <p class="ext:font-medium">
-              {{ $gettext('This Recovery Key does not open this space’s backups.') }}
-            </p>
-            <p>
-              {{
-                $gettext('Check that it is the key for this space and that it was copied in full.')
-              }}
-            </p>
+            "
+            data-result="malformed"
+          />
+          <NoticeBanner
+            v-else-if="result?.kind === 'wrong'"
+            tone="danger"
+            :title="$gettext('This Recovery Key does not open this space’s backups.')"
+            :message="
+              $gettext('Check that it is the key for this space and that it was copied in full.')
+            "
+            data-result="wrong"
+          >
             <LostKeyNotice class="ext:mt-2" />
-          </div>
-          <div v-else-if="result?.kind === 'cannot_tell'" data-result="cannot_tell">
-            <p class="ext:font-medium">
-              {{
+          </NoticeBanner>
+          <div
+            v-else-if="result?.kind === 'cannot_tell'"
+            class="ext:flex ext:flex-col ext:gap-2"
+            data-result="cannot_tell"
+          >
+            <NoticeBanner
+              tone="warning"
+              :message="
                 $gettext(
                   'The key could not be checked. This says nothing about whether it is right.'
                 )
-              }}
-            </p>
+              "
+            />
             <ActionError :error="result.error" />
           </div>
         </form>
@@ -150,7 +165,7 @@ onBeforeUnmount(() => {
         <LostKeyNotice v-if="result?.kind !== 'wrong'" />
 
         <!-- The key file -->
-        <section class="ext:flex ext:flex-col ext:gap-2" data-testid="download">
+        <section class="ext:flex ext:flex-col ext:gap-3" data-testid="download">
           <h2 class="ext:text-lg ext:font-semibold">{{ $gettext('Key file') }}</h2>
           <p>
             {{
@@ -170,20 +185,24 @@ onBeforeUnmount(() => {
               {{ $gettext('Download recovery.ocbke') }}
             </oc-button>
           </div>
-          <p v-if="state.download.kind === 'done'" role="status" data-testid="downloaded">
-            {{ $gettext('Downloaded. Download it again after the Recovery Key is replaced.') }}
-          </p>
+          <NoticeBanner
+            v-if="state.download.kind === 'done'"
+            tone="success"
+            :message="$gettext('Downloaded. Download it again after the Recovery Key is replaced.')"
+            data-testid="downloaded"
+          />
           <ActionError v-else-if="state.download.kind === 'failed'" :error="state.download.error" />
         </section>
 
         <!-- Managers only: the server refuses anyone else. -->
         <section v-if="state.mayReplace" data-testid="replace">
-          <router-link
+          <oc-button
+            type="router-link"
             :to="{ name: 'backup-vault-recovery-key-replace', params: { spaceId } }"
-            class="ext:font-medium"
+            appearance="outline"
           >
             {{ $gettext('Replace the Recovery Key') }}
-          </router-link>
+          </oc-button>
         </section>
       </template>
     </RequestState>

@@ -187,8 +187,25 @@ test('the family member protects their Space', async () => {
 
   await expect(page.locator('[data-step="schedule"]')).toBeVisible()
   expect(recorder.posts('/backup/setup')).toHaveLength(1)
+
+  // The host's own controls (8g): the last of three steps, then weekly on
+  // Wednesday at 03:00, picked from the host's radio and dropdowns.
+  await expect(page.locator('[data-testid="steps"] li')).toHaveCount(3)
+  await expect(page.locator('[data-testid="steps"] [aria-current="step"]')).toContainText(
+    'Schedule'
+  )
+  await page.locator('[data-testid="kind-weekly"] input').check()
+  await chooseOption(page, 'weekday', 'Wednesday')
+  await chooseOption(page, 'time', '03:00')
   await page.locator('[data-testid="schedule-save"]').click()
   await expect(page.locator('[data-step="done"]')).toBeVisible()
+  const schedule = recorder.requests.filter(
+    (r) => r.method === 'PUT' && new URL(r.url).pathname.endsWith('/backup/schedule')
+  )
+  expect(JSON.parse(schedule.at(-1)!.body)).toEqual({
+    enabled: true,
+    preset: { kind: 'weekly', hour: 3, minute: 0, weekday: 3 }
+  })
 
   await expectKeyNotStored(page, [discardedKey, firstKey])
 })
@@ -209,7 +226,7 @@ test('the backup comes back into a new folder, and the link opens it', async () 
   await openVault(page, spacePath())
   await page.locator('[data-testid="restore-link"]').click()
   await expect(page.locator('[data-step="pick"]')).toBeVisible()
-  await page.locator('input[name="snapshot"]').first().check()
+  await page.locator('[data-testid="snapshot-choice"] input').first().check()
   await page.locator('[data-testid="review"]').click()
   await expect(page.locator('[data-step="confirm"]')).toBeVisible()
   await page.locator('[data-testid="start-restore"]').click()
@@ -299,3 +316,15 @@ test('no Recovery Key ever left the browser', async () => {
 
   expect(recorder.leaks([discardedKey, firstKey, replacementKey])).toEqual([])
 })
+
+/**
+ * chooseOption picks an entry of one of the host's dropdowns (`oc-select`,
+ * which is vue-select underneath) by its exact label. The test id sits on
+ * the component's outer element.
+ */
+async function chooseOption(page: Page, testid: string, label: string): Promise<void> {
+  const select = page.locator(`[data-testid="${testid}"]`).first()
+  await select.locator('.vs__search').click()
+  await select.getByRole('option', { name: label, exact: true }).click()
+  await expect(select.locator('.vs__selected')).toHaveText(label)
+}

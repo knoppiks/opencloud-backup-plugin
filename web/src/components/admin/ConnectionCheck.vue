@@ -16,10 +16,12 @@ import {
   adminErrorAdvice,
   adminErrorTitle,
   checkOutcomeText,
-  checkRoleText
+  checkRoleText,
+  checkTone
 } from '../../admin/wording'
 import { useAdminApi } from '../../composables/useAdminApi'
 import ActionError from '../ActionError.vue'
+import NoticeBanner from '../NoticeBanner.vue'
 
 const props = defineProps<{
   /** request is the body to check, or undefined while the form has problems. */
@@ -77,17 +79,32 @@ async function check(): Promise<void> {
         {{ $gettext('Check connection') }}
       </oc-button>
     </div>
-    <ul v-if="results.length > 0" aria-live="polite" data-testid="check-results">
-      <li
-        v-for="result in results"
-        :key="result.role"
-        :data-role="result.role"
-        :data-outcome="result.outcome"
-      >
-        <span class="ext:font-medium">{{ checkRoleText(result.role, $gettext) }}:</span>
-        {{ checkOutcomeText(result.outcome, $gettext) }}
-      </li>
-    </ul>
+    <NoticeBanner
+      v-if="results.length > 0"
+      :tone="checkTone(results)"
+      :title="$gettext('Connection check')"
+      data-testid="check-results"
+    >
+      <ul class="ext:flex ext:flex-col ext:gap-1">
+        <li
+          v-for="result in results"
+          :key="result.role"
+          class="ext:flex ext:items-center ext:gap-2"
+          :data-role="result.role"
+          :data-outcome="result.outcome"
+        >
+          <oc-icon
+            :name="result.outcome === 'ok' ? 'checkbox-circle' : 'error-warning'"
+            fill-type="line"
+            size="small"
+          />
+          <span
+            ><span class="ext:font-medium">{{ checkRoleText(result.role, $gettext) }}:</span>
+            {{ checkOutcomeText(result.outcome, $gettext) }}</span
+          >
+        </li>
+      </ul>
+    </NoticeBanner>
     <ActionError v-if="error" :error="error" :title="adminErrorTitle" :advice="adminErrorAdvice" />
   </div>
 </template>

@@ -29,6 +29,7 @@ import { adminErrorAdvice, adminErrorTitle } from '../../admin/wording'
 import { useAdminApi } from '../../composables/useAdminApi'
 import { useUserDirectory } from '../../composables/useUserDirectory'
 import ActionError from '../ActionError.vue'
+import NoticeBanner from '../NoticeBanner.vue'
 import RequestState from '../RequestState.vue'
 import UserPicker from './UserPicker.vue'
 
@@ -135,55 +136,52 @@ onMounted(load)
       :advice="adminErrorAdvice"
       @retry="load"
     >
-      <fieldset class="ext:flex ext:flex-col ext:gap-1">
+      <fieldset class="ext:flex ext:flex-col ext:gap-2">
         <legend class="ext:sr-only">{{ $gettext('Who can back up here') }}</legend>
-        <label class="ext:flex ext:gap-2">
-          <input
-            type="radio"
-            name="audience"
-            value="everyone"
-            :checked="audience.mode === 'everyone'"
-            :disabled="saving"
-            data-testid="mode-everyone"
-            @change="choose('everyone')"
-          />
-          {{ $gettext('Everyone') }}
-        </label>
-        <label class="ext:flex ext:gap-2">
-          <input
-            type="radio"
-            name="audience"
-            value="people"
-            :checked="audience.mode === 'people'"
-            :disabled="saving"
-            data-testid="mode-people"
-            @change="choose('people')"
-          />
-          {{ $gettext('Only these people') }}
-        </label>
+        <oc-radio
+          :model-value="audience.mode"
+          option="everyone"
+          :label="$gettext('Everyone')"
+          :disabled="saving"
+          data-testid="mode-everyone"
+          @update:model-value="choose('everyone')"
+        />
+        <oc-radio
+          :model-value="audience.mode"
+          option="people"
+          :label="$gettext('Only these people')"
+          :disabled="saving"
+          data-testid="mode-people"
+          @update:model-value="choose('people')"
+        />
       </fieldset>
 
-      <p v-if="hasRedundantPeople(audience)" role="note" data-testid="redundant-people">
-        {{
+      <NoticeBanner
+        v-if="hasRedundantPeople(audience)"
+        tone="info"
+        role="note"
+        :message="
           $gettext(
             'Some people are also listed by name. Everyone can back up here anyway, so saving removes that list.'
           )
-        }}
-      </p>
+        "
+        data-testid="redundant-people"
+      />
 
       <template v-if="audience.mode === 'people'">
         <ul
           v-if="audience.userIds.length > 0"
-          class="ext:flex ext:flex-col ext:gap-1"
+          class="ext:flex ext:flex-col ext:gap-2"
           data-testid="people"
         >
           <li
             v-for="id in audience.userIds"
             :key="id"
-            class="ext:flex ext:items-center ext:gap-2"
+            class="ext:flex ext:items-center ext:gap-3"
             :data-user-id="id"
           >
-            <span>
+            <oc-avatar :user-name="names[id]?.displayName ?? id" :width="32" />
+            <span class="ext:flex-1 ext:min-w-0">
               {{ nameOf(id) }}
               <span v-if="names[id]?.mail" class="ext:text-role-on-surface-variant"
                 >· {{ names[id]?.mail }}</span
@@ -223,9 +221,13 @@ onMounted(load)
         </ul>
       </div>
 
-      <p v-if="reachesNobody(audience)" role="note" data-testid="nobody">
-        {{ $gettext('Nobody can back up here yet.') }}
-      </p>
+      <NoticeBanner
+        v-if="reachesNobody(audience)"
+        tone="warning"
+        role="note"
+        :message="$gettext('Nobody can back up here yet.')"
+        data-testid="nobody"
+      />
 
       <ActionError
         v-if="saveError"
@@ -233,7 +235,12 @@ onMounted(load)
         :title="adminErrorTitle"
         :advice="adminErrorAdvice"
       />
-      <p v-if="savedNotice" role="status" data-testid="audience-saved">{{ $gettext('Saved.') }}</p>
+      <NoticeBanner
+        v-if="savedNotice"
+        tone="success"
+        :message="$gettext('Saved.')"
+        data-testid="audience-saved"
+      />
 
       <div>
         <oc-button
