@@ -7,8 +7,11 @@
 // only, is handed to the machine for one check and not kept there, and is
 // cleared when the page is left. Lint bans browser storage in this file.
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { useGettext } from 'vue3-gettext'
 import ActionError from '../components/ActionError.vue'
 import LostKeyNotice from '../components/LostKeyNotice.vue'
+import PageLayout from '../components/PageLayout.vue'
+import { recoveryKeyCrumb, spaceCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
 import { useBackupApi } from '../composables/useBackupApi'
 import { recoveryKeyOpens } from '../crypto'
@@ -18,7 +21,22 @@ import { nextFrame } from '../recoverykey/gate'
 
 const props = defineProps<{ spaceId: string }>()
 
+const { $gettext } = useGettext()
 const state = shallowRef<CheckState>({ step: 'loading' })
+/**
+ * crumbs is the page's breadcrumb trail. It names the Space once page has
+ * read it, which happens with a state change: reading `state` is what makes
+ * this follow, since page.spaceName itself is not reactive.
+ */
+const crumbs = computed(() => {
+  void state.value
+  return spaceCrumbs(
+    $gettext,
+    props.spaceId,
+    page.spaceName,
+    recoveryKeyCrumb($gettext, props.spaceId, true)
+  )
+})
 const page = new RecoveryKeyCheck(props.spaceId, {
   api: useBackupApi(),
   keyOpens: recoveryKeyOpens,
@@ -49,22 +67,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="ext:p-4 ext:flex ext:flex-col ext:gap-4 ext:max-w-2xl">
-    <router-link
-      :to="{ name: 'backup-vault-space', params: { spaceId } }"
-      class="ext:text-sm"
-      data-testid="back"
-    >
-      {{ $gettext('Back to the space') }}
-    </router-link>
-
-    <h1 class="ext:text-xl ext:font-semibold">
-      <template v-if="page.spaceName">
-        {{ $gettext('Recovery Key for %{space}', { space: page.spaceName }) }}
-      </template>
-      <template v-else>{{ $gettext('Recovery Key') }}</template>
-    </h1>
-
+  <PageLayout :crumbs="crumbs" narrow>
     <RequestState :loading="state.step === 'loading'" :error="loadError" @retry="page.start()">
       <section v-if="state.step === 'not_set_up'" data-step="not_set_up">
         <p>
@@ -184,5 +187,5 @@ onBeforeUnmount(() => {
         </section>
       </template>
     </RequestState>
-  </main>
+  </PageLayout>
 </template>

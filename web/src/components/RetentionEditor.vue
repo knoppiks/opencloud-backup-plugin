@@ -77,20 +77,21 @@ async function save(): Promise<void> {
 
 <template>
   <div>
-    <template v-if="!editing">
-      <span data-testid="retention-days">
+    <div v-if="!editing" class="ext:flex ext:flex-wrap ext:items-center ext:gap-2">
+      <span class="ext:text-lg ext:font-semibold" data-testid="retention-days">
         {{ $gettext('%{days} days', { days: String(retentionDays) }) }}
       </span>
       <oc-button
         v-if="editable"
-        class="ext:ml-2"
         appearance="raw"
+        size="small"
         data-testid="retention-edit"
         @click="startEditing"
       >
+        <oc-icon name="pencil" fill-type="line" size="small" />
         {{ $gettext('Change') }}
       </oc-button>
-    </template>
+    </div>
 
     <form v-else class="ext:flex ext:flex-col ext:gap-2" @submit.prevent="save">
       <oc-text-input
@@ -106,7 +107,7 @@ async function save(): Promise<void> {
         "
         :disabled="saving"
       />
-      <p v-if="saveError" role="alert" class="ext:text-sm">
+      <p v-if="saveError" role="alert" class="ext:text-sm ext:text-role-error">
         {{ errorTitle(saveError.code, $gettext) }}
         <span v-if="saveError.serverMessage" class="ext:block ext:text-role-on-surface-variant">
           {{ saveError.serverMessage }}

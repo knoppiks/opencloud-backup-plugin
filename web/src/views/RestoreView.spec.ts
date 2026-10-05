@@ -62,7 +62,12 @@ describe('RestoreView picker', () => {
   it('lists the backups with human dates and sizes, newest chosen', async () => {
     const wrapper = await mountPage()
 
-    expect(wrapper.find('h1').text()).toBe('Restore files in Family photos')
+    expect(wrapper.find('h1').text()).toBe('Restore files')
+    expect(wrapper.findAll('[data-testid="breadcrumb"] li').map((li) => li.text())).toEqual([
+      'Spaces',
+      'Family photos',
+      'Restore files'
+    ])
     const options = wrapper.findAll('[data-testid="snapshot-picker"] label')
     expect(options).toHaveLength(2)
     expect(options[0]!.text()).toContain('1,200 files, 3.4 GB')

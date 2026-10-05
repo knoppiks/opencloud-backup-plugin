@@ -143,10 +143,10 @@ test.afterAll(async () => {
 
 test('a Recovery Key typed back wrongly stops the setup', async () => {
   await openVault(page, '/overview')
-  const card = page.locator('article', {
+  const row = page.locator('[data-testid="spaces"] tr', {
     has: page.getByRole('link', { name: drive.name, exact: true })
   })
-  await card.locator('[data-testid="setup-action"]').click()
+  await row.locator('[data-testid="setup-action"]').click()
 
   // The service names a Space in CS3 form, `storage$space!opaque`. Graph
   // drops `!opaque` where it repeats the space part (measured in 8f), so the

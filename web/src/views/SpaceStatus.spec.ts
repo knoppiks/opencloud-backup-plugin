@@ -35,6 +35,12 @@ describe('SpaceStatus board states', () => {
     const wrapper = await mountBoard()
 
     expect(wrapper.find('h1').text()).toBe('Family photos')
+    // The state and the actions sit in the header, like an OpenCloud page.
+    const header = wrapper.find('[data-testid="page-header"]')
+    expect(header.find('[data-testid="state-label"]').exists()).toBe(true)
+    expect(header.find('[data-testid="run-now"]').exists()).toBe(true)
+    expect(header.find('[data-testid="restore-link"]').exists()).toBe(true)
+    expect(header.find('[data-testid="recovery-key-link"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="state-label"]').text()).toBe('Protected')
     expect(wrapper.find('[data-testid="state-label"]').attributes('data-state')).toBe('active')
     expect(wrapper.find('[data-testid="last-success"]').text()).not.toBe('None yet')
@@ -44,14 +50,17 @@ describe('SpaceStatus board states', () => {
     expect(wrapper.find('[data-testid="running"]').exists()).toBe(false)
   })
 
-  it('stale: says since when, as an alert', async () => {
+  // A warning, read out politely: it is the page's news, not an interruption.
+  it('stale: says since when, as a warning', async () => {
     given(status({ stale: true, stale_since: '2026-09-01T01:30:00Z' }))
     const wrapper = await mountBoard()
 
     expect(wrapper.find('[data-testid="state-label"]').text()).toBe('Backups have stopped')
     const stale = wrapper.find('[data-testid="stale"]')
-    expect(stale.attributes('role')).toBe('alert')
-    expect(stale.text()).toMatch(/^No successful backup since .*2026/)
+    expect(stale.attributes('data-tone')).toBe('warning')
+    expect(stale.find('[data-testid="notice-title"]').text()).toMatch(
+      /^No successful backup since .*2026/
+    )
   })
 
   it('failed: shows the recorded reason and that older backups are safe', async () => {
@@ -64,10 +73,12 @@ describe('SpaceStatus board states', () => {
     const wrapper = await mountBoard()
 
     expect(wrapper.find('[data-testid="state-label"]').text()).toBe('Last backup failed')
-    expect(wrapper.find('[data-testid="state-advice"]').text()).toMatch(/still safe/)
-    expect(wrapper.find('[data-testid="last-error"]').text()).toContain(
-      'the backup target is unavailable'
-    )
+    const failure = wrapper.find('[data-testid="last-error"]')
+    expect(failure.attributes('role')).toBe('alert')
+    expect(failure.text()).toMatch(/still safe/)
+    expect(failure.text()).toContain('the backup target is unavailable')
+    // One notice says it, not two.
+    expect(wrapper.find('[data-testid="state-advice"]').exists()).toBe(false)
   })
 
   it('running: indeterminate progress, "Back up now" disabled', async () => {
@@ -175,7 +186,7 @@ describe('SpaceStatus Recovery Key entry', () => {
 
 describe('SpaceStatus setup entry', () => {
   const link = (wrapper: Awaited<ReturnType<typeof mountBoard>>) =>
-    wrapper.find('[data-testid="setup-action"] a')
+    wrapper.find('a[data-testid="setup-action"]')
 
   it('offers an editor "Set up backup" for a Space nobody has set up', async () => {
     given(status({ configured: false, keys_configured: false, enabled: false }), 'editor')
@@ -196,7 +207,7 @@ describe('SpaceStatus setup entry', () => {
   it('tells an editor a manager has to finish, without a link', async () => {
     given(status({ keys_configured: false, enabled: false }), 'editor')
     const wrapper = await mountBoard()
-    expect(wrapper.find('[data-testid="setup-action"]').text()).toBe(
+    expect(wrapper.find('p[data-testid="setup-action"]').text()).toBe(
       'A manager of this space has to finish setup.'
     )
     expect(link(wrapper).exists()).toBe(false)
@@ -242,7 +253,7 @@ describe('SpaceStatus "Back up now"', () => {
     expect(wrapper.find('[data-testid="running"]').exists()).toBe(true)
     await vi.advanceTimersByTimeAsync(5000) // finished
     expect(wrapper.find('[data-testid="running"]').exists()).toBe(false)
-    expect(wrapper.findAll('li[data-kind]')).toHaveLength(2)
+    expect(wrapper.findAll('[data-testid="run"]')).toHaveLength(2)
 
     // Nothing is running any more, so nothing is polled any more.
     const calls = fake.status.mock.calls.length

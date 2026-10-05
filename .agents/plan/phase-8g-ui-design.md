@@ -112,9 +112,31 @@ Compared with the Files app (left nav, header bar, padded content, tables):
     (`src/navigation.ts`), not `navItems`: the host builds an item's
     extension id from its `name`, which must be a function to follow a
     language change.
-  - [ ] Finding for `PageLayout`: `main` does not fill the app container when
-    its content is narrow (admin destinations page); needs `ext:w-full`.
-  - [ ] Remove "Back to …" / "Manage backup destinations" links (e2e
-    `admin-link` and spec selectors with them), breadcrumbs instead.
-  - [ ] Shared parts, overview table, space detail.
+  - [x] `PageLayout` on every view (full width; `narrow` caps forms at
+    `max-w-2xl`). The breadcrumb trail is the title, as in Files; the `h1`
+    repeats its last crumb, visually hidden. Trails built in
+    `src/layout/breadcrumbs.ts`. Findings: the host's breadcrumb folds
+    trails of 3+ crumbs into "…" unless `truncation-offset` is raised, and
+    bolds only a *linked* current crumb, so `PageLayout` bolds
+    `[aria-current=page]` itself. The class-based flows' `spaceName` is not
+    reactive and slot content renders in the child, so those views compute
+    their trail from `state` explicitly.
+  - [x] "Back to …" / "Manage backup destinations" links removed; e2e reaches
+    the admin view through the nav item.
+  - [x] Shared parts. **Deviations from the plan, on purpose:**
+    `oc-tag` only knows primary/secondary/tertiary and
+    `oc-notification-message` is a dismissable toast (close button, timeout,
+    always the "information" icon), so `ToneTag`/`StatusTag` and
+    `NoticeBanner` draw the same shapes from theme roles
+    (`src/layout/tone.ts`; the fixture theme defines `errorContainer`).
+    `EmptyState` mirrors web-pkg's `NoContentMessage` instead of importing
+    it, so component tests do not load web-pkg. Warning uses the tertiary
+    container (purple in the default theme): the theme has no warning role;
+    icon and words carry the meaning.
+  - [x] Overview as `oc-table` (`status/overviewrow.ts`), admin variant of the
+    no-destination notice. `SpaceCard` retired.
+  - [x] Space detail: state and actions in the header, notices, summary
+    cards, recent activity as `oc-table` (`status/runtext.ts`).
+  - [x] Full e2e green (13 tests) on the fixture, screenshots reviewed in
+    light and dark.
 - [ ] PR B — issue #60

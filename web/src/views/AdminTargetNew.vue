@@ -8,6 +8,8 @@
 import { useRouter } from '@opencloud-eu/web-pkg'
 import type { AdminTarget } from '../api'
 import AdminOnly from '../components/admin/AdminOnly.vue'
+import PageLayout from '../components/PageLayout.vue'
+import { destinationsCrumbs } from '../layout/breadcrumbs'
 import TargetSettingsForm from '../components/admin/TargetSettingsForm.vue'
 
 const router = useRouter()
@@ -18,19 +20,12 @@ function created(target: AdminTarget): void {
 </script>
 
 <template>
-  <main class="ext:p-4 ext:flex ext:flex-col ext:gap-4 ext:max-w-2xl">
-    <router-link
-      :to="{ name: 'backup-vault-admin-targets' }"
-      class="ext:text-sm"
-      data-testid="back"
-    >
-      {{ $gettext('Back to backup destinations') }}
-    </router-link>
-
-    <h1 class="ext:text-xl ext:font-semibold">{{ $gettext('Add a backup destination') }}</h1>
-
+  <PageLayout
+    :crumbs="destinationsCrumbs($gettext, { text: $gettext('Add a backup destination') })"
+    narrow
+  >
     <AdminOnly>
       <TargetSettingsForm @saved="created" />
     </AdminOnly>
-  </main>
+  </PageLayout>
 </template>

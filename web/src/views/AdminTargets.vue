@@ -8,6 +8,8 @@ import { onMounted, ref } from 'vue'
 import { asApiError, type AdminTarget, type ApiError } from '../api'
 import { adminErrorAdvice, adminErrorTitle } from '../admin/wording'
 import AdminOnly from '../components/admin/AdminOnly.vue'
+import PageLayout from '../components/PageLayout.vue'
+import { destinationsCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
 import { useAdminApi } from '../composables/useAdminApi'
 import { useIsAdmin } from '../composables/useIsAdmin'
@@ -44,13 +46,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="ext:p-4 ext:flex ext:flex-col ext:gap-4 ext:max-w-3xl">
-    <router-link :to="{ name: 'backup-vault-overview' }" class="ext:text-sm" data-testid="back">
-      {{ $gettext('Back to Backup Vault') }}
-    </router-link>
-
-    <h1 class="ext:text-xl ext:font-semibold">{{ $gettext('Backup destinations') }}</h1>
-
+  <PageLayout :crumbs="destinationsCrumbs($gettext)" narrow>
     <AdminOnly>
       <RequestState
         :loading="loading"
@@ -99,5 +95,5 @@ onMounted(() => {
         </div>
       </RequestState>
     </AdminOnly>
-  </main>
+  </PageLayout>
 </template>

@@ -29,7 +29,7 @@ describe('RunHistory', () => {
   it('shows what a backup processed and who started it', () => {
     const item = history([
       { trigger: 'manual', file_count: 1200, total_bytes: 3_400_000_000 }
-    ]).find('li')
+    ]).find('tbody tr')
     expect(item.text()).toContain('Backup')
     expect(item.text()).toContain('started by hand')
     expect(item.text()).toContain('1,200 files, 3.4 GB')
@@ -37,16 +37,26 @@ describe('RunHistory', () => {
 
   // A clean-up's useful fact is what it removed, not a file count.
   it('shows what a clean-up removed and kept', () => {
-    const item = history([{ kind: 'prune', snapshots_deleted: 4, snapshots_kept: 30 }]).find('li')
+    const item = history([{ kind: 'prune', snapshots_deleted: 4, snapshots_kept: 30 }]).find(
+      'tbody tr'
+    )
     expect(item.text()).toContain('Clean-up of old backups')
     expect(item.text()).toContain('4 removed, 30 kept')
+  })
+
+  it('tags the outcome with an icon and words, a failure as danger', () => {
+    const [ok, bad] = history([{ id: 'a' }, { id: 'b', state: 'failed' }]).findAll('tbody tr')
+    expect(ok!.find('[data-tone]').attributes('data-tone')).toBe('success')
+    expect(bad!.find('[data-tone]').attributes('data-tone')).toBe('danger')
+    expect(bad!.find('[data-tone]').text()).toBe('Failed')
+    expect(bad!.find('[data-icon]').exists()).toBe(true)
   })
 
   it('shows a failure with its recorded reason and no counts', () => {
     const item = history([
       { state: 'failed', error: 'the backup target is unavailable', file_count: 5 }
-    ]).find('li')
-    expect(item.attributes('data-state')).toBe('failed')
+    ]).find('tbody tr')
+    expect(item.find('[data-testid="run"]').attributes('data-state')).toBe('failed')
     expect(item.text()).toContain('Failed')
     expect(item.text()).toContain('the backup target is unavailable')
     expect(item.text()).not.toContain('files')
@@ -55,13 +65,13 @@ describe('RunHistory', () => {
   it('names a restore as a restore', () => {
     expect(
       history([{ kind: 'restore' }])
-        .find('li')
+        .find('tbody tr')
         .text()
     ).toMatch(/^Restore/)
   })
 
   it('links a restore to the folder it wrote into', () => {
-    const item = history([{ kind: 'restore', restore_folder: FOLDER }]).find('li')
+    const item = history([{ kind: 'restore', restore_folder: FOLDER }]).find('tbody tr')
     const folder = item.find('[data-testid="history-folder"]')
     expect(folder.text()).toBe(`Restored into: ${FOLDER}`)
     expect(folder.find('[data-testid="folder-link"]').exists()).toBe(true)
@@ -73,7 +83,7 @@ describe('RunHistory', () => {
   it('names the folder of a failed restore as a partial copy', () => {
     const item = history([
       { kind: 'restore', state: 'failed', error: 'the restore run failed', restore_folder: FOLDER }
-    ]).find('li')
+    ]).find('tbody tr')
     expect(item.find('[data-testid="history-folder"]').text()).toBe(
       `Anything restored before it stopped is in: ${FOLDER}`
     )
@@ -89,13 +99,15 @@ describe('RunHistory', () => {
   })
 
   it('shows no folder for a path outside the restore area', () => {
-    const item = history([{ kind: 'restore', restore_folder: 'Restore/../Photos' }]).find('li')
+    const item = history([{ kind: 'restore', restore_folder: 'Restore/../Photos' }]).find(
+      'tbody tr'
+    )
     expect(item.find('[data-testid="history-folder"]').exists()).toBe(false)
     expect(link.to).not.toHaveBeenCalled()
   })
 
   it('shows no folder for a backup', () => {
-    const item = history([{ kind: 'backup', restore_folder: FOLDER }]).find('li')
+    const item = history([{ kind: 'backup', restore_folder: FOLDER }]).find('tbody tr')
     expect(item.find('[data-testid="history-folder"]').exists()).toBe(false)
   })
 })

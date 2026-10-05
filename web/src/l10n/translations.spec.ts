@@ -51,9 +51,9 @@ const msgids = new Set(
 
 /**
  * SAME_IN_GERMAN lists msgids whose German is the same word on purpose:
- * loanwords OpenCloud's own German UI uses unchanged ("Spaces" in Files).
+ * words OpenCloud's own German UI uses unchanged ("Spaces", "Status", "Details" in Files).
  */
-const SAME_IN_GERMAN = new Set(['Spaces'])
+const SAME_IN_GERMAN = new Set(['Details', 'Space', 'Spaces', 'Status'])
 
 describe('translation catalogue', () => {
   it('finds the msgids at all', () => {

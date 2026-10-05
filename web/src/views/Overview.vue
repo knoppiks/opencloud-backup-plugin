@@ -1,45 +1,94 @@
 <script setup lang="ts">
-// The Backup Vault landing page: one card per Space, each saying whether that
-// Space is protected.
+// The Backup Vault landing page: every Space in a table, like the Files app,
+// each row saying whether that Space is protected (Phase 8g decision 2).
 //
 // The Space list gates the page; each Space's status then loads on its own.
-// A status that fails shows on its card only. One Space whose status cannot
-// be read is not a reason to hide the others, least of all the ones that are
-// fine.
+// A status that fails shows in its own row only. One Space whose status
+// cannot be read is not a reason to hide the others, least of all the ones
+// that are fine.
 //
 // `oc-*` elements are host globals: see components/RequestState.vue.
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { useBackupApi } from '../composables/useBackupApi'
+import { useFormat } from '../composables/useFormat'
 import { useIsAdmin } from '../composables/useIsAdmin'
+import EmptyState from '../components/EmptyState.vue'
+import NoticeBanner from '../components/NoticeBanner.vue'
+import PageLayout from '../components/PageLayout.vue'
 import RequestState from '../components/RequestState.vue'
-import SpaceCard from '../components/SpaceCard.vue'
-import { ApiError, isApiError, type BackupStatus, type Space, type Target } from '../api'
+import StatusTag from '../components/StatusTag.vue'
+import { spacesCrumbs } from '../layout/breadcrumbs'
+import { ApiError, isApiError, type Space, type Target } from '../api'
+import { errorTitle } from '../api/errortext'
+import {
+  compareSpaces,
+  overviewRow,
+  overviewSummary,
+  type OverviewRow,
+  type SpaceResult
+} from '../status/overviewrow'
+import { setupActionLabel } from '../status/setupaction'
 
 const { $gettext } = useGettext()
 const api = useBackupApi()
-/** isAdmin only decides whether the admin link is offered (8e decision 4). */
+const format = useFormat()
+/** isAdmin only decides what is offered, never what is allowed (8e decision 4). */
 const isAdmin = useIsAdmin()
 
 const loading = ref(true)
 const error = ref<ApiError | undefined>(undefined)
 const spaces = ref<Space[]>([])
 const targets = ref<Target[]>([])
-
-/** SpaceResult is one card's status, or why it has none. */
-interface SpaceResult {
-  status?: BackupStatus
-  error?: ApiError
-}
 const results = reactive<Record<string, SpaceResult>>({})
 
-/** Personal Space first, then shared ones by name: "mine" is what people look for. */
-const sortedSpaces = computed(() =>
-  [...spaces.value].sort((a, b) => {
-    const personal = Number(b.type === 'personal') - Number(a.type === 'personal')
-    return personal !== 0 ? personal : a.name.localeCompare(b.name)
-  })
+/** rows are the table's rows: personal Space first, then by name. */
+const rows = computed<OverviewRow[]>(() =>
+  [...spaces.value]
+    .sort(compareSpaces)
+    .map((space) => overviewRow(space, results[space.id], $gettext, format.when))
 )
+const summary = computed(() => overviewSummary(rows.value))
+
+/**
+ * fields are the columns. Type and next backup give way on narrow screens;
+ * name, state and what to do next never do.
+ */
+const fields = computed(() => [
+  { name: 'name', title: $gettext('Space'), type: 'slot', width: 'expand' },
+  {
+    name: 'kind',
+    title: $gettext('Type'),
+    width: 'shrink',
+    wrap: 'nowrap',
+    thClass: 'ext:hidden ext:md:table-cell',
+    tdClass: 'ext:hidden ext:md:table-cell ext:text-role-on-surface-variant'
+  },
+  { name: 'state', title: $gettext('Status'), type: 'slot', width: 'shrink' },
+  {
+    name: 'lastBackup',
+    title: $gettext('Last backup'),
+    width: 'shrink',
+    wrap: 'nowrap',
+    thClass: 'ext:whitespace-nowrap'
+  },
+  {
+    name: 'nextBackup',
+    title: $gettext('Next backup'),
+    width: 'shrink',
+    wrap: 'nowrap',
+    thClass: 'ext:hidden ext:md:table-cell ext:whitespace-nowrap',
+    tdClass: 'ext:hidden ext:md:table-cell'
+  },
+  {
+    name: 'action',
+    title: $gettext('Actions'),
+    type: 'slot',
+    alignH: 'right',
+    width: 'shrink',
+    wrap: 'nowrap'
+  }
+])
 
 function asApiError(err: unknown): ApiError {
   // An unexpected throw is still shown, not swallowed: a blank page is the one
@@ -80,52 +129,96 @@ onMounted(load)
 </script>
 
 <template>
-  <main class="ext:p-4">
-    <div class="ext:flex ext:flex-wrap ext:items-baseline ext:justify-between ext:gap-2">
-      <h1 class="ext:text-xl ext:font-semibold">{{ $gettext('Backup Vault') }}</h1>
-      <!--
-        Outside RequestState on purpose: an admin whose own Space list fails
-        to load may be exactly the person who needs to fix a destination.
-      -->
-      <router-link
-        v-if="isAdmin"
-        :to="{ name: 'backup-vault-admin-targets' }"
-        class="ext:text-sm"
-        data-testid="admin-link"
-      >
-        {{ $gettext('Manage backup destinations') }}
-      </router-link>
-    </div>
-
-    <RequestState
-      :loading="loading"
-      :error="error"
-      :empty="spaces.length === 0"
-      :empty-message="$gettext('You do not have any spaces to back up.')"
-      @retry="load"
-    >
+  <PageLayout :crumbs="spacesCrumbs($gettext, true)">
+    <RequestState :loading="loading" :error="error" @retry="load">
       <!--
         No granted target means setup cannot complete, however many Spaces
         there are. Saying so here beats letting a user reach the wizard and
         find an empty picker (decisions.md #12: the admin grants targets).
+        An admin is the one who can change that, so they are offered the way.
       -->
-      <p v-if="targets.length === 0" class="ext:mt-3" role="status" data-testid="no-targets">
-        {{
-          $gettext(
-            'No backup destination has been shared with you yet. Ask your administrator to grant you one.'
-          )
-        }}
-      </p>
+      <NoticeBanner
+        v-if="targets.length === 0"
+        tone="warning"
+        :title="$gettext('No backup destination is available to you yet')"
+        :message="
+          isAdmin
+            ? $gettext('Add a backup destination, or share an existing one with yourself.')
+            : $gettext(
+                'Ask your administrator to share one with you. Until then, no space can be set up.'
+              )
+        "
+        data-testid="no-targets"
+      >
+        <template v-if="isAdmin" #actions>
+          <oc-button
+            type="router-link"
+            :to="{ name: 'backup-vault-admin-targets' }"
+            appearance="outline"
+            data-testid="no-targets-admin"
+          >
+            {{ $gettext('Add or share a destination') }}
+          </oc-button>
+        </template>
+      </NoticeBanner>
 
-      <ul class="ext:mt-4 ext:grid ext:gap-3 ext:sm:grid-cols-2 ext:xl:grid-cols-3">
-        <li v-for="space in sortedSpaces" :key="space.id">
-          <SpaceCard
-            :space="space"
-            :status="results[space.id]?.status"
-            :error="results[space.id]?.error"
-          />
-        </li>
-      </ul>
+      <EmptyState
+        v-if="rows.length === 0"
+        icon="layout-grid"
+        :message="$gettext('You do not have any spaces to back up.')"
+      />
+
+      <oc-table v-else :data="rows" :fields="fields" id-key="id" data-testid="spaces">
+        <template #name="{ item }">
+          <router-link
+            :to="{ name: 'backup-vault-space', params: { spaceId: item.id } }"
+            class="ext:inline-flex ext:items-center ext:gap-2 ext:font-medium ext:hover:underline"
+            data-testid="space-link"
+          >
+            <oc-icon :name="item.personal ? 'user' : 'group'" fill-type="line" />
+            {{ item.name }}
+          </router-link>
+        </template>
+        <template #state="{ item }">
+          <StatusTag v-if="item.state" :state="item.state" />
+          <span
+            v-else-if="item.error"
+            class="ext:inline-flex ext:items-center ext:gap-1 ext:text-sm ext:text-role-error"
+            role="alert"
+            data-testid="row-error"
+          >
+            <oc-icon name="error-warning" fill-type="line" size="small" />
+            {{ errorTitle(item.error.code, $gettext) }}
+          </span>
+          <oc-spinner v-else size="small" :aria-label="$gettext('Loading')" />
+        </template>
+        <template #action="{ item }">
+          <oc-button
+            v-if="item.action"
+            type="router-link"
+            :to="{ name: 'backup-vault-setup', params: { spaceId: item.id } }"
+            appearance="outline"
+            size="small"
+            data-testid="setup-action"
+          >
+            {{ setupActionLabel(item.action, $gettext) }}
+          </oc-button>
+        </template>
+        <template #footer>
+          <span data-testid="summary">
+            {{
+              $gettext('Spaces: %{total} · Protected: %{protected}', {
+                total: format.count(summary.total),
+                protected: format.count(summary.protected)
+              })
+            }}
+            <template v-if="summary.attention > 0">
+              ·
+              {{ $gettext('Need attention: %{count}', { count: format.count(summary.attention) }) }}
+            </template>
+          </span>
+        </template>
+      </oc-table>
     </RequestState>
-  </main>
+  </PageLayout>
 </template>

@@ -13,6 +13,8 @@ import { useGettext } from 'vue3-gettext'
 import type { Job, Snapshot } from '../api'
 import { restoreErrorAdvice, restoreErrorTitle } from '../api/errortext'
 import ActionError from '../components/ActionError.vue'
+import PageLayout from '../components/PageLayout.vue'
+import { spaceCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
 import RestoreFolderLink from '../components/RestoreFolderLink.vue'
 import { useBackupApi } from '../composables/useBackupApi'
@@ -30,6 +32,15 @@ const { $gettext } = useGettext()
 const format = useFormat()
 
 const state = shallowRef<RestoreState>({ step: 'loading' })
+/**
+ * crumbs is the page's breadcrumb trail. It names the Space once flow has
+ * read it, which happens with a state change: reading `state` is what makes
+ * this follow, since flow.spaceName itself is not reactive.
+ */
+const crumbs = computed(() => {
+  void state.value
+  return spaceCrumbs($gettext, props.spaceId, flow.spaceName, { text: $gettext('Restore files') })
+})
 const flow = new RestoreFlow(props.spaceId, {
   api: useBackupApi(),
   onChange: (next) => {
@@ -71,22 +82,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="ext:p-4 ext:flex ext:flex-col ext:gap-4 ext:max-w-2xl">
-    <router-link
-      :to="{ name: 'backup-vault-space', params: { spaceId } }"
-      class="ext:text-sm"
-      data-testid="back"
-    >
-      {{ $gettext('Back to the space') }}
-    </router-link>
-
-    <h1 class="ext:text-xl ext:font-semibold">
-      <template v-if="flow.spaceName">
-        {{ $gettext('Restore files in %{space}', { space: flow.spaceName }) }}
-      </template>
-      <template v-else>{{ $gettext('Restore files') }}</template>
-    </h1>
-
+  <PageLayout :crumbs="crumbs" narrow>
     <RequestState :loading="state.step === 'loading'" :error="loadError" @retry="flow.start()">
       <!-- Nothing to restore from -->
       <section v-if="state.step === 'not_set_up'" data-step="not_set_up">
@@ -291,5 +287,5 @@ onBeforeUnmount(() => {
         </oc-button>
       </section>
     </RequestState>
-  </main>
+  </PageLayout>
 </template>
