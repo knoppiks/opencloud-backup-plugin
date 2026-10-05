@@ -1,18 +1,30 @@
 // Signing in the way a person does: through OpenCloud's own login page, with
 // the real OIDC flow, so the token the extension forwards is a real one.
 
-import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test'
+import {
+  expect,
+  type Browser,
+  type BrowserContext,
+  type BrowserContextOptions,
+  type Page
+} from '@playwright/test'
 
 export interface Session {
   context: BrowserContext
   page: Page
 }
 
+/**
+ * signIn opens a fresh context and logs in. `options` are the context's own,
+ * e.g. `colorScheme`: OpenCloud follows the browser's preferred scheme as
+ * long as the user has not picked a theme.
+ */
 export async function signIn(
   browser: Browser,
-  account: { user: string; password: string }
+  account: { user: string; password: string },
+  options: BrowserContextOptions = {}
 ): Promise<Session> {
-  const context = await browser.newContext()
+  const context = await browser.newContext(options)
   const page = await context.newPage()
   await page.goto('/')
   const user = page.locator('#oc-login-username, input[name="username"]').first()

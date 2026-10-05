@@ -20,6 +20,8 @@ export type Translations = Record<string, Record<string, string>>
 
 const de: Record<string, string> = {
   'Backup Vault': 'Backup-Tresor',
+  // Left navigation (navigation.ts); "Backup destinations" is shared below.
+  Spaces: 'Spaces',
   Loading: 'Wird geladen',
   'Loading…': 'Wird geladen…',
   'Try again': 'Erneut versuchen',

@@ -8,7 +8,21 @@
 
 import { useAbility } from '@opencloud-eu/web-pkg'
 
+/** AbilityCheck is the one method of the host's CASL ability used here. */
+export interface AbilityCheck {
+  can(action: string, subject: string): boolean
+}
+
+/**
+ * isAdmin applies the admin rule to an ability. Kept apart from the
+ * composable for callers that must ask later than setup time, such as a nav
+ * item's visibility: the ability's rules are only filled in after sign-in.
+ */
+export function isAdmin(ability: AbilityCheck): boolean {
+  return ability.can('read-all', 'Setting')
+}
+
 /** useIsAdmin reports whether the caller may be offered the admin view. */
 export function useIsAdmin(): boolean {
-  return useAbility().can('read-all', 'Setting')
+  return isAdmin(useAbility())
 }

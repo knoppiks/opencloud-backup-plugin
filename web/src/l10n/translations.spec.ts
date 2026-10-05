@@ -49,6 +49,12 @@ const msgids = new Set(
   sourceFiles(SRC).flatMap((file) => extractMsgids(readFileSync(file, 'utf8')))
 )
 
+/**
+ * SAME_IN_GERMAN lists msgids whose German is the same word on purpose:
+ * loanwords OpenCloud's own German UI uses unchanged ("Spaces" in Files).
+ */
+const SAME_IN_GERMAN = new Set(['Spaces'])
+
 describe('translation catalogue', () => {
   it('finds the msgids at all', () => {
     // Guards the guard: a regex that matched nothing would make both
@@ -79,7 +85,7 @@ describe('translation catalogue', () => {
     // the completeness check above while translating nothing.
     const de = translations.de ?? {}
     const copied = Object.entries(de)
-      .filter(([id, value]) => id === value)
+      .filter(([id, value]) => id === value && !SAME_IN_GERMAN.has(id))
       .map(([id]) => id)
     expect(copied).toEqual([])
   })
