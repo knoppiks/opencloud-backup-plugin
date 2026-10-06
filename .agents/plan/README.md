@@ -27,7 +27,7 @@ Per-phase planning documents.
 | 6 | [phase-6-scheduling.md](phase-6-scheduling.md) | 4 | Scheduler, job store, notifications |
 | 7 | [phase-7-immutability.md](phase-7-immutability.md) | 4, 6 | Tier 2/3 hardening, capability probe |
 | 8 | [phase-8-web-ui.md](phase-8-web-ui.md) | 0 (extension spike, admin-role spike), 2, 3, 5, 6 | OpenCloud Web extension (incl. admin target mgmt) |
-| 9 | [phase-9-opencloud-compat.md](phase-9-opencloud-compat.md) | 8 | OpenCloud 8.x + 7.2.x tested, CI version matrix, canary, runtime version check |
+| 9 | [phase-9-opencloud-compat.md](phase-9-opencloud-compat.md) | 8 | OpenCloud 8.x tested (7.2.x excluded), CI version matrix, canary, runtime version check |
 | 10 | [phase-10-hardening.md](phase-10-hardening.md) | 9 | Bug fixes, diagnosability, config struct, fuzzing + frozen fixtures, module rename + `internal/` |
 | 11 | [phase-11-release-supply-chain.md](phase-11-release-supply-chain.md) | 10 | License, versioning, signed GitHub Releases with `decrypt`, Renovate/scanning, `v0.1.0` |
 | 12 | [phase-12-packaging.md](phase-12-packaging.md) | 9, 11 | Compose add-on (primary), Kustomize add-on, fixture on opencloud-compose |

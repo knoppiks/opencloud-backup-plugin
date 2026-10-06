@@ -100,7 +100,7 @@ the families this targets do not have it.
 
 | Channel | Versions | Status |
 |---|---|---|
-| Production | 7.2.x (7.2.4) | **to be added** in Phase 9 — never tested |
+| Production | 7.2.x (7.2.4) | **excluded**: a service account cannot create the state Space there (decisions.md, "Moving to OpenCloud 8.x"); returns with the next Production line |
 | Rolling | 7.3.0, 7.4.0, 7.5.0 | 7.5.0 tested in CI; 7.3.0 tested by hand earlier; 7.4.0 never |
 | Rolling | 8.0.0, 8.0.1, 8.1.0 | **to be adopted** in Phase 9 |
 

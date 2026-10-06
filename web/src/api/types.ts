@@ -313,3 +313,20 @@ export interface CheckResult {
   role: CheckRole | string
   outcome: CheckOutcome | string
 }
+
+/**
+ * OpenCloudVersion is the `opencloud` member of GET /version: which OpenCloud
+ * the service runs against, and whether this release was tested with it
+ * (compatibility-policy.md §3). Outside the window the service warns and keeps
+ * backing up; it never refuses.
+ */
+export interface OpenCloudVersion {
+  /** known is false until OpenCloud has answered the service once. */
+  known: boolean
+  version?: string
+  /** edition is "stable" on OpenCloud's Production channel, "rolling" otherwise. */
+  edition?: string
+  in_window: boolean
+  /** supported is the tested range in words, e.g. "Rolling 7.3.0 to 8.1.0". */
+  supported: string
+}

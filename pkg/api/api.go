@@ -73,6 +73,10 @@ type Server struct {
 	// the one the monitor applies; the zero value is the monitor's default.
 	staleRule notify.StaleRule
 
+	// openCloud reports the OpenCloud version and whether this build was
+	// tested against it (compatibility-policy.md §3).
+	openCloud openCloudVersion
+
 	// ready reports readiness for GET /readyz; defaults to always-ready.
 	ready func(context.Context) error
 
@@ -203,6 +207,7 @@ func (s *Server) routes() {
 		return s.Authenticate(s.withAccess(h))
 	}
 	s.mux.Handle("GET /api/v1/spaces", authed(s.handleListSpaces))
+	s.mux.Handle("GET /api/v1/version", authed(s.handleVersion))
 	s.mux.Handle("GET /api/v1/targets", authed(s.handleListTargets))
 
 	// Backup key ceremony (Phase 3). All of these are space-scoped and enforce

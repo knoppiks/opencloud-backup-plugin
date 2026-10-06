@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -171,5 +172,26 @@ func TestBuildService_RequiresOCBaseURLWithOIDC(t *testing.T) {
 	defer cleanup()
 	if err == nil || !strings.Contains(err.Error(), "OC_BASE_URL is required") {
 		t.Fatalf("err = %v, want a refusal naming OC_BASE_URL", err)
+	}
+}
+
+func TestBuildOpenCloudMonitor(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+
+	t.Setenv("OC_BASE_URL", "")
+	m, err := buildOpenCloudMonitor(logger)
+	if err != nil || m != nil {
+		t.Fatalf("without OC_BASE_URL: monitor %v, err %v; want neither", m, err)
+	}
+
+	t.Setenv("OC_BASE_URL", "https://cloud.example")
+	m, err = buildOpenCloudMonitor(logger)
+	if err != nil || m == nil {
+		t.Fatalf("with OC_BASE_URL: monitor %v, err %v", m, err)
+	}
+	// Nothing is fetched until serve runs it, so a down OpenCloud cannot
+	// delay startup.
+	if st := m.Status(); st.Known || st.Window.String() == "" {
+		t.Errorf("fresh monitor status = %+v", st)
 	}
 }

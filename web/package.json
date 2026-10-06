@@ -29,9 +29,9 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
-    "@opencloud-eu/extension-sdk": "7.2.0",
-    "@opencloud-eu/web-client": "7.2.0",
-    "@opencloud-eu/web-pkg": "7.2.0",
+    "@opencloud-eu/extension-sdk": "8.1.0",
+    "@opencloud-eu/web-client": "8.1.0",
+    "@opencloud-eu/web-pkg": "8.1.0",
     "@playwright/test": "1.63.0",
     "@types/node": "24.19.0",
     "@vitest/coverage-v8": "4.1.11",

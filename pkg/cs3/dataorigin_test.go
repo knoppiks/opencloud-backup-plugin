@@ -85,17 +85,51 @@ func TestUpload_UsesTheDataServerOrigin(t *testing.T) {
 	}
 }
 
+// Up to OpenCloud 7.4 the gateway hands out the public data gateway with a
+// transfer token. That URL is reachable as it is, and the data server would
+// refuse it ("invalid upload path", 7.3.0), so the override must leave it
+// alone — the same configuration has to work on both sides of 7.5.
+func TestOpenFile_LeavesTheDataGatewayAlone(t *testing.T) {
+	gw := newPathRecorder(t)
+	fg := &fakeGateway{downloadEndpoint: gw.URL + "/data", downloadToken: "transfer"}
+	c := newClient(fg, WithHTTPClient(gw.Client()),
+		WithDataServerOrigin(&url.URL{Scheme: "http", Host: "127.0.0.1:1"}))
+
+	rc, err := c.OpenFile(context.Background(), testSpace(), "docs/a.txt", 0)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	_ = readAllAndClose(t, rc)
+	if got := gw.seen(); len(got) != 1 || got[0] != "/data" {
+		t.Fatalf("paths = %v, want the data gateway used as returned", got)
+	}
+}
+
+func TestUpload_LeavesTheDataGatewayAlone(t *testing.T) {
+	gw := newPathRecorder(t)
+	fg := &fakeGateway{uploadEndpoint: gw.URL + "/data", uploadToken: "transfer", uploadProtocol: "simple"}
+	c := newClient(fg, WithHTTPClient(gw.Client()),
+		WithDataServerOrigin(&url.URL{Scheme: "http", Host: "127.0.0.1:1"}))
+
+	if err := c.Upload(context.Background(), testSpace(), "f.txt", 3, time.Time{}, strings.NewReader("abc")); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if got := gw.seen(); len(got) != 1 || got[0] != "/data" {
+		t.Fatalf("paths = %v, want the data gateway used as returned", got)
+	}
+}
+
 func TestDataEndpoint_UntouchedWithoutOverride(t *testing.T) {
 	c := &Client{}
 	const in = "https://cloud.example/data/abc"
-	if got, err := c.dataEndpoint(in); err != nil || got != in {
+	if got, err := c.dataEndpoint(in, ""); err != nil || got != in {
 		t.Fatalf("dataEndpoint = %q, %v", got, err)
 	}
 }
 
 func TestDataEndpoint_RejectsAnUnparseableEndpointWithoutEchoingIt(t *testing.T) {
 	c := &Client{dataOrigin: &url.URL{Scheme: "http", Host: "opencloud:9158"}}
-	_, err := c.dataEndpoint("http://internal-host:9158/%zz")
+	_, err := c.dataEndpoint("http://internal-host:9158/%zz", "")
 	if err == nil {
 		t.Fatal("want an error")
 	}

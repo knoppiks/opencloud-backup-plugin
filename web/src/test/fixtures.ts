@@ -117,7 +117,8 @@ export function fakeAdminApi(): FakeAdminApi {
     'deleteTarget',
     'checkTarget',
     'grants',
-    'replaceGrants'
+    'replaceGrants',
+    'openCloudVersion'
   ]
   return Object.fromEntries(
     methods.map((m) => [m, vi.fn(() => Promise.reject(new Error(`unexpected call: ${m}`)))])

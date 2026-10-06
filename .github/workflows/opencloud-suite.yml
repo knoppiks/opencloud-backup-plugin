@@ -53,12 +53,12 @@ jobs:
     # OPENCLOUD_FIXTURE_REQUIRED turns "no fixture, skip" into "no fixture,
     # fail". Without it this job could pass having run nothing at all, which is
     # precisely what used to happen (review-2026-09.md F7).
-    - name: state store, CS3 read path, admin role
+    - name: state store, CS3 read path, admin role, OpenCloud version
       env:
         OPENCLOUD_FIXTURE_REQUIRED: "1"
       run: |
         set -a; . test/fixtures/opencloud/fixture.env; set +a
-        go test -tags integration -count=1 ./pkg/cs3/... ./pkg/cs3state/... ./pkg/api/...
+        go test -tags integration -count=1 ./pkg/cs3/... ./pkg/cs3state/... ./pkg/api/... ./pkg/ocversion/...
 
     - name: restore Path B against real reva
       env:

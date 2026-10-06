@@ -15,6 +15,13 @@ package cs3
 // scheme and host are replaced by an address this service can reach, such as
 // the Service in front of OpenCloud's pod. The data server still checks the
 // access token on every request.
+//
+// The override applies only to an endpoint handed out WITHOUT a transfer
+// token, which is the 7.5+ shape. An endpoint with a token is the public data
+// gateway, which this service reaches already; sending it to the data server
+// instead fails every transfer ("invalid upload path", measured on 7.3.0 in
+// Phase 9). Keying on the response rather than on a version number lets one
+// configuration serve the whole support window, and an upgrade across 7.5.
 
 import (
 	"errors"
@@ -22,9 +29,9 @@ import (
 	"net/url"
 )
 
-// WithDataServerOrigin sends every file transfer to origin (scheme and host)
-// instead of the one the gateway names, keeping the gateway's path. Nil leaves
-// the gateway's URL untouched.
+// WithDataServerOrigin sends every file transfer the gateway routes to its
+// data server directly (no transfer token) to origin (scheme and host)
+// instead, keeping the gateway's path. Nil leaves the gateway's URL untouched.
 func WithDataServerOrigin(origin *url.URL) ClientOption {
 	return func(c *Client) { c.dataOrigin = origin }
 }
@@ -51,9 +58,10 @@ func ParseDataServerOrigin(raw string) (*url.URL, error) {
 	return &url.URL{Scheme: u.Scheme, Host: u.Host}, nil
 }
 
-// dataEndpoint applies the origin override to an endpoint the gateway returned.
-func (c *Client) dataEndpoint(endpoint string) (string, error) {
-	if c.dataOrigin == nil {
+// dataEndpoint applies the origin override to an endpoint the gateway
+// returned, unless it came with a transfer token (see the file comment).
+func (c *Client) dataEndpoint(endpoint, transferToken string) (string, error) {
+	if c.dataOrigin == nil || transferToken != "" {
 		return endpoint, nil
 	}
 	u, err := url.Parse(endpoint)
