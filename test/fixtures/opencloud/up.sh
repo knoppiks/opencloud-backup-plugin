@@ -3,13 +3,54 @@
 # spike / integration tests need. Idempotent: re-running reuses the generated
 # config. Use ./down.sh to tear down (optionally purging config+data).
 #
+# Which OpenCloud: OC_LEG names a leg of pkg/ocversion/versions.yaml (or
+# "canary"); unset means the file's default. That file is the only place an
+# OpenCloud image is pinned. A fixture stays on the leg it was initialised
+# with: switching needs ./down.sh --purge, because OpenCloud does not promise
+# to open a newer release's config and data.
+#
 # Outputs (also written to ./fixture.env for `source`-ing):
 #   CS3_GATEWAY_ADDR, CS3_SERVICE_ACCOUNT_ID, CS3_SERVICE_ACCOUNT_SECRET,
-#   OC_JWT_SECRET, OC_MACHINE_AUTH_API_KEY, OC_URL
+#   OC_JWT_SECRET, OC_MACHINE_AUTH_API_KEY, OC_URL, OC_FIXTURE_LEG,
+#   OC_FIXTURE_IMAGE
 set -euo pipefail
 
 cd "$(dirname "$0")"
-IMAGE="opencloudeu/opencloud-rolling:7.5.0@sha256:6db1cfb06d430a663f16e9f33dcd4596d82a4875be0b4df233c26ce5f667ea74"
+PINS="../../../pkg/ocversion/versions.yaml"
+
+if ! command -v yq >/dev/null; then
+  echo "up.sh needs yq (mikefarah/yq v4) to read ${PINS}" >&2
+  exit 1
+fi
+
+LEG="${OC_LEG:-$(yq -r '.default' "${PINS}")}"
+# One expression over legs and canary: the canary is selectable like any leg,
+# and has no digest because it follows its tag.
+pin() {
+  LEG="${LEG}" yq -r "[.legs[], .canary] | map(select(.name == strenv(LEG))) | .[0].$1 // \"\"" "${PINS}"
+}
+image=$(pin image)
+tag=$(pin tag)
+digest=$(pin digest)
+if [ -z "${image}" ] || [ -z "${tag}" ]; then
+  echo "no leg '${LEG}' in ${PINS}; legs: $(yq -r '[.legs[].name, .canary.name] | join(", ")' "${PINS}")" >&2
+  exit 1
+fi
+IMAGE="${image}:${tag}${digest:+@${digest}}"
+
+# docker compose reads .env from this directory on every invocation, so
+# down.sh and install-webapp.sh's restart see the same image as this script.
+if [ -f .env ] && [ -f "config/opencloud.yaml" ]; then
+  previous=$(sed -n 's/^OC_IMAGE=//p' .env)
+  if [ "${previous}" != "${IMAGE}" ]; then
+    echo "this fixture was initialised with ${previous}, not ${IMAGE};" >&2
+    echo "run ./down.sh --purge first to switch OpenCloud versions" >&2
+    exit 1
+  fi
+fi
+printf 'OC_LEG=%s\nOC_IMAGE=%s\n' "${LEG}" "${IMAGE}" > .env
+echo "OpenCloud leg: ${LEG} (${IMAGE})"
+
 # Root helper for the file-ownership chores the host user may not be allowed to
 # do itself (same image down.sh --purge uses).
 HELPER_IMAGE="alpine:3"
@@ -121,6 +162,10 @@ done
   echo "export OIDC_AUDIENCE=web"
   echo "export BACKUPD_BASE_PATH=/backup"
   emit SSL_CERT_FILE "$(pwd)/ca.crt"
+  # Which OpenCloud the tests are about to run against, for their logs and
+  # for tests that assert on the version itself.
+  emit OC_FIXTURE_LEG "${LEG}"
+  emit OC_FIXTURE_IMAGE "${IMAGE}"
 } > fixture.env
 
 echo "OpenCloud fixture is up."

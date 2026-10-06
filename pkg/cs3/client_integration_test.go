@@ -217,17 +217,20 @@ func TestIntegration_ZeroByteUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDir: %v", err)
 	}
-	var found *cs3.Entry
-	for i := range entries {
-		if path.Base(entries[i].Path) == "empty.txt" {
-			found = &entries[i]
+	var (
+		found cs3.Entry
+		ok    bool
+	)
+	for _, e := range entries {
+		if path.Base(e.Path) == "empty.txt" {
+			found, ok = e, true
 		}
 	}
-	if found == nil {
+	if !ok {
 		t.Fatalf("the empty file was not created; entries = %+v", entries)
 	}
 	if found.Size != 0 || found.IsDir {
-		t.Fatalf("empty file = %+v, want a zero-byte file", *found)
+		t.Fatalf("empty file = %+v, want a zero-byte file", found)
 	}
 	if got := time.Unix(found.MTimeUnix, 0).UTC(); !got.Equal(mtime) {
 		t.Errorf("mtime = %s, want %s: the requested mtime survived initiation before, "+

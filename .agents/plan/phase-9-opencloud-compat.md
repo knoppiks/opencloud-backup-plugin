@@ -32,6 +32,24 @@ Today the version lives in ~8 places (review O5). Introduce one file, e.g.
 
 Renovate (Phase 11) updates digests in this one file.
 
+**Outcome (PR A, #63):** the file is `pkg/ocversion/versions.yaml`, not under
+`test/fixtures/`: `go:embed` cannot reach outside a package's directory, and
+9.2 needs the window compiled into `backupd`. Legs are named by role
+(`production`, `oldest-rolling`, `newest-rolling`) plus a `canary` entry; up.sh
+selects one with `OC_LEG` (default `newest-rolling`) and hands the image to
+compose through `./.env`. `TestNoOtherOpenCloudPin` greps every committable
+file outside `.agents/` for an image reference or a pinned digest;
+`TestREADMESupportedSentence` keeps the README equal to the file. The CI
+matrix and the canary share one reusable workflow, `opencloud-suite.yml`. PR A
+lands with the one leg it can prove (7.5.0). The 7.3.0 leg was in it and its
+E2E failed: below 7.5 the gateway returns the public data gateway URL with a
+transfer token, and `CS3_DATA_SERVER_URL` rewrites that host to the
+storage-users data server, which answers 500 "invalid upload path" to the
+first state write. The Go integration tests never set the variable, so they
+passed. So 9.4's question is answered: the setting is **not** harmless below
+7.5. PR B (#64) fixes that, adds `production` and `oldest-rolling`, and moves
+`newest-rolling` to 8.1.0.
+
 ### 9.2 Runtime OpenCloud version detection (spike, then code)
 
 **Spike:** how does an external service learn OpenCloud's version, reliably,

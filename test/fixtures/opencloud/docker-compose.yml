@@ -5,8 +5,9 @@
 # one-time `init` (generates secrets into ./config/opencloud.yaml) before the
 # server starts. up.sh handles init + start + secret extraction.
 #
-# Pinned images: opencloudeu/opencloud-rolling:7.5.0 by digest (the image the
-# first real deployment runs; keep up.sh's IMAGE identical), caddy:2.10-alpine
+# Images: OpenCloud from OC_IMAGE, which up.sh writes to ./.env from the leg it
+# picked in pkg/ocversion/versions.yaml (the only place OpenCloud is pinned);
+# caddy:2.10-alpine.
 # Exposed:
 #   9200 -> HTTPS single origin, served by the proxy below: OpenCloud plus
 #           /backup/* routed to a backupd on the host (sub-phase 8c)
@@ -18,7 +19,7 @@
 
 services:
   opencloud:
-    image: opencloudeu/opencloud-rolling:7.5.0@sha256:6db1cfb06d430a663f16e9f33dcd4596d82a4875be0b4df233c26ce5f667ea74
+    image: ${OC_IMAGE:?run ./up.sh, which picks the OpenCloud version}
     container_name: opencloud-fixture
     # `entrypoint: opencloud` + no command == `server`.
     #
