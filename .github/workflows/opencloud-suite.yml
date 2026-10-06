@@ -1,0 +1,189 @@
+name: OpenCloud suite
+
+# Everything that runs against a real OpenCloud, for one leg of
+# pkg/ocversion/versions.yaml. Called by ci.yml once per supported leg
+# (blocking) and by canary.yml for the canary (not blocking). A version is
+# supported if and only if this passes on it (compatibility-policy.md §3).
+
+on:
+  workflow_call:
+    inputs:
+      leg:
+        description: A leg name from pkg/ocversion/versions.yaml, or "canary".
+        type: string
+        required: true
+      go-version:
+        type: string
+        required: true
+      node-version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  # up.sh reads it to pick the OpenCloud image.
+  OC_LEG: ${{ inputs.leg }}
+
+jobs:
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    # Image pull, one-time init, boot, seed, then the tests themselves — plus
+    # Garage containers for the ones that need a target as well.
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: true
+
+    # up.sh generates the instance's secrets, starts it, waits for readiness
+    # and writes fixture.env; seed.sh adds the users, files, Space and grants
+    # the tests assert against.
+    - name: start the OpenCloud fixture
+      run: |
+        cd test/fixtures/opencloud
+        ./up.sh
+        ./seed.sh
+
+    # OPENCLOUD_FIXTURE_REQUIRED turns "no fixture, skip" into "no fixture,
+    # fail". Without it this job could pass having run nothing at all, which is
+    # precisely what used to happen (review-2026-09.md F7).
+    - name: state store, CS3 read path, admin role
+      env:
+        OPENCLOUD_FIXTURE_REQUIRED: "1"
+      run: |
+        set -a; . test/fixtures/opencloud/fixture.env; set +a
+        go test -tags integration -count=1 ./pkg/cs3/... ./pkg/cs3state/... ./pkg/api/...
+
+    - name: restore Path B against real reva
+      env:
+        OPENCLOUD_FIXTURE_REQUIRED: "1"
+      run: |
+        set -a; . test/fixtures/opencloud/fixture.env; set +a
+        go test -tags integration -count=1 -run OpenCloud ./pkg/restore/...
+
+    # The Phase-6 exit criteria, over both durable stores (each is a subtest:
+    # memory, opencloud). Named explicitly rather than by package: the rest of
+    # pkg/backup's integration tests are Garage-only and run in ci.yml's
+    # `integration` job.
+    - name: phase-6 criteria over the real state store
+      env:
+        OPENCLOUD_FIXTURE_REQUIRED: "1"
+      run: |
+        set -a; . test/fixtures/opencloud/fixture.env; set +a
+        go test -tags integration -count=1 \
+          -run 'TestIntegration_Scheduled|TestIntegration_Crashed|TestIntegration_Stale' \
+          ./pkg/backup/...
+
+    # Last, deliberately: OC_FIXTURE_DOWN_CMD makes the Path A acceptance test
+    # stop OpenCloud for real, which is the criterion ("with OpenCloud down") and
+    # also the end of the fixture's usefulness in this job. Within pkg/backup the
+    # end-to-end test is defined above it in the same file, so it runs first.
+    - name: backup and Path A, with OpenCloud stopped
+      env:
+        OPENCLOUD_FIXTURE_REQUIRED: "1"
+        # Absolute: the test shells out from its own package directory, not from
+        # the repository root.
+        OC_FIXTURE_DOWN_CMD: ${{ github.workspace }}/test/fixtures/opencloud/down.sh
+      run: |
+        set -a; . test/fixtures/opencloud/fixture.env; set +a
+        go test -tags integration -count=1 -run TestIntegration_OpenCloud ./pkg/backup/...
+
+    - name: fixture logs on failure
+      if: failure()
+      run: docker logs opencloud-fixture --tail 200 || true
+
+  # The whole flow in a real browser (phase-8 sub-phase 8f, issue #42): an
+  # admin sets up the destination, a family member protects their Space,
+  # backs up, restores, and opens a take-out with the browser-made Recovery
+  # Key, before and after replacing it. Its own job: `integration` stops
+  # OpenCloud in its last step.
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: true
+
+    - uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: enable corepack
+      run: corepack enable
+
+    - name: install
+      working-directory: web
+      run: pnpm install --frozen-lockfile
+
+    # The Chromium build pinned by @playwright/test's version in package.json,
+    # not whatever Chrome the runner image carries this week.
+    - name: install the browser
+      working-directory: web
+      run: pnpm exec playwright install --with-deps chromium
+
+    # The destination the admin spec creates. Same pinned Garage as `make
+    # dev-up`; the specs read its key pair from this compose file.
+    - name: start Garage
+      run: |
+        docker compose -f docker-compose.dev.yml up -d
+        for _ in $(seq 1 30); do
+          curl -s -o /dev/null http://127.0.0.1:3900/ && exit 0
+          sleep 2
+        done
+        echo "Garage did not answer on :3900" >&2; exit 1
+
+    - name: start the OpenCloud fixture
+      run: |
+        cd test/fixtures/opencloud
+        ./up.sh
+        ./seed.sh
+
+    # Builds the extension, installs it into the fixture and asserts that
+    # OpenCloud serves it, with the CSP it needs.
+    - name: install Backup Vault into the fixture
+      run: test/fixtures/opencloud/install-webapp.sh
+
+    # globalSetup builds and starts backupd itself (web/e2e/global-setup.ts).
+    - name: e2e
+      working-directory: web
+      env:
+        E2E_RUN_ROOT: ${{ runner.temp }}/e2e
+      run: pnpm e2e
+
+    # The screenshot tour (screens.e2e.ts): every page as user and admin, in
+    # light and dark theme, for reviewing the UI against OpenCloud's own.
+    # Uploaded on success too; on failure it holds whatever was taken. One
+    # artifact per leg: the host's design system differs between them.
+    - name: ui screenshots
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: ui-screens-${{ inputs.leg }}
+        path: web/e2e-results/screens
+        if-no-files-found: ignore
+
+    - name: e2e report on failure
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-report-${{ inputs.leg }}
+        path: |
+          web/playwright-report
+          web/e2e-results
+          ${{ runner.temp }}/e2e/*/backupd.log
+        if-no-files-found: ignore
+
+    - name: fixture logs on failure
+      if: failure()
+      run: docker logs opencloud-fixture --tail 200 || true

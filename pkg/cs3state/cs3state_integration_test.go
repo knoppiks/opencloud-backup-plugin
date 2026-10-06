@@ -224,7 +224,7 @@ func TestIntegration_CS3State(t *testing.T) {
 
 // What reva actually does when a document is uploaded over an existing path.
 //
-// Pinned against opencloudeu/opencloud-rolling:7.3.0: InitiateFileUpload on an
+// Measured on OpenCloud 7.3.0 and asserted on every leg since: InitiateFileUpload on an
 // existing path **succeeds and overwrites**. It does not return ALREADY_EXISTS.
 //
 // That is the answer the durability design needed, and it is the dangerous one:

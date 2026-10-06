@@ -89,8 +89,10 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
 
 ## Deployment preconditions
 
-**Supported OpenCloud versions: 7.3.0 to 7.5.0.** The fixture the tests run
-against is pinned to 7.5.0 by digest. The service talks to OpenCloud over CS3,
+**Supported OpenCloud versions: Rolling 7.5.0.** CI runs the full OpenCloud
+suite and the browser tests against every version pinned by digest in
+[`pkg/ocversion/versions.yaml`](pkg/ocversion/versions.yaml); a test keeps
+this sentence equal to that file. The service talks to OpenCloud over CS3,
 which OpenCloud does not treat as a public interface, so test a new OpenCloud
 release against the fixture before upgrading a deployment that runs backups.
 
@@ -582,9 +584,15 @@ make web-lint web-typecheck web-test web-build
 To see it in a browser, against the pinned OpenCloud:
 
 ```sh
-make dev-up                      # Garage + OpenCloud 7.5.0 + the fixture proxy, seeded
+make dev-up                      # Garage + OpenCloud + the fixture proxy, seeded
 make web-install-fixture         # build, install into the fixture, verify it registered
 ```
+
+The fixture needs [`yq`](https://github.com/mikefarah/yq) v4 to read the pin
+file. It starts the pin file's default leg (the newest Rolling release); pick
+another with `OC_LEG`, e.g. `OC_LEG=canary make dev-up`. A fixture keeps
+the version it was initialised with, so switching needs
+`test/fixtures/opencloud/down.sh --purge` first.
 
 `web-install-fixture` restarts OpenCloud, because the apps directory is scanned
 at startup only — a bundle dropped in while it is running is invisible, with no

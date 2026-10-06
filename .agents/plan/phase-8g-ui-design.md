@@ -99,7 +99,7 @@ Compared with the Files app (left nav, header bar, padded content, tables):
 
 ## Progress
 
-- [ ] PR A — issue #59
+- [x] PR A — issue #59
   - [x] Screenshot tour (`web/e2e/screens.e2e.ts`, project `screens` after
     `journey`; CI artifact `ui-screens`). Waits for no visible `.oc-spinner`,
     not `networkidle` (OpenCloud holds an SSE stream open). Viewport

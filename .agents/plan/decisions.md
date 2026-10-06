@@ -119,7 +119,7 @@ than drifting.
     *Status:* the target store, the grant model, the server-side enforcement and
     the **admin API** exist — `/api/v1/admin/targets` and `.../grants` are real
     since sub-phase 8b, so the admin is no longer limited to the optional
-    first-start seeding below. The **admin UI** lands in sub-phase 8e.
+    first-start seeding below. The **admin UI** landed in sub-phase 8e (#41).
 
 13. **The in-app admin identity is the OpenCloud admin role, reused — we do not
     build our own admin user store.** Admin status is derived from OpenCloud
@@ -180,6 +180,30 @@ than drifting.
 22. **Retention has a floor.** A member may shorten their Space's history, but
     not below a week: depth is the defence the threat model rests on, and a
     browser session is not enough authority to remove it. Same amendment section.
+
+23. **License: Apache-2.0**, conditional on a dependency license audit with a
+    CI gate. See "Amendments from the October 2026 review".
+
+24. **One plugin version, independent SemVer.** backupd, the web bundle, the
+    CLIs and the deployment add-ons share one version that does not track
+    OpenCloud's; formats with their own version numbers are read forever
+    regardless. Spelled out in `compatibility-policy.md`.
+
+25. **Supported OpenCloud = the current Production line plus every Rolling
+    release since it**, each one exercised in CI. Outside that window the
+    service warns and keeps running. `compatibility-policy.md` §3.
+
+26. **Module path `github.com/knoppiks/opencloud-backup-plugin`; everything
+    under `internal/` except the format reference implementations**
+    (`pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`). Amends the Phase-1
+    layout.
+
+27. **The primary deployment artifact is a Docker Compose add-on for
+    `opencloud-compose`;** Kustomize is a secondary add-on. The test fixture
+    becomes opencloud-compose plus that add-on.
+
+28. **Documentation is a VitePress site on GitHub Pages, English only,**
+    versioned per release with a `next` build from `main`.
 
 ---
 
@@ -1137,6 +1161,71 @@ is listed here so the corrections are themselves on the record:
   - The owner decided against a NetworkPolicy limiting 9142/9158 to the
     backupd pod. That is recorded here, not assumed.
 
+### Amendments from the October 2026 review
+
+Findings in `review-2026-10.md`; work in phases 9–14. Decided with the owner
+on 2026-10-06. None reopens an earlier decision; #26 amends the Phase-1
+layout, which was a scaffolding choice rather than a locked decision.
+
+- **New decision #23 (locked): Apache-2.0.** Matches OpenCloud and its web
+  extensions, carries a patent grant, and is what `web/package.json` already
+  claimed. *Conditional:* Phase 11 audits every linked Go module and every
+  bundled npm package, ships the NOTICE files Apache-2.0 dependencies
+  require, and adds a CI gate. A first count on 2026-10-06 found no copyleft
+  among the Go modules linked into the binaries (40 Apache-2.0, 17 BSD, 16 MIT,
+  1 ISC) and MIT for the web runtime dependencies. Open within it: the web
+  image's busybox base is GPL-2.0 (Phase 11.1).
+
+- **New decision #24 (locked): one version, independent SemVer.** Rejected:
+  tracking OpenCloud's major. OpenCloud ships a major every few months; tying
+  to it would spend the plugin's MAJOR on events that break nothing here and
+  leave no way to signal a break of the plugin's own. backupd and the web
+  bundle must match — now checked at runtime through `GET /api/v1/version`
+  and an API level, not only stated in `release.yml`. The envelope format,
+  Recovery Key encoding, Take-Out manifest, TW blob and state layouts are
+  outside SemVer: they are read forever.
+
+- **New decision #25 (locked): the OpenCloud support window.** The current
+  Production line plus every Rolling release since it. Rationale: Production
+  is what OpenCloud recommends for production, and a family following that
+  advice must not be excluded — today it is (7.2.x was never tested). Rolling
+  is where the owner's deployment runs and where CS3 breakage arrives first.
+  LTS is customer-only and out of scope. *Supported means CI runs it*: the
+  matrix is Production, oldest Rolling in the window, newest Rolling, plus a
+  non-blocking nightly canary on `opencloud-rolling:latest`.
+  *Warn, never refuse:* outside the window the service logs and shows a
+  notice and keeps backing up. Refusing would turn "OpenCloud upgraded a day
+  early" into "no backups", and CS3 drift already fails loudly through the
+  stale-backup path.
+
+- **New decision #26 (locked): module path and layout.** The dotless module
+  path made `go install …/cmd/decrypt` impossible — the one tool whose
+  install-from-source fallback matters most. Moving to `internal/` lets the
+  compiler enforce what is API. The three packages that stay public are the
+  reference implementations of the formats this project promises to read
+  forever; publishing them is part of "you are not locked in". `spikes/` is
+  deleted; its findings live in `phase-0-findings.md`.
+
+- **New decision #27 (locked): compose first.** OpenCloud's own deployment
+  artifact is `opencloud-compose` (base file + `COMPOSE_FILE` overlays), and
+  that is what households run. The add-on follows its conventions; Kustomize
+  serves Kubernetes users second. The CI fixture becomes opencloud-compose
+  plus the shipped add-on, so the thing tested is the thing installed — R9's
+  lesson applied to packaging.
+
+- **New decision #28 (locked): docs site.** VitePress (the repository
+  already has a Vue/pnpm toolchain), GitHub Pages, English only, `/vX.Y/` per
+  release and `/next/` from `main`. Rejected: Docusaurus (adds a React
+  toolchain for the look of docs.opencloud.eu), MkDocs (adds Python). German
+  docs were considered and rejected for maintenance cost; the UI stays
+  bilingual.
+
+- **Still open, owned by the phase docs:** dropping an OpenCloud version that
+  left the window — MINOR or MAJOR (policy §2); the grace period for the
+  previous Production line (policy §3); per-Space metric labels (Phase 14);
+  the CSP mechanism for the compose add-on (Phase 12); busybox (Phase 11);
+  R10's option; Phase 5b — v1 or backlog.
+
 ---
 
 ## Trust & key model
@@ -1247,8 +1336,8 @@ acceptable:
   OpenCloud **fully down**: admin extracts an encrypted, self-contained blob from
   S3 (ciphertext only, no key input possible); user decrypts locally with the RK
   via the standalone `decrypt` CLI, independent of OpenCloud and the server.
-- **Path B — User restore into OpenCloud.** User-only, via GUI (Phase 8; the API
-  it will call exists today); full restore into `Restore/<ts>/`; requires
+- **Path B — User restore into OpenCloud.** User-only, via GUI (Backup Vault,
+  Phase 8) or the same API; full restore into `Restore/<ts>/`; requires
   OpenCloud to be up.
 - **A backup path is not "done" until its restore path is tested.** Path A is the
   acceptance-critical path.

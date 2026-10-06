@@ -1,0 +1,114 @@
+name: OpenCloud canary
+
+# The early warning for CS3 changes nobody announces (review-2026-10.md O4):
+# the full OpenCloud suite and the browser E2E against the newest OpenCloud
+# release, followed by tag rather than pinned (the `canary` entry of
+# pkg/ocversion/versions.yaml). It does not gate anything. When it fails it
+# opens one issue per upstream version, or comments on the one already open.
+
+on:
+  schedule:
+  - cron: "41 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Open (or update) a clearly marked test issue even if the suite passes.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  # Keep in sync with ci.yml.
+  GO_VERSION: "1.26.0"
+  NODE_VERSION: "24.17.0"
+  PINS: pkg/ocversion/versions.yaml
+
+jobs:
+  # Which release the canary's tag points at right now, so the issue can be
+  # named after it. Docker Hub lists every tag with its digest; the version is
+  # the MAJOR.MINOR.PATCH tag sharing the canary tag's digest.
+  resolve:
+    name: resolve the canary's version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      go-version: ${{ env.GO_VERSION }}
+      node-version: ${{ env.NODE_VERSION }}
+    steps:
+    - uses: actions/checkout@v7
+
+    - id: version
+      run: |
+        image=$(yq -r '.canary.image' "$PINS")
+        tag=$(yq -r '.canary.tag' "$PINS")
+        api="https://hub.docker.com/v2/repositories/${image}/tags"
+        digest=$(curl -fsS "${api}/${tag}" | jq -r '.digest')
+        version=$(curl -fsS "${api}?page_size=100&ordering=last_updated" \
+          | jq -r --arg d "$digest" \
+            '[.results[] | select(.digest == $d) | .name | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))] | first // empty')
+        echo "canary ${image}:${tag} is ${version:-an untagged build} (${digest})"
+        echo "version=${version:-${tag} (${digest})}" >> "$GITHUB_OUTPUT"
+
+  suite:
+    name: opencloud (canary)
+    needs: resolve
+    uses: ./.github/workflows/opencloud-suite.yml
+    with:
+      leg: canary
+      go-version: ${{ needs.resolve.outputs.go-version }}
+      node-version: ${{ needs.resolve.outputs.node-version }}
+
+  report:
+    name: report
+    needs: [ resolve, suite ]
+    if: always() && needs.resolve.result == 'success' && (needs.suite.result == 'failure' || inputs.dry-run)
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SUITE_RESULT: ${{ needs.suite.result }}
+      DRY_RUN: ${{ inputs.dry-run && 'true' || 'false' }}
+    steps:
+    - name: open or update the issue
+      run: |
+        title="Canary Fails on OpenCloud ${VERSION}"
+        note=""
+        if [ "$DRY_RUN" = "true" ]; then
+          title="${title} (Dry Run)"
+          note=$'**Dry run** of the canary workflow, started by hand to prove it can file this issue. The suite result below is real; close this issue once seen.\n\n'
+        fi
+
+        gh label create canary --color FBCA04 \
+          --description "OpenCloud canary: the newest upstream release breaks a suite" --force
+
+        existing=$(gh issue list --label canary --state open --search "in:title \"${title}\"" \
+          --json number,title --jq "map(select(.title == \"${title}\")) | first | .number // empty")
+        if [ -n "$existing" ]; then
+          gh issue comment "$existing" --body "Still failing (suite: ${SUITE_RESULT}): ${RUN_URL}"
+          exit 0
+        fi
+
+        body="${note}## Current behaviour
+
+        The nightly canary ran the OpenCloud fixture suite and the browser E2E against OpenCloud ${VERSION} (\`canary\` in \`${PINS}\`, followed by tag). Result: **${SUITE_RESULT}**.
+
+        Run: ${RUN_URL}
+
+        ## Expected behaviour
+
+        The plugin works with every new OpenCloud release before households upgrade to it.
+
+        ## Why
+
+        OpenCloud does not treat the internal file API this plugin depends on as a public interface, so a release can break backups and restores without notice. This issue is the warning before a deployment upgrades."
+        gh issue create --title "$title" --label canary --body "$body"

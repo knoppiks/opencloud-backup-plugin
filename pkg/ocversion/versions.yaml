@@ -1,0 +1,37 @@
+# The OpenCloud versions this plugin is tested against, and therefore the
+# versions it supports (compatibility-policy.md §3, decisions.md #25). This is
+# the ONLY file that names an OpenCloud image, tag or digest; everything else
+# reads it:
+#
+#   - test/fixtures/opencloud/up.sh picks a leg (OC_LEG, default below) and
+#     hands its image to the fixture's compose file,
+#   - CI builds its OpenCloud matrix from `legs`, and the nightly canary runs
+#     `canary`,
+#   - backupd embeds it as the window it warns outside of,
+#   - TestREADMESupportedSentence keeps the README's claim equal to it, and
+#     TestNoOtherOpenCloudPin fails if an image reference appears elsewhere.
+#
+# Leg names are roles, not versions, so CI job names stay stable when a pin
+# moves. Digests are the multi-arch index digests Docker Hub shows.
+
+# The leg up.sh starts when OC_LEG is unset: the newest Rolling release, which
+# is where the owner's deployment runs and where breakage arrives first.
+default: newest-rolling
+
+# Only the newest Rolling release for now: below 7.5 backupd's
+# CS3_DATA_SERVER_URL breaks every state write (phase-9 doc, 9.4). The
+# Production and oldest-Rolling legs return with that fix (#64).
+legs:
+- name: newest-rolling
+  channel: rolling
+  image: opencloudeu/opencloud-rolling
+  tag: 7.5.0
+  digest: sha256:6db1cfb06d430a663f16e9f33dcd4596d82a4875be0b4df233c26ce5f667ea74
+
+# Followed by tag, never by digest: its job is to notice the release nobody has
+# pinned yet. Not part of the support window.
+canary:
+  name: canary
+  channel: rolling
+  image: opencloudeu/opencloud-rolling
+  tag: latest
