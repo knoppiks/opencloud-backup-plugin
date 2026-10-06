@@ -129,8 +129,8 @@ Phases 2/3/5/6 (APIs).
       clicked by any test.
 - [x] Admin sees the target-management view; non-admin does not (client gate +
       server 403). Credentials never rendered back. (E2E `admin.e2e.ts`)
-- [ ] E2E happy path green in CI. Green locally. The `e2e` job is added, and
-      this box is ticked once the PR's CI run is green.
+- [x] E2E happy path green in CI. The `e2e` job is green on `main` (run on
+      2026-10-05 at `839ba3f`, all ten CI jobs green).
 - [x] Browser↔CLI crypto interop test green: the `takeout` and `decrypt`
       binaries open the backup with the key from the browser, before and
       after a rotation. (E2E `journey.e2e.ts`)

@@ -7,6 +7,9 @@ Per-phase planning documents.
 - **[key-envelope-format.md](key-envelope-format.md)** specifies the key-envelope
   and Recovery-Key wire formats. It is a **long-term compatibility promise**: the
   standalone decrypt CLI must parse every version forever.
+- **[compatibility-policy.md](compatibility-policy.md)** is the second
+  promise: plugin versioning, the supported OpenCloud window, and what never
+  breaks (decisions.md #24, #25).
 - The per-phase docs below break each phase into concrete deliverables, tasks,
   and exit criteria.
 
@@ -24,6 +27,15 @@ Per-phase planning documents.
 | 6 | [phase-6-scheduling.md](phase-6-scheduling.md) | 4 | Scheduler, job store, notifications |
 | 7 | [phase-7-immutability.md](phase-7-immutability.md) | 4, 6 | Tier 2/3 hardening, capability probe |
 | 8 | [phase-8-web-ui.md](phase-8-web-ui.md) | 0 (extension spike, admin-role spike), 2, 3, 5, 6 | OpenCloud Web extension (incl. admin target mgmt) |
+| 9 | [phase-9-opencloud-compat.md](phase-9-opencloud-compat.md) | 8 | OpenCloud 8.x + 7.2.x tested, CI version matrix, canary, runtime version check |
+| 10 | [phase-10-hardening.md](phase-10-hardening.md) | 9 | Bug fixes, diagnosability, config struct, fuzzing + frozen fixtures, module rename + `internal/` |
+| 11 | [phase-11-release-supply-chain.md](phase-11-release-supply-chain.md) | 10 | License, versioning, signed GitHub Releases with `decrypt`, Renovate/scanning, `v0.1.0` |
+| 12 | [phase-12-packaging.md](phase-12-packaging.md) | 9, 11 | Compose add-on (primary), Kustomize add-on, fixture on opencloud-compose |
+| 13 | [phase-13-docs-site.md](phase-13-docs-site.md) | 11, 12 | VitePress docs site, OpenAPI, README slimmed |
+| 14 | [phase-14-operability-web-quality.md](phase-14-operability-web-quality.md) | 10, 11 | Metrics, R10, accessibility, i18n, browser matrix |
+
+Phases are numbered in the order they are worked on. 13 and 14 run in
+parallel. Unscheduled work: [backlog.md](backlog.md).
 
 **Post-Phase-6 review (September 2026):**
 [review-2026-09.md](review-2026-09.md) records what was found;
@@ -58,9 +70,14 @@ implemented**:
 
 The review of the UI against the OpenCloud design system is **8g**
 ([phase-8g-ui-design.md](phase-8g-ui-design.md)): PR A (#59) the app shell
-and pages, PR B (#60) the forms and flows. Still open for Phase 8: the E2E job
-green in CI. Issue #35 was closed by the merge of 8a–8d and no longer tracks
-the rest.
+and pages, PR B (#60) the forms and flows. Both have landed, and the E2E job
+is green in CI on `main`, so **Phase 8 is complete**. Issue #35 was closed by
+the merge of 8a–8d and no longer tracks the rest.
+
+**October 2026 review:** [review-2026-10.md](review-2026-10.md) records what
+was found after Phase 8 — bugs, Go hygiene, release and supply chain,
+OpenCloud compatibility, packaging, docs. Phases 9–14 hold the work;
+decisions.md #23–#28 the decisions taken while planning it.
 
 **Deployment readiness:** [deployment-readiness.md](deployment-readiness.md)
 records what stood between 8d and a first real deployment (CSP, publishing,
