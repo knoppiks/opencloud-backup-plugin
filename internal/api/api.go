@@ -1,0 +1,458 @@
+// Package api holds the HTTP handlers and DTOs for the backup service, built on
+// the standard library net/http ServeMux (Go 1.22+ method+path patterns) — no
+// third-party router, keeping the single-static-binary goal (decisions.md
+// success criterion 1).
+//
+// Phase 2 wires the first real end-to-end slice: browser token -> OIDC
+// middleware -> CS3 gateway -> JSON. Authorization is enforced server-side: a
+// user sees only Spaces they are a member of and only backup targets granted to
+// them (phase-2 deliverable 4); client-supplied ids are never trusted.
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/jobs"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/notify"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/objstore"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/spacecfg"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/targets"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
+)
+
+// Server holds handler dependencies. Dependencies are injected via constructor
+// options (testability rule); the zero Server is not usable — use NewServer.
+type Server struct {
+	mux *http.ServeMux
+	// handler is mux behind the request observer (observe.go).
+	handler http.Handler
+
+	// logger receives one line per request, with the cause of every 5xx
+	// (observe.go). Defaults to discarding.
+	logger *slog.Logger
+
+	validator     TokenValidator
+	adminResolver AdminResolver
+	groupResolver GroupResolver
+	userResolver  UserResolver
+	spaces        cs3.SpaceReader
+	authorizer    targets.Authorizer
+
+	// targetStore, credSealer and targetChecker back the admin surface
+	// (decisions.md #12/#15). credSealer only ever seals here — nothing on the
+	// admin path opens a credential blob, which is what keeps #14 exact.
+	targetStore   targets.Store
+	credSealer    targets.CredSealer
+	targetChecker objstore.Checker
+
+	// keyStore persists wrapped Data Keys; srw adds the server-side wrap at
+	// setup time. Both hold ciphertext / server-held key material only — no
+	// plaintext DK or RK is ever stored or returned (decisions.md, Phase 3).
+	keyStore keys.Store
+	srw      srwWrapper
+	// rkLocks makes a Recovery Key rotation's precondition check and its
+	// write one step (see handleRotateRecoveryKey).
+	rkLocks spaceLocks
+
+	// spaceConfigs holds each Space's target binding and retention window;
+	// runner triggers backup runs; jobStore serves the run history (Phase 4).
+	spaceConfigs spacecfg.Store
+	runner       backupRunner
+	jobStore     jobs.Store
+
+	// restorer serves the snapshot picker and Path B restores. It is a
+	// user-only capability: every route it backs is member-gated, and there is
+	// no admin equivalent (decisions.md #2).
+	restorer restoreRunner
+
+	// schedules answers "when does this Space run next" using the scheduler's
+	// own arithmetic; notifications serves a Space's own event feed (Phase 6).
+	schedules     scheduleAdvisor
+	notifications notificationReader
+
+	// staleRule is the staleness rule the status board reports. It must be
+	// the one the monitor applies; the zero value is the monitor's default.
+	staleRule notify.StaleRule
+
+	// openCloud reports the OpenCloud version and whether this build was
+	// tested against it (compatibility-policy.md §3).
+	openCloud openCloudVersion
+
+	// ready reports readiness for GET /readyz; defaults to always-ready.
+	ready func(context.Context) error
+
+	// clock supplies "now" for grant-expiry checks; injected so tests can pin
+	// a grant on either side of its expiry.
+	clock func() time.Time
+}
+
+// Option configures a Server.
+type Option func(*Server)
+
+// WithLogger sets the logger request lines and the causes of 5xx answers go
+// to. Without it they are discarded.
+func WithLogger(l *slog.Logger) Option { return func(s *Server) { s.logger = l } }
+
+// WithTokenValidator sets the OIDC token validator used by Authenticate.
+func WithTokenValidator(v TokenValidator) Option { return func(s *Server) { s.validator = v } }
+
+// WithAdminResolver sets the admin-status resolver used by ResolveAdmin.
+func WithAdminResolver(r AdminResolver) Option { return func(s *Server) { s.adminResolver = r } }
+
+// WithGroupResolver sets the resolver that answers which groups a caller belongs
+// to, so group grants on a Space are honoured. Without it, a Space that carries
+// a group grant refuses callers who need it (fail closed).
+func WithGroupResolver(r GroupResolver) Option { return func(s *Server) { s.groupResolver = r } }
+
+// WithUserResolver sets how an authenticated caller's OpenCloud user id is
+// found (users.go). Without it, only a validator that supplies the id itself
+// authenticates anyone.
+func WithUserResolver(r UserResolver) Option { return func(s *Server) { s.userResolver = r } }
+
+// WithSpaceReader sets the CS3 space reader backing GET /spaces.
+func WithSpaceReader(r cs3.SpaceReader) Option { return func(s *Server) { s.spaces = r } }
+
+// WithAuthorizer sets the target authorizer backing GET /targets.
+func WithAuthorizer(a targets.Authorizer) Option { return func(s *Server) { s.authorizer = a } }
+
+// WithTargetStore sets the target/grant store backing the admin API. It is
+// satisfied by *targets.StateStore, the same value WithAuthorizer takes.
+func WithTargetStore(st targets.Store) Option { return func(s *Server) { s.targetStore = st } }
+
+// WithCredSealer sets the Target-Wrap sealer used when an admin enters target
+// credentials. The admin API only ever seals with it; opening a credential blob
+// happens in worker memory at run time and nowhere else (decisions.md #14).
+func WithCredSealer(c targets.CredSealer) Option { return func(s *Server) { s.credSealer = c } }
+
+// WithTargetChecker sets the read-only reachability checker backing the admin
+// connection check. It is satisfied by objstore.S3Checker.
+func WithTargetChecker(c objstore.Checker) Option { return func(s *Server) { s.targetChecker = c } }
+
+// WithKeyStore sets the wrapped-key store backing the backup key endpoints.
+func WithKeyStore(st keys.Store) Option { return func(s *Server) { s.keyStore = st } }
+
+// WithSRWWrapper sets the Server Runtime Wrap holder used at key setup. It is
+// satisfied by *keys.SRWWrapper.
+func WithSRWWrapper(w srwWrapper) Option { return func(s *Server) { s.srw = w } }
+
+// WithSpaceConfigStore sets the per-Space backup configuration store.
+func WithSpaceConfigStore(st spacecfg.Store) Option {
+	return func(s *Server) { s.spaceConfigs = st }
+}
+
+// WithBackupRunner sets the worker that executes backup runs. It is satisfied
+// by *backup.Runner.
+func WithBackupRunner(r backupRunner) Option { return func(s *Server) { s.runner = r } }
+
+// WithJobStore sets the job store backing the run-history endpoint.
+func WithJobStore(st jobs.Store) Option { return func(s *Server) { s.jobStore = st } }
+
+// WithRestoreRunner sets the worker that lists snapshots and executes Path B
+// restores. It is satisfied by *restore.Runner.
+func WithRestoreRunner(r restoreRunner) Option { return func(s *Server) { s.restorer = r } }
+
+// WithScheduleAdvisor sets the source of "next run" times. It is satisfied by
+// *scheduler.Scheduler.
+func WithScheduleAdvisor(a scheduleAdvisor) Option { return func(s *Server) { s.schedules = a } }
+
+// WithNotificationStore sets the store backing a Space's notification feed. It
+// is satisfied by *notify.StateStore.
+func WithNotificationStore(n notificationReader) Option {
+	return func(s *Server) { s.notifications = n }
+}
+
+// WithStaleRule sets the staleness rule the status endpoint reports. Pass the
+// same rule the notify.Monitor is built with, or the card and the notification
+// can disagree; the zero rule matches a monitor built with zero options.
+func WithStaleRule(r notify.StaleRule) Option { return func(s *Server) { s.staleRule = r } }
+
+// WithReadiness sets the readiness probe for GET /readyz.
+func WithReadiness(fn func(context.Context) error) Option {
+	return func(s *Server) { s.ready = fn }
+}
+
+// WithClock sets the time source used to evaluate grant expiry.
+func WithClock(now func() time.Time) Option {
+	return func(s *Server) {
+		if now != nil {
+			s.clock = now
+		}
+	}
+}
+
+// NewServer constructs the HTTP server and registers routes.
+func NewServer(opts ...Option) *Server {
+	s := &Server{mux: http.NewServeMux()}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.ready == nil {
+		s.ready = func(context.Context) error { return nil }
+	}
+	if s.clock == nil {
+		s.clock = time.Now
+	}
+	if s.logger == nil {
+		s.logger = slog.New(slog.DiscardHandler)
+	}
+	s.routes()
+	s.handler = s.observe(s.mux)
+	return s
+}
+
+// Handler exposes the router, behind request ids, panic recovery and the
+// request log, for mounting or testing.
+func (s *Server) Handler() http.Handler { return s.handler }
+
+func (s *Server) routes() {
+	// Unauthenticated probes.
+	s.mux.HandleFunc("GET /healthz", s.handleHealth)
+	s.mux.HandleFunc("GET /readyz", s.handleReady)
+
+	// Authenticated user API. Authenticate is a no-op-safe gate: without a
+	// validator configured, protected routes always 401 (fail closed).
+	// withAccess attaches the per-request role checker every space-scoped
+	// handler resolves through.
+	authed := func(h http.HandlerFunc) http.Handler {
+		return s.Authenticate(s.withAccess(h))
+	}
+	s.mux.Handle("GET /api/v1/spaces", authed(s.handleListSpaces))
+	s.mux.Handle("GET /api/v1/version", authed(s.handleVersion))
+	s.mux.Handle("GET /api/v1/targets", authed(s.handleListTargets))
+
+	// Backup key ceremony (Phase 3). All of these are space-scoped and enforce
+	// the caller's CS3 role server-side; none ever returns plaintext key
+	// material. setup establishes a Space's keys once and refuses to do it
+	// twice; rotate is the supported way to replace a Recovery Key afterwards,
+	// and it never touches the Data Key. Both reset what a Space's members can
+	// decrypt with, so both require the manager role; reading the envelope is
+	// open to any member (decisions.md #7).
+	s.mux.Handle("POST /api/v1/spaces/{id}/backup/setup", authed(s.handleKeySetup))
+	s.mux.Handle("POST /api/v1/spaces/{id}/backup/recovery-key/rotate", authed(s.handleRotateRecoveryKey))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/keystatus", authed(s.handleKeyStatus))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/recovery-envelope", authed(s.handleRecoveryEnvelope))
+
+	// Backup configuration and runs (Phase 4). Reads need viewer; changing the
+	// configuration or starting a run needs editor — the same authority
+	// OpenCloud requires to change the Space's contents. The target binding is
+	// additionally validated against server-side grants.
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/config", authed(s.handleGetBackupConfig))
+	s.mux.Handle("PUT /api/v1/spaces/{id}/backup/config", authed(s.handlePutBackupConfig))
+	s.mux.Handle("PATCH /api/v1/spaces/{id}/backup/config", authed(s.handlePatchBackupConfig))
+	s.mux.Handle("POST /api/v1/spaces/{id}/backup/run", authed(s.handleRunBackup))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs", authed(s.handleListRuns))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/runs/{jobId}", authed(s.handleGetRun))
+
+	// Scheduling and status (Phase 6). Same role gate as the config routes; a
+	// schedule is only accepted for a Space already bound to a granted target,
+	// so this is not a second way to configure backup.
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/status", authed(s.handleBackupStatus))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/schedule", authed(s.handleGetSchedule))
+	s.mux.Handle("PUT /api/v1/spaces/{id}/backup/schedule", authed(s.handlePutSchedule))
+	s.mux.Handle("GET /api/v1/spaces/{id}/backup/notifications", authed(s.handleListNotifications))
+
+	// Restore (Phase 5, Path B). Open to any member, because decisions.md #7
+	// makes disaster recovery a member capability rather than a management
+	// one. An admin who is not a member is refused exactly like any
+	// non-member.
+	s.mux.Handle("GET /api/v1/spaces/{id}/snapshots", authed(s.handleListSnapshots))
+	s.mux.Handle("POST /api/v1/spaces/{id}/restore", authed(s.handleRestore))
+
+	// Admin API: Authenticate -> ResolveAdmin -> RequireAdmin, then targets and
+	// grants and nothing else (decisions.md #15). Credentials go in and never
+	// come back out (#14); see admintargets.go.
+	admin := func(h http.HandlerFunc) http.Handler {
+		return s.Authenticate(s.ResolveAdmin(s.RequireAdmin(h)))
+	}
+	s.mux.Handle("GET /api/v1/admin/targets", admin(s.handleAdminListTargets))
+	s.mux.Handle("POST /api/v1/admin/targets", admin(s.handleAdminCreateTarget))
+	// Literal "check" before "{id}" is how the router reads it, and there is no
+	// POST on a single target for it to shadow.
+	s.mux.Handle("POST /api/v1/admin/targets/check", admin(s.handleAdminCheckTarget))
+	s.mux.Handle("GET /api/v1/admin/targets/{id}", admin(s.handleAdminGetTarget))
+	s.mux.Handle("PUT /api/v1/admin/targets/{id}", admin(s.handleAdminUpdateTarget))
+	s.mux.Handle("DELETE /api/v1/admin/targets/{id}", admin(s.handleAdminDeleteTarget))
+	s.mux.Handle("GET /api/v1/admin/targets/{id}/grants", admin(s.handleAdminListGrants))
+	s.mux.Handle("PUT /api/v1/admin/targets/{id}/grants", admin(s.handleAdminReplaceGrants))
+
+	// Everything else under the prefix stays behind the same gate and answers
+	// 404, so a path nobody implemented is still not a way past it.
+	adminGate := s.Authenticate(s.ResolveAdmin(s.RequireAdmin(http.HandlerFunc(s.handleAdminNotImplemented))))
+	s.mux.Handle("/api/v1/admin/", adminGate)
+}
+
+// handleHealth is a liveness probe target used by the K8s Deployment.
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleReady is a readiness probe: 200 when dependencies are reachable, else
+// 503. It never leaks dependency error details to the caller.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if err := s.ready(r.Context()); err != nil {
+		noteCause(r, "unavailable", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+// spaceDTO is the JSON projection of a Space for GET /spaces. It deliberately
+// omits CS3-internal detail beyond what the UI needs; other people's membership
+// is not exposed to the client (it is used server-side for authorization).
+//
+// Role is the caller's *own* role, which is not that disclosure: it is what the
+// caller would learn anyway by attempting an action and reading the 403. The UI
+// uses it to show "a manager of this Space has to finish setup" instead of
+// offering a button that can only fail. It is presentation; every route still
+// enforces its own minimum.
+type spaceDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Role string `json:"role"`
+}
+
+// roleName is the wire form of a role. cs3.Role.String is for logs and is not
+// a contract; this is, and the web client matches on these exact words.
+func roleName(r cs3.Role) string {
+	switch r {
+	case cs3.RoleOwner:
+		return "owner"
+	case cs3.RoleManager:
+		return "manager"
+	case cs3.RoleEditor:
+		return "editor"
+	case cs3.RoleViewer:
+		return "viewer"
+	default:
+		return "none"
+	}
+}
+
+// handleListSpaces returns the spaces the authenticated user may back up. A user
+// may only see Spaces they hold at least a viewer role on, enforced against CS3
+// grants, not client input (phase-2 deliverable 4).
+func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
+	a, ok := accessFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
+		return
+	}
+
+	all, err := a.listSpaces(r.Context())
+	if errors.Is(err, ErrNotConfigured) {
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "space backend not configured", err)
+		return
+	}
+	if err != nil {
+		// Never leak CS3 detail (phase-2 deliverable 3, exit criterion 2).
+		serverError(w, r, http.StatusBadGateway, "upstream_error", "could not list spaces", err)
+		return
+	}
+
+	out := make([]spaceDTO, 0, len(all))
+	for _, sp := range all {
+		role, err := a.role(r.Context(), sp)
+		if err != nil {
+			writeAccessError(w, r, err)
+			return
+		}
+		if role < cs3.RoleViewer {
+			continue
+		}
+		out = append(out, spaceDTO{ID: sp.ID, Name: sp.Name, Type: sp.Type, Role: roleName(role)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"spaces": out})
+}
+
+// targetDTO is the least-disclosure projection for GET /targets: only what the
+// UI needs to pick a target — never credentials, endpoint, bucket, or region
+// (decisions.md #12/#14; phase-2 deliverable 3).
+type targetDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// handleListTargets returns the backup targets granted to the authenticated
+// user. Grant checks are server-side via the authorizer; client input is never
+// trusted (phase-2 deliverable 4).
+func (s *Server) handleListTargets(w http.ResponseWriter, r *http.Request) {
+	id, ok := IdentityFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
+		return
+	}
+	if s.authorizer == nil {
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "target backend not configured", nil)
+		return
+	}
+
+	a, ok := accessFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing identity")
+		return
+	}
+
+	// The set of spaces the user belongs to feeds space-scoped grants. We derive
+	// it from CS3 grants (never client input); when no space reader is wired
+	// only all-users / per-user grants apply.
+	spaceIDs, err := a.memberSpaceIDs(r.Context())
+	if err != nil {
+		writeAccessError(w, r, err)
+		return
+	}
+
+	views, err := s.authorizer.VisibleTargets(r.Context(), id.UserID, spaceIDs)
+	if err != nil {
+		serverError(w, r, http.StatusBadGateway, "upstream_error", "could not list targets", err)
+		return
+	}
+
+	out := make([]targetDTO, 0, len(views))
+	for _, v := range views {
+		out = append(out, targetDTO{ID: v.ID, Name: v.Name})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"targets": out})
+}
+
+// handleAdminNotImplemented answers any admin path with no handler of its own.
+// It is only ever reached by an authenticated admin, so an unimplemented path
+// is a 404 rather than a hole in the gate.
+func (s *Server) handleAdminNotImplemented(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusNotFound, "not_found", "admin endpoint not implemented")
+}
+
+// --- response helpers ------------------------------------------------------
+
+// errorBody is the consistent error envelope. It never contains internal error
+// detail (phase-2 deliverable 3; AGENTS.md error rule).
+type errorBody struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	var b errorBody
+	b.Error.Code = code
+	b.Error.Message = message
+	writeJSON(w, status, b)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// ErrNotConfigured is returned by constructors when a required dependency is
+// missing. Exported for callers that wire the server.
+var ErrNotConfigured = errors.New("api: server dependency not configured")

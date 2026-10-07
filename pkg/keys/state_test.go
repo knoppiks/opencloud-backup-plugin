@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"opencloud-backup-plugin/internal/testutil"
-	"opencloud-backup-plugin/pkg/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/testutil"
 )
 
 var keyEpoch = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)

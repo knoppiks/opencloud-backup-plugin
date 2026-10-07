@@ -355,6 +355,37 @@ asserted by a dependency-graph test like the existing one for `takeout`.
 7. Verify: `go install github.com/knoppiks/opencloud-backup-plugin/cmd/decrypt@<branch>`
    works from a clean `GOPATH`.
 
+**Outcome (10.7, #82).** All seven done. Where it differs from the plan:
+
+- **Moved:** every former `pkg/` package except the three format packages,
+  with its tests and `testdata/`: `api`, `backup`, `cs3`, `cs3state`,
+  `instance`, `jobs`, `notify`, `objstore`, `ocversion` (with
+  `versions.yaml`), `restore`, `rotate`, `scheduler`, `snapshot` (+
+  `s3repo`), `spacecfg`, `state` (+ `statetest`), `targets`, and
+  `pkg/takeout/remote` → `internal/takeout/remote`. Path references in the
+  Makefile, the workflows, the fixture scripts, `.gitleaks.toml`,
+  `.gitattributes`, README, web comments and the planning docs that describe
+  the current layout follow. Older phase docs and the reviews keep the paths
+  they were written against.
+- **The frozen credentials file is untouched**, including its `_comment`,
+  which still says `go test ./pkg/targets …`: it is a frozen fixture, never
+  edited (10.4). The generator's flag is unchanged, only the package path is.
+  `.gitleaks.toml` allowlists both its new and its old path, since the
+  history scan still meets it under `pkg/targets/`.
+- **`cmd/decrypt`'s `ownPackages`** is now the full module paths, sorted;
+  the set is the same eight packages.
+- **Toolchain:** `toolchain go1.26.8` (the current 1.26 patch); CI, the
+  nightly fuzz and canary workflows and the Dockerfile's build stage (by
+  digest) name the same. `go 1.26` stays the language version.
+  `internal/buildinfo/toolchain_test.go` fails when the five places disagree,
+  until Renovate (Phase 11) keeps them aligned.
+- **`spikes/` deleted** with its `.golangci.yml`, `.dockerignore` and
+  `.gitignore` entries.
+- README's decrypt section names `go install …/cmd/decrypt@latest` next to
+  `make decrypt-release`.
+- **Verified** after pushing: `go install …/cmd/decrypt@<branch>` with an
+  empty `GOPATH` and module cache built a working binary (`-version`).
+
 ## 10.8 Lint and test plumbing
 
 - `.golangci.yml` adds: errorlint, contextcheck, gocritic, gosec (G115
@@ -391,7 +422,8 @@ asserted by a dependency-graph test like the existing one for `takeout`.
 - [x] `decrypt` dependency test passes (no S3/AWS/Azure).
       (10.6, #80: no S3 client or storage driver; the Azure SDK and
       Prometheus modules stay because kopia's core imports them.)
-- [ ] Module renamed; only `pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`
+- [x] Module renamed; only `pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`
       public; `go install …/cmd/decrypt` works; AGENTS.md and phase-1 updated.
+      (10.7, #82)
 - [ ] Extended lint set clean; depguard boundaries in place; integration
       tests under `-race`.

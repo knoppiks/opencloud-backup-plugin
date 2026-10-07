@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"opencloud-backup-plugin/internal/config"
-	"opencloud-backup-plugin/pkg/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
 )
 
 func quietLogger() *slog.Logger {

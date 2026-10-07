@@ -18,7 +18,6 @@ tmp/
 
 # Not part of the service.
 node_modules/
-spikes/
 .agents/
 deploy/
 docker-compose.dev.yml

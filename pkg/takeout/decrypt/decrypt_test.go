@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"opencloud-backup-plugin/pkg/keys"
-	"opencloud-backup-plugin/pkg/objstore"
-	"opencloud-backup-plugin/pkg/snapshot"
-	"opencloud-backup-plugin/pkg/takeout"
-	"opencloud-backup-plugin/pkg/takeout/remote"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/objstore"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/takeout/remote"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/takeout"
 )
 
 const (

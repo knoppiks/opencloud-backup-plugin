@@ -15,8 +15,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"opencloud-backup-plugin/internal/config"
-	"opencloud-backup-plugin/pkg/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
 )
 
 const (
@@ -48,7 +48,7 @@ func mountBasePath(h http.Handler, basePath string) http.Handler {
 //
 // A run's work directory holds kopia's cache — repository content, ciphertext,
 // but still the family's data — and, before R5, the target's credentials.
-// Credentials no longer go there at all (pkg/snapshot/handle.go); a memory-backed
+// Credentials no longer go there at all (internal/snapshot/handle.go); a memory-backed
 // filesystem takes care of the rest by making "left behind after a crash"
 // impossible rather than unlikely.
 func resolveWorkDir(cfg config.Backup, logger *slog.Logger) (string, error) {

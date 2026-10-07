@@ -40,27 +40,27 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"opencloud-backup-plugin/internal/buildinfo"
-	"opencloud-backup-plugin/internal/cli"
-	"opencloud-backup-plugin/internal/config"
-	"opencloud-backup-plugin/pkg/api"
-	"opencloud-backup-plugin/pkg/backup"
-	"opencloud-backup-plugin/pkg/cs3"
-	"opencloud-backup-plugin/pkg/cs3state"
-	"opencloud-backup-plugin/pkg/instance"
-	"opencloud-backup-plugin/pkg/jobs"
-	"opencloud-backup-plugin/pkg/keys"
-	"opencloud-backup-plugin/pkg/notify"
-	"opencloud-backup-plugin/pkg/objstore"
-	"opencloud-backup-plugin/pkg/ocversion"
-	"opencloud-backup-plugin/pkg/restore"
-	"opencloud-backup-plugin/pkg/scheduler"
-	"opencloud-backup-plugin/pkg/snapshot"
-	"opencloud-backup-plugin/pkg/snapshot/s3repo"
-	"opencloud-backup-plugin/pkg/spacecfg"
-	"opencloud-backup-plugin/pkg/state"
-	"opencloud-backup-plugin/pkg/takeout/remote"
-	"opencloud-backup-plugin/pkg/targets"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/api"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/backup"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/instance"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/jobs"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/notify"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/objstore"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/ocversion"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/restore"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/scheduler"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot/s3repo"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/spacecfg"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/takeout/remote"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/targets"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
 )
 
 // Shutdown budget.
@@ -344,7 +344,7 @@ func buildService(ctx context.Context, cfg config.Backupd, logger *slog.Logger, 
 		opts = append(opts, api.WithTokenValidator(v))
 
 		// The token's `sub` is not the OpenCloud user id, and every
-		// authorization decision is taken on the latter (pkg/api/users.go).
+		// authorization decision is taken on the latter (internal/api/users.go).
 		opts = append(opts, api.WithUserResolver(api.NewGraphUserResolver(cfg.OpenCloud.BaseURL, httpClient())))
 	} else {
 		logger.Warn("OIDC_ISSUER unset; authenticated routes will reject all requests")
@@ -352,7 +352,7 @@ func buildService(ctx context.Context, cfg config.Backupd, logger *slog.Logger, 
 
 	// --- admin resolver ---------------------------------------------------
 	// ADMIN_SUBJECT_ALLOWLIST holds OpenCloud user ids, despite its name,
-	// which predates the finding in pkg/api/users.go.
+	// which predates the finding in internal/api/users.go.
 	if ids := cfg.OpenCloud.AdminAllowlist; len(ids) > 0 {
 		opts = append(opts, api.WithAdminResolver(api.NewAllowlistAdminResolver(ids)))
 		logger.Info("admin detection: allow-list of OpenCloud user ids", "count", len(ids))
@@ -408,7 +408,7 @@ func buildService(ctx context.Context, cfg config.Backupd, logger *slog.Logger, 
 	// --- durable state (Phase 6) -----------------------------------------
 	// Everything the service remembers — schedules, run history, wrapped key
 	// envelopes, target records — lives in a dedicated OpenCloud Space. See
-	// pkg/cs3state for the trade-offs; the short version is that a scheduler
+	// internal/cs3state for the trade-offs; the short version is that a scheduler
 	// whose memory dies with the process cannot tell a missed run from a fresh
 	// install.
 	backing, err := deps.openState(cfg, cs3Client, logger)
@@ -440,7 +440,7 @@ func buildService(ctx context.Context, cfg config.Backupd, logger *slog.Logger, 
 		api.WithAuthorizer(targetStore),
 		api.WithTargetStore(targetStore),
 		// The admin's connection check. Read-only and coarse towards the API;
-		// the cause of a failure goes to this log only (pkg/objstore).
+		// the cause of a failure goes to this log only (internal/objstore).
 		api.WithTargetChecker(objstore.S3Checker{Logger: logger}),
 	)
 
@@ -645,7 +645,7 @@ func buildService(ctx context.Context, cfg config.Backupd, logger *slog.Logger, 
 	// --- readiness --------------------------------------------------------
 	opts = append(opts, api.WithReadiness(readiness(spaceReader)))
 
-	// Request lines and the cause of every 5xx answer (pkg/api/observe.go).
+	// Request lines and the cause of every 5xx answer (internal/api/observe.go).
 	opts = append(opts, api.WithLogger(logger))
 
 	return service{
@@ -715,7 +715,7 @@ func dialCS3(cfg config.CS3) (*cs3.Client, func(), error) {
 // is reachable from this service — scheme and host only, the path OpenCloud
 // returns is kept. It only applies to URLs handed out without a transfer
 // token, so it is harmless on OpenCloud up to 7.4, which hands out the public
-// data gateway with one (pkg/cs3/dataorigin.go).
+// data gateway with one (internal/cs3/dataorigin.go).
 func cs3ClientOptions(raw string) ([]cs3.ClientOption, error) {
 	opts := []cs3.ClientOption{cs3.WithHTTPClient(dataGatewayClient())}
 	if raw == "" {

@@ -12,12 +12,12 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"opencloud-backup-plugin/internal/buildinfo"
-	"opencloud-backup-plugin/internal/cli"
-	"opencloud-backup-plugin/pkg/keys"
-	"opencloud-backup-plugin/pkg/snapshot"
-	"opencloud-backup-plugin/pkg/takeout"
-	takeoutdecrypt "opencloud-backup-plugin/pkg/takeout/decrypt"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/takeout"
+	takeoutdecrypt "github.com/knoppiks/opencloud-backup-plugin/pkg/takeout/decrypt"
 )
 
 // pipeStdin feeds text to readRecoveryKey as a non-terminal stdin.

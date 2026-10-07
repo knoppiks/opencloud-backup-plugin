@@ -3,7 +3,7 @@
 # spike / integration tests need. Idempotent: re-running reuses the generated
 # config. Use ./down.sh to tear down (optionally purging config+data).
 #
-# Which OpenCloud: OC_LEG names a leg of pkg/ocversion/versions.yaml (or
+# Which OpenCloud: OC_LEG names a leg of internal/ocversion/versions.yaml (or
 # "canary"); unset means the file's default. That file is the only place an
 # OpenCloud image is pinned. A fixture stays on the leg it was initialised
 # with: switching needs ./down.sh --purge, because OpenCloud does not promise
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-PINS="../../../pkg/ocversion/versions.yaml"
+PINS="../../../internal/ocversion/versions.yaml"
 
 if ! command -v yq >/dev/null; then
   echo "up.sh needs yq (mikefarah/yq v4) to read ${PINS}" >&2

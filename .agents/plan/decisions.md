@@ -279,8 +279,8 @@ These refine *how* locked decisions are implemented; none reopens one.
   file is reported as failed rather than producing a snapshot that silently
   omits data. The error carries counts only, never the failing paths.
 
-- **The Space→target binding is user-owned and lives in `pkg/spacecfg`,**
-  separate from the admin-owned `pkg/targets`. A binding is only stored after a
+- **The Space→target binding is user-owned and lives in `internal/spacecfg`,**
+  separate from the admin-owned `internal/targets`. A binding is only stored after a
   server-side grant check (`targets.Authorizer.MayUse`); a client-supplied target
   id is never trusted, and "not granted" is indistinguishable from "no such
   target". This keeps decision #12's enforcement boundary explicit in the
@@ -365,12 +365,12 @@ decision.
 - **New decision #16 (locked): the service's own state lives in OpenCloud, over
   CS3 — not in a database.** Schedules, run history, wrapped key envelopes and
   target records are documents in a **dedicated Space** reached with the service
-  account (`pkg/cs3state`), behind the small `pkg/state` document-store
+  account (`internal/cs3state`), behind the small `internal/state` document-store
   interface. This *supersedes the phase-6 plan's "backend: SQLite"*.
   Rationale: the deployment already has one durable, operated, backed-up storage
   system; adding a database and its volume for a family-scale plugin is
   infrastructure nobody asked for.
-  **Validated against OpenCloud 7.3.0** (`pkg/cs3state` integration test): the
+  **Validated against OpenCloud 7.3.0** (`internal/cs3state` integration test): the
   service account can create folders, write, *overwrite*, list and delete, and
   run history survives a new store instance. Since R9 this is enforced: CI starts
   the pinned OpenCloud, runs these tests against it, and fails rather than skips
@@ -416,7 +416,7 @@ decision.
   The phase-6 plan said "notify space owner + admin" on failure. Space members
   get per-space events (run failed, backup stale). The **operator's notification
   records carry no space id and no user** (target unusable) — enforced in
-  `pkg/notify` by validation, not convention. Telling an admin *in a
+  `internal/notify` by validation, not convention. Telling an admin *in a
   notification* that this Space is failing would hand them exactly the visibility
   #15 denies them.
   Delivery: events are always **recorded** durably and delivered best-effort.
@@ -528,7 +528,7 @@ decision.
     the browser unwraps with the old RK, re-wraps the *same* DK under a new one,
     and posts the envelope alone. The DK is not sent on this path.
   - The **SRW and TW keys** rotate through `backupd rotate-srw` / `rotate-tw`
-    (`pkg/rotate`), which visit every Space or target and re-wrap in place.
+    (`internal/rotate`), which visit every Space or target and re-wrap in place.
   - The **Data Key** does not rotate. Re-keying it would mean re-uploading every
     backup, and no threat this system models is answered by it.
   Rationale: a key that cannot be replaced forces the wrong choice after a
@@ -1395,9 +1395,10 @@ link the S3 side either, and a test says so.
   out (AGENTS.md: no hand-rolled crypto or dedup). kopia's storage drivers,
   the AWS SDK and minio are gone and forbidden by test.
 - **Proposed, owner to confirm:** the target-facing code lives in
-  `pkg/snapshot/s3repo` (the S3 storage opener) and `pkg/takeout/remote`
+  `internal/snapshot/s3repo` (the S3 storage opener) and `internal/takeout/remote`
   (extract, envelope publishing); `pkg/takeout` is the format only. Both
-  new packages go to `internal/` with 10.7; #26's public set is unchanged.
+  new packages went to `internal/` with 10.7 (they were under `pkg/` until
+  then); #26's public set is unchanged.
 
 ---
 

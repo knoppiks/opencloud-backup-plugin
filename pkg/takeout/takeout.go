@@ -37,7 +37,7 @@ import (
 	"strings"
 	"time"
 
-	"opencloud-backup-plugin/pkg/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
 )
 
 const (

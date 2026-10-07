@@ -9,7 +9,7 @@
 // re-reads status while a run is under way and stops as soon as it is not.
 //
 // Role gates here decide what is *offered*. The server enforces each of them
-// again (pkg/api/access.go); a viewer who forged the request would get a 403.
+// again (internal/api/access.go); a viewer who forged the request would get a 403.
 import { computed, onMounted, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { ApiError, isApiError, type BackupStatus, type Job, type Space } from '../api'

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 
-	"opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
 )
 
 func main() {

@@ -3,7 +3,7 @@ name: OpenCloud canary
 # The early warning for CS3 changes nobody announces (review-2026-10.md O4):
 # the full OpenCloud suite and the browser E2E against the newest OpenCloud
 # release, followed by tag rather than pinned (the `canary` entry of
-# pkg/ocversion/versions.yaml). It does not gate anything. When it fails it
+# internal/ocversion/versions.yaml). It does not gate anything. When it fails it
 # opens one issue per upstream version, or comments on the one already open.
 
 on:
@@ -25,9 +25,9 @@ concurrency:
 
 env:
   # Keep in sync with ci.yml.
-  GO_VERSION: "1.26.0"
+  GO_VERSION: "1.26.8"
   NODE_VERSION: "24.17.0"
-  PINS: pkg/ocversion/versions.yaml
+  PINS: internal/ocversion/versions.yaml
 
 jobs:
   # Which release the canary's tag points at right now, so the issue can be

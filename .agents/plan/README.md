@@ -86,11 +86,11 @@ ingress, the setup race) and what was decided about each.
 **Target management (decisions.md #12–#15):** backup targets are managed in-app
 by an OpenCloud admin, who grants each target to all or specific users. The
 target store, access grants, and at-rest credential encryption (TW key) live in
-`pkg/targets`; admin identity reuses OpenCloud's admin role (validated by the
+`internal/targets`; admin identity reuses OpenCloud's admin role (validated by the
 admin-role spike). See the per-phase docs for where each piece is implemented.
 
 **Which target a Space uses** is the user's choice, not the admin's, so the
-binding lives separately in `pkg/spacecfg` (target id + time-based retention
+binding lives separately in `internal/spacecfg` (target id + time-based retention
 window). It is only stored after a server-side grant check.
 
 ## Rules that apply to every phase

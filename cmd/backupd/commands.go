@@ -16,9 +16,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"opencloud-backup-plugin/internal/buildinfo"
-	"opencloud-backup-plugin/internal/cli"
-	"opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
 )
 
 // program is the name messages are signed with.

@@ -1,6 +1,6 @@
 package keys
 
-// The durable keys.Store, on top of pkg/state.
+// The durable keys.Store, on top of internal/state.
 //
 // What is persisted is exactly what the in-memory store holds: wrapped
 // envelopes. The SRW envelope is ciphertext only openable with the cluster/KMS
@@ -37,7 +37,7 @@ import (
 	"sort"
 	"time"
 
-	"opencloud-backup-plugin/pkg/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
 )
 
 const (
