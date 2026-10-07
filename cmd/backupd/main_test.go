@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"opencloud-backup-plugin/internal/buildinfo"
 	"opencloud-backup-plugin/internal/config"
 	"opencloud-backup-plugin/pkg/api"
 	"opencloud-backup-plugin/pkg/cs3"
@@ -213,6 +214,10 @@ func TestServe_LogsTheEffectiveConfigurationWithoutSecrets(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Errorf("configuration line lacks %s: %s", want, line)
 		}
+	}
+	// Which build is running comes first (compatibility-policy.md §1).
+	if !strings.Contains(logs.String(), `"msg":"starting backupd","version":"`+buildinfo.DevVersion+`"`) {
+		t.Errorf("no version line in %s", logs.String())
 	}
 }
 

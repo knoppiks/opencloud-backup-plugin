@@ -27,6 +27,8 @@ import (
 
 	"golang.org/x/term"
 
+	"opencloud-backup-plugin/internal/buildinfo"
+	"opencloud-backup-plugin/internal/cli"
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/takeout"
@@ -34,11 +36,11 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "decrypt: %v\n", err)
-		os.Exit(1)
-	}
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
+
+// program is the name messages are signed with.
+const program = "decrypt"
 
 type config struct {
 	in         string
@@ -48,16 +50,26 @@ type config struct {
 	verify     bool
 	workDir    string
 	envelope   string
+	version    bool
 }
 
-func run(args []string) error {
-	fs := flag.NewFlagSet("decrypt", flag.ContinueOnError)
+// run is the whole program behind main, returning its exit status
+// (internal/cli). It reads the Recovery Key from stdin, writes what was asked
+// for to stdout, and everything else to stderr.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return cli.Report(stderr, program, execute(ctx, args, stdin, stdout, stderr))
+}
+
+// flags defines the CLI's entire input surface. The Recovery Key is not on
+// it, and must never be.
+func flags(cfg *config) *flag.FlagSet {
+	fs := flag.NewFlagSet(program, flag.ContinueOnError)
 	fs.Usage = func() {
-		_, _ = fmt.Fprint(os.Stderr, usage)
+		_, _ = fmt.Fprint(fs.Output(), usage)
 		fs.PrintDefaults()
 	}
-
-	var cfg config
 	fs.StringVar(&cfg.in, "in", "", "take-out directory (from the administrator)")
 	fs.StringVar(&cfg.out, "out", "", "directory to restore your files into")
 	fs.StringVar(&cfg.snapshotID, "snapshot", "", "snapshot to restore (default: the newest)")
@@ -66,67 +78,87 @@ func run(args []string) error {
 	fs.StringVar(&cfg.workDir, "work-dir", "", "directory for temporary files (default: system temp)")
 	fs.StringVar(&cfg.envelope, "envelope", "",
 		"recovery.ocbke downloaded from Backup Vault, used instead of the take-out's own")
+	fs.BoolVar(&cfg.version, "version", false, "print the version and exit")
+	return fs
+}
 
-	if err := fs.Parse(args); err != nil {
+func execute(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	var cfg config
+	if err := cli.Parse(flags(&cfg), args, stdout, stderr); err != nil {
+		return err
+	}
+	if cfg.version {
+		_, err := fmt.Fprintln(stdout, buildinfo.Get().Line(program))
 		return err
 	}
 	if cfg.in == "" {
-		return errors.New("-in is required (the take-out directory)")
+		return cli.Usagef("-in is required (the take-out directory)")
 	}
 	if !cfg.list && !cfg.verify && cfg.out == "" {
-		return errors.New("-out is required (where to restore your files)")
+		return cli.Usagef("-out is required (where to restore your files)")
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	// Verification needs no key at all, so it never prompts.
 	if cfg.verify {
-		return verify(ctx, cfg.in)
+		return verify(ctx, cfg.in, stdout)
 	}
 
-	rk, err := readRecoveryKey(os.Stdin, os.Stderr)
+	rk, err := readRecoveryKey(stdin, stderr)
 	if err != nil {
 		return err
 	}
 	defer keys.Zeroize(rk)
 
 	if cfg.list {
-		return list(ctx, cfg, rk)
+		return list(ctx, cfg, rk, stdout)
 	}
-	return decrypt(ctx, cfg, rk)
+	return decrypt(ctx, cfg, rk, stdout)
 }
 
-func verify(ctx context.Context, dir string) error {
+func verify(ctx context.Context, dir string, stdout io.Writer) error {
 	if err := takeout.Verify(ctx, dir); err != nil {
 		return explain(err)
 	}
-	fmt.Println("the take-out is complete and matches its manifest")
-	return nil
+	_, err := fmt.Fprintln(stdout, "the take-out is complete and matches its manifest")
+	return err
 }
 
-func list(ctx context.Context, cfg config, rk []byte) error {
+func list(ctx context.Context, cfg config, rk []byte, stdout io.Writer) error {
 	snaps, err := takeoutdecrypt.ListSnapshots(ctx, cfg.options(rk))
 	if err != nil {
 		return explain(err)
 	}
-	fmt.Printf("%-40s %-22s %10s %14s\n", "SNAPSHOT", "TAKEN", "FILES", "SIZE")
+	w := &errWriter{w: stdout}
+	w.printf("%-40s %-22s %10s %14s\n", "SNAPSHOT", "TAKEN", "FILES", "SIZE")
 	for _, s := range snaps {
-		fmt.Printf("%-40s %-22s %10d %14s\n",
+		w.printf("%-40s %-22s %10d %14s\n",
 			s.ID, s.StartTime.Local().Format(time.RFC3339), s.FileCount, humanBytes(s.TotalBytes))
 	}
-	return nil
+	return w.err
 }
 
-func decrypt(ctx context.Context, cfg config, rk []byte) error {
+func decrypt(ctx context.Context, cfg config, rk []byte, stdout io.Writer) error {
 	res, err := takeoutdecrypt.Decrypt(ctx, cfg.options(rk))
 	if err != nil {
 		return explain(err)
 	}
 
-	fmt.Printf("restored snapshot %s (taken %s) to %s\n",
+	_, err = fmt.Fprintf(stdout, "restored snapshot %s (taken %s) to %s\n",
 		res.SnapshotID, res.StartTime.Local().Format(time.RFC3339), res.OutDir)
-	return nil
+	return err
+}
+
+// errWriter keeps the first write error, so a listing is not a wall of
+// error checks.
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) printf(format string, a ...any) {
+	if e.err == nil {
+		_, e.err = fmt.Fprintf(e.w, format, a...)
+	}
 }
 
 // options turns the flags into the library's options.
@@ -144,12 +176,12 @@ func (cfg config) options(rk []byte) takeoutdecrypt.Options {
 // readRecoveryKey prompts for the Recovery Key without echoing it. When stdin is
 // not a terminal (a script, a test) it reads one line instead, so the key can be
 // piped in without ever appearing in a command line.
-func readRecoveryKey(in *os.File, out io.Writer) ([]byte, error) {
+func readRecoveryKey(in io.Reader, out io.Writer) ([]byte, error) {
 	var raw []byte
 
-	if term.IsTerminal(int(in.Fd())) {
+	if fd, ok := terminal(in); ok {
 		_, _ = fmt.Fprint(out, "Recovery Key (input hidden): ")
-		typed, err := term.ReadPassword(int(in.Fd()))
+		typed, err := term.ReadPassword(fd)
 		_, _ = fmt.Fprintln(out)
 		if err != nil {
 			return nil, fmt.Errorf("could not read the recovery key: %w", err)
@@ -173,6 +205,16 @@ func readRecoveryKey(in *os.File, out io.Writer) ([]byte, error) {
 			"       recovery keys look like ocbk1-XXXXX-XXXXX-...; check for typos", err)
 	}
 	return secret, nil
+}
+
+// terminal returns in's file descriptor when in is an interactive terminal.
+func terminal(in io.Reader) (int, bool) {
+	f, ok := in.(interface{ Fd() uintptr })
+	if !ok {
+		return 0, false
+	}
+	fd := int(f.Fd())
+	return fd, term.IsTerminal(fd)
 }
 
 // explain turns a library error into plain-language advice. The audience is a
@@ -240,6 +282,9 @@ never stored.
 If your Recovery Key was replaced recently, the take-out may still hold the
 envelope for the old key. Download recovery.ocbke for the space from Backup
 Vault ("Recovery Key" page) and pass it with -envelope.
+
+Exit status: 0 done, 1 something went wrong (for example a wrong Recovery Key
+or a damaged take-out), 2 the command line was wrong.
 
 Flags:
 `

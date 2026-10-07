@@ -4,9 +4,10 @@
 // added the backup pipeline (CS3 -> kopia -> S3 target); Phase 6 makes it run
 // unattended: durable state, a scheduler, and notifications.
 //
-// With an argument it is the operator CLI instead (rotate.go: rotate-srw,
-// rotate-tw). The maintenance commands ship in the same binary because they need
-// the same configuration, the same state Space and the same custody keys.
+// With an argument it is the operator CLI instead (commands.go: `backupd help`
+// lists the commands). The maintenance commands ship in the same binary because
+// they need the same configuration, the same state Space and the same custody
+// keys.
 //
 // Secrets arrive only through Secret-backed environment variables and are never
 // logged: SRW_KEY / SRW_KEY_OLD (Data-Key custody), TW_KEY / TW_KEY_OLD
@@ -39,6 +40,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"opencloud-backup-plugin/internal/buildinfo"
+	"opencloud-backup-plugin/internal/cli"
 	"opencloud-backup-plugin/internal/config"
 	"opencloud-backup-plugin/pkg/api"
 	"opencloud-backup-plugin/pkg/backup"
@@ -125,41 +128,37 @@ func newLogger(stderr io.Writer) *slog.Logger {
 // run is the whole program behind main, returning its exit code. main is the
 // only place that exits, so every deferred cleanup on the way here has run —
 // in particular the one that withdraws this instance's registration.
+//
+// With no arguments the binary is the service; with one it is an operator
+// command (commands.go). Exit status is internal/cli's.
 func run(args, environ []string, stdout, stderr io.Writer) int {
-	logger := newLogger(stderr)
+	if len(args) > 0 {
+		return runCommandLine(args, environ, stdout, stderr)
+	}
 
-	// One configuration for the service and every command, read and checked
-	// before anything else: every diagnosis after a misconfiguration would be
-	// of a symptom.
+	logger := newLogger(stderr)
+	// One configuration for the service, read and checked before anything
+	// else: every diagnosis after a misconfiguration would be of a symptom.
 	cfg, err := config.LoadBackupd(environ)
 	if err != nil {
 		logger.Error("invalid configuration", "err", err)
-		return 1
-	}
-
-	// With no arguments the binary is the service. With one it is an operator
-	// tool: the maintenance commands ship in the same image because they need
-	// the same configuration, the same state Space and the same custody keys.
-	if len(args) > 0 {
-		if err := runCommand(context.Background(), cfg, args[0], args[1:], logger, stdout); err != nil {
-			logger.Error("command failed", "command", args[0], "err", err)
-			return 1
-		}
-		return 0
+		return cli.ExitFailure
 	}
 	if err := serve(cfg, logger, productionStartup()); err != nil {
 		logger.Error("service stopped with an error", "err", err)
-		return 1
+		return cli.ExitFailure
 	}
-	return 0
+	return cli.ExitOK
 }
 
 // serve runs the API and, when configured, the scheduler until a signal
 // arrives. Every return path, including a failed startup, has released what
 // buildService acquired.
 func serve(cfg config.Backupd, logger *slog.Logger, deps startupDeps) error {
-	// The effective configuration, once, with every secret shown only as
-	// set or unset (config.Secret redacts itself).
+	// Which build this is, then the effective configuration, once, with every
+	// secret shown only as set or unset (config.Secret redacts itself).
+	build := buildinfo.Get()
+	logger.Info("starting backupd", "version", build.Version, "commit", build.Commit, "go", build.GoVersion)
 	logger.Info("configuration", "config", cfg)
 
 	svc, cleanup, err := buildService(context.Background(), cfg, logger, deps)

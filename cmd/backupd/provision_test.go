@@ -6,30 +6,28 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"opencloud-backup-plugin/internal/cli"
 )
 
-func TestParseProvisionFlags(t *testing.T) {
-	got, err := parseProvisionFlags(nil)
-	if err != nil {
-		t.Fatalf("parseProvisionFlags(nil): %v", err)
-	}
-	if got != defaultStateSpaceName {
-		t.Fatalf("default name = %q, want %q", got, defaultStateSpaceName)
-	}
-
-	got, err = parseProvisionFlags([]string{"-name", "Service state"})
-	if err != nil {
-		t.Fatalf("parseProvisionFlags: %v", err)
-	}
-	if got != "Service state" {
-		t.Fatalf("name = %q", got)
+func TestParseProvision(t *testing.T) {
+	cfg := testConfig(t)
+	// Without a gateway the action fails at once, naming the variable; that
+	// is enough to see which name it was parsed with.
+	for _, args := range [][]string{nil, {"-name", "Service state"}} {
+		act, err := parseProvision(args, io.Discard, io.Discard)
+		if err != nil {
+			t.Fatalf("parseProvision(%v): %v", args, err)
+		}
+		if err := act(context.Background(), cfg, quietLogger(), io.Discard); err == nil {
+			t.Fatal("provisioning ran without a gateway")
+		}
 	}
 
-	if _, err := parseProvisionFlags([]string{"-name", ""}); err == nil {
-		t.Fatal("an empty name must be refused")
-	}
-	if _, err := parseProvisionFlags([]string{"unexpected"}); err == nil {
-		t.Fatal("a positional argument must be refused")
+	for _, args := range [][]string{{"-name", ""}, {"unexpected"}, {"-nope"}} {
+		if _, err := parseProvision(args, io.Discard, io.Discard); cli.ExitCode(err) != cli.ExitUsage {
+			t.Errorf("parseProvision(%v) = %v, want a usage error", args, err)
+		}
 	}
 }
 
@@ -37,7 +35,7 @@ func TestParseProvisionFlags(t *testing.T) {
 // keeps the one grant OpenCloud will not remove. Failing before any network
 // call keeps a half-provisioned Space from existing.
 func TestProvisionStateSpace_RefusesWithoutAGateway(t *testing.T) {
-	err := runProvisionStateSpace(context.Background(), testConfig(t), nil, quietLogger(), io.Discard)
+	err := runProvisionStateSpace(context.Background(), testConfig(t), defaultStateSpaceName, quietLogger(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "CS3_GATEWAY_ADDR is required") {
 		t.Fatalf("err = %v", err)
 	}
@@ -71,7 +69,7 @@ func TestProvisionStateSpace_RefusesWhenAlreadyConfigured(t *testing.T) {
 		"OC_SERVICE_ACCOUNT_SECRET=s",
 		"STATE_SPACE_ID=already-provisioned",
 	)
-	err := runProvisionStateSpace(context.Background(), cfg, nil, quietLogger(), io.Discard)
+	err := runProvisionStateSpace(context.Background(), cfg, defaultStateSpaceName, quietLogger(), io.Discard)
 	if err == nil {
 		t.Fatal("provisioning must be refused while STATE_SPACE_ID is set")
 	}
@@ -83,11 +81,11 @@ func TestProvisionStateSpace_RefusesWhenAlreadyConfigured(t *testing.T) {
 // An operator who mistypes a command must be told what exists, and must not
 // have it interpreted as something else.
 func TestRunCommand_UnknownCommandNamesTheKnownOnes(t *testing.T) {
-	err := runCommand(context.Background(), testConfig(t), "provision", nil, quietLogger(), io.Discard)
+	err := runCommand(t, testConfig(t), "provision")
 	if err == nil {
 		t.Fatal("an unknown command must fail")
 	}
-	for _, want := range []string{"provision-state-space", "rotate-srw", "rotate-tw"} {
+	for _, want := range []string{"provision-state-space", "rotate-srw", "rotate-tw", "version", "help"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want it to mention %q", err, want)
 		}

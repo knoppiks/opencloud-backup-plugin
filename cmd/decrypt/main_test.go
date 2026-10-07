@@ -10,7 +10,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"testing/iotest"
 
+	"opencloud-backup-plugin/internal/buildinfo"
+	"opencloud-backup-plugin/internal/cli"
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/takeout"
@@ -108,20 +111,86 @@ func TestRecoveryKeyIsNotAFlag(t *testing.T) {
 	}
 }
 
-func TestRunRequiresInputAndOutput(t *testing.T) {
-	if err := run(nil); err == nil || !strings.Contains(err.Error(), "-in") {
-		t.Fatalf("err = %v, want a complaint about -in", err)
+func TestReadRecoveryKeyFromAnyReader(t *testing.T) {
+	display, secret, err := keys.GenerateRecoveryKey()
+	if err != nil {
+		t.Fatalf("GenerateRecoveryKey: %v", err)
 	}
-	if err := run([]string{"-in", t.TempDir()}); err == nil || !strings.Contains(err.Error(), "-out") {
-		t.Fatalf("err = %v, want a complaint about -out", err)
+	// No trailing newline: a script may pipe the key without one.
+	got, err := readRecoveryKey(strings.NewReader(display), io.Discard)
+	if err != nil {
+		t.Fatalf("readRecoveryKey: %v", err)
+	}
+	if string(got) != string(secret) {
+		t.Fatal("decoded recovery key does not match the generated one")
+	}
+}
+
+func TestReadRecoveryKeyReportsAReadFailure(t *testing.T) {
+	_, err := readRecoveryKey(iotest.ErrReader(errors.New("stdin closed")), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "could not read the recovery key") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// Wrong usage is exit status 2, and says what was wrong.
+func TestRunRequiresInputAndOutput(t *testing.T) {
+	r := runDecrypt(t, "")
+	if r.code != cli.ExitUsage || !strings.Contains(r.stderr, "-in is required") {
+		t.Fatalf("run = %d, stderr %q", r.code, r.stderr)
+	}
+	r = runDecrypt(t, "", "-in", t.TempDir())
+	if r.code != cli.ExitUsage || !strings.Contains(r.stderr, "-out is required") {
+		t.Fatalf("run = %d, stderr %q", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stderr, "Run 'decrypt -h' for usage.") {
+		t.Fatalf("stderr = %q, want a pointer to the help", r.stderr)
+	}
+}
+
+func TestRunRejectsUnknownFlagsAndStrayArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"-in", "x", "-out", "y", "-recovery-key", "z"},
+		{"-in", "x", "-out", "y", "extra"},
+	} {
+		r := runDecrypt(t, "", args...)
+		if r.code != cli.ExitUsage {
+			t.Errorf("%v: run = %d, want %d (stderr %q)", args, r.code, cli.ExitUsage, r.stderr)
+		}
+		if r.stdout != "" {
+			t.Errorf("%v: stdout = %q", args, r.stdout)
+		}
+	}
+}
+
+// Help is not an error: exit 0, the text on stdout.
+func TestHelpExitsZero(t *testing.T) {
+	r := runDecrypt(t, "", "-h")
+	if r.code != cli.ExitOK {
+		t.Fatalf("run -h = %d", r.code)
+	}
+	for _, want := range []string{"restore your files from a take-out", "-envelope", "Exit status"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("help does not mention %q:\n%s", want, r.stdout)
+		}
+	}
+}
+
+func TestVersion(t *testing.T) {
+	r := runDecrypt(t, "", "-version")
+	if r.code != cli.ExitOK || !strings.HasPrefix(r.stdout, "decrypt "+buildinfo.DevVersion+" (") {
+		t.Fatalf("run -version = %d, stdout %q", r.code, r.stdout)
 	}
 }
 
 // -verify needs no key, so it must not prompt for one.
 func TestVerifyOnNonTakeOutDirectory(t *testing.T) {
-	err := run([]string{"-in", t.TempDir(), "-verify"})
-	if !strings.Contains(errString(err), "not a take-out") {
-		t.Fatalf("err = %v, want the not-a-take-out explanation", err)
+	r := runDecrypt(t, "", "-in", t.TempDir(), "-verify")
+	if r.code != cli.ExitFailure || !strings.Contains(r.stderr, "not a take-out") {
+		t.Fatalf("run = %d, stderr %q, want the not-a-take-out explanation", r.code, r.stderr)
+	}
+	if strings.Contains(r.stderr, "Recovery Key") {
+		t.Fatal("-verify prompted for a key")
 	}
 }
 
@@ -171,11 +240,4 @@ func TestHumanBytes(t *testing.T) {
 			t.Errorf("humanBytes(%d) = %q, want %q", in, got, want)
 		}
 	}
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }
