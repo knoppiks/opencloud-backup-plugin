@@ -8,11 +8,11 @@ import (
 	"errors"
 	"flag"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
 	"opencloud-backup-plugin/internal/cli"
+	"opencloud-backup-plugin/internal/testutil"
 	"opencloud-backup-plugin/pkg/takeout"
 )
 
@@ -81,7 +81,7 @@ var forbiddenDeps = []string{
 }
 
 func TestBinaryDoesNotLinkTheDecryptPath(t *testing.T) {
-	deps := packageDeps(t, ".")
+	deps := testutil.PackageDeps(t, ".")
 	for _, forbidden := range forbiddenDeps {
 		if deps[forbidden] {
 			t.Errorf("takeout links %s; the admin's tool must not be built with the ability to decrypt", forbidden)
@@ -90,32 +90,11 @@ func TestBinaryDoesNotLinkTheDecryptPath(t *testing.T) {
 
 	// A control: the check above must be failing for the right reason. If the
 	// decrypt package were renamed or removed, the loop would pass vacuously.
-	userSide := packageDeps(t, "../decrypt")
+	userSide := testutil.PackageDeps(t, "../decrypt")
 	if !userSide["opencloud-backup-plugin/pkg/takeout/decrypt"] {
 		t.Fatal("the user-side decrypt CLI no longer links pkg/takeout/decrypt; " +
 			"the forbidden-dependency list above is now checking nothing")
 	}
-}
-
-// packageDeps returns the full transitive dependency set of a package.
-func packageDeps(t *testing.T, pkg string) map[string]bool {
-	t.Helper()
-
-	goBin, err := exec.LookPath("go")
-	if err != nil {
-		// The source audit still applies; only the structural check is lost.
-		t.Skipf("go toolchain not on PATH: %v", err)
-	}
-
-	out, err := exec.Command(goBin, "list", "-deps", pkg).Output()
-	if err != nil {
-		t.Fatalf("go list -deps %s: %v", pkg, err)
-	}
-	deps := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		deps[line] = true
-	}
-	return deps
 }
 
 func TestRequireFlagsNamesWhatIsMissing(t *testing.T) {

@@ -15,7 +15,7 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/spacecfg"
-	"opencloud-backup-plugin/pkg/takeout"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -324,14 +324,14 @@ type fakePublisher struct {
 }
 
 type publishCall struct {
-	target  takeout.PublishTarget
+	target  remote.PublishTarget
 	spaceID string
 	blob    []byte
 }
 
-var _ takeout.Publisher = (*fakePublisher)(nil)
+var _ remote.Publisher = (*fakePublisher)(nil)
 
-func (p *fakePublisher) Publish(_ context.Context, target takeout.PublishTarget, spaceID string, blob []byte) error {
+func (p *fakePublisher) Publish(_ context.Context, target remote.PublishTarget, spaceID string, blob []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls = append(p.calls, publishCall{

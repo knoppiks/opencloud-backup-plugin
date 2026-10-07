@@ -48,10 +48,10 @@ old code. Where it differs from the table:
   member-facing `VisibleTargets` still skips it, so one corrupt record does
   not take the target list from every member.
 - **F4.** As planned. The fuzz target for `ReadManifest` is 10.4's.
-- **F5.** Also applied to kopia's S3 driver (`snapshot.S3Opener`), which has
-  the same fallback (env, then IAM/IMDS) — the server-side path the review
-  mentions. That check is local to `pkg/snapshot` so the decrypt path does
-  not import `objstore` (10.6). The admin connection check reports missing
+- **F5.** Also applied to kopia's S3 driver (`snapshot.S3Opener`, since
+  10.6 `s3repo.Opener`), which has the same fallback (env, then IAM/IMDS) —
+  the server-side path the review mentions. That check is local to the
+  opener so the decrypt path does not import `objstore` (10.6). The admin connection check reports missing
   credentials as `auth_failed`.
 - **F6.** As planned; the browser E2E setup now reads the id as the whole of
   stdout instead of its last line.
@@ -300,6 +300,39 @@ open of a filesystem repository and the envelope unwrap are all it needs.
 Target: no AWS SDK, no Azure, no Prometheus in `go list -deps ./cmd/decrypt`,
 asserted by a dependency-graph test like the existing one for `takeout`.
 
+**Outcome (10.6, #80).** No AWS SDK, no S3 client, no S3 storage driver in
+`decrypt`; **Azure and Prometheus stay**. Where it differs from the plan:
+
+- **Azure and Prometheus cannot go without replacing kopia's repository
+  reader.** They are not pulled in by a storage driver but by kopia's core:
+  `kopia/repo/blob` (every storage) imports the Azure SDK's blob error types,
+  and `kopia/repo` imports `kopia/internal/metrics`, which is Prometheus
+  (gRPC comes the same way, through `kopia/internal/grpcapi`). Opening a
+  repository at all needs both packages. *Proposed, owner to confirm:*
+  accept them, rather than patch or fork kopia; hand-rolling the reader is
+  ruled out by AGENTS.md. The test therefore forbids kopia's storage
+  *drivers* (S3, Azure, GCS, B2, gdrive, SFTP, WebDAV, rclone) but not the
+  two modules. Worth re-checking on each kopia upgrade.
+- **Two packages split off**, both *proposed, owner to confirm* as names:
+  - `pkg/snapshot/s3repo` — the S3 `StorageOpener` (was
+    `snapshot.S3Opener`, now `s3repo.Opener`, with its
+    `ErrMissingCredentials`). `pkg/snapshot` keeps the engine, the
+    filesystem openers and the key layout, which decrypt uses.
+  - `pkg/takeout/remote` — `Extract` and envelope publishing (`Publisher`,
+    `S3Publisher`, `PublishTo`), the target-facing half. `pkg/takeout` keeps
+    the format: manifest, layout, sentinels, and `Verify`, which both CLIs
+    run. Its tests use the frozen v1 Take-Out instead of extracting one.
+  Both are on the move-to-`internal/` list of 10.7; decision #26's public
+  set (`pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`) is unchanged.
+- **Two tests in `cmd/decrypt`:** one forbids the target-facing import paths
+  above (with a control that `takeout` still links them, so a rename cannot
+  make it vacuous); one pins the exact list of this module's packages
+  `decrypt` is built from, so a new one is a reviewed decision rather than
+  the side effect of an import further down. The `go list -deps` helper
+  moved to `internal/testutil` and `cmd/takeout`'s audit uses it too.
+- **Effect:** third-party and module packages in `go list -deps` 451 → 326;
+  stripped linux/amd64 binary 21.8 MB → 19.1 MB.
+
 ## 10.7 Module path and layout (decision #26)
 
 1. `go.mod`: `module github.com/knoppiks/opencloud-backup-plugin`. Update
@@ -355,7 +388,9 @@ asserted by a dependency-graph test like the existing one for `takeout`.
 - [x] Every binary reports its version; exit status 0/1/2 documented;
       `-plain-http` with `-insecure` deprecated; `decrypt` and `takeout`
       unit coverage ≥ 80 %. (10.5, #78)
-- [ ] `decrypt` dependency test passes (no S3/AWS/Azure).
+- [x] `decrypt` dependency test passes (no S3/AWS/Azure).
+      (10.6, #80: no S3 client or storage driver; the Azure SDK and
+      Prometheus modules stay because kopia's core imports them.)
 - [ ] Module renamed; only `pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`
       public; `go install …/cmd/decrypt` works; AGENTS.md and phase-1 updated.
 - [ ] Extended lint set clean; depguard boundaries in place; integration

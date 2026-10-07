@@ -41,6 +41,7 @@ import (
 	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/takeout"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 )
 
 // frozenTakeOuts lists every fixture ever frozen. Append only: removing a
@@ -211,7 +212,7 @@ func TestFreezeTakeOut(t *testing.T) {
 	}
 	f.snapIDs = append(f.snapIDs, info.ID)
 
-	if _, err := takeout.Extract(ctx, takeout.ExtractOptions{
+	if _, err := remote.Extract(ctx, remote.ExtractOptions{
 		Repos:    snapshot.FilesystemOpener{Root: f.bucket},
 		Objects:  objstore.DirStore{Root: f.bucket},
 		Location: snapshot.Location{Prefix: testPrefix},

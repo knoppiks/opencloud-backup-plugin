@@ -1,4 +1,4 @@
-package takeout
+package remote
 
 // The admin Take-Out (Path A, step 1). It copies a Space's ciphertext out of
 // the S3 target and nothing else:
@@ -26,6 +26,7 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/takeout"
 )
 
 // ExtractOptions configures a Take-Out.
@@ -57,15 +58,15 @@ type ExtractOptions struct {
 
 // Extract copies a Space's repository and key envelope out of the target into a
 // self-contained Take-Out directory, and returns the manifest it wrote.
-func Extract(ctx context.Context, opts ExtractOptions) (Manifest, error) {
+func Extract(ctx context.Context, opts ExtractOptions) (takeout.Manifest, error) {
 	if opts.Repos == nil {
-		return Manifest{}, fmt.Errorf("takeout: repository opener is required")
+		return takeout.Manifest{}, fmt.Errorf("takeout: repository opener is required")
 	}
 	if opts.SpaceID == "" {
-		return Manifest{}, fmt.Errorf("takeout: space id is required")
+		return takeout.Manifest{}, fmt.Errorf("takeout: space id is required")
 	}
 	if opts.OutDir == "" {
-		return Manifest{}, fmt.Errorf("takeout: output directory is required")
+		return takeout.Manifest{}, fmt.Errorf("takeout: output directory is required")
 	}
 	logger := opts.Logger
 	if logger == nil {
@@ -81,42 +82,42 @@ func Extract(ctx context.Context, opts ExtractOptions) (Manifest, error) {
 
 	envelope, err := readEnvelope(ctx, opts.Objects, snapshot.EnvelopeKey(opts.Location, ref), opts.AllowMissingEnvelope)
 	if err != nil {
-		return Manifest{}, err
+		return takeout.Manifest{}, err
 	}
 
 	if err := os.MkdirAll(opts.OutDir, 0o700); err != nil {
-		return Manifest{}, fmt.Errorf("takeout: create output directory: %w", err)
+		return takeout.Manifest{}, fmt.Errorf("takeout: create output directory: %w", err)
 	}
 
 	src, err := opts.Repos.Open(ctx, snapshot.Repo{Location: opts.Location, Space: ref}, false)
 	if err != nil {
-		return Manifest{}, fmt.Errorf("takeout: open target repository: %w", err)
+		return takeout.Manifest{}, fmt.Errorf("takeout: open target repository: %w", err)
 	}
 	defer func() { _ = src.Close(context.WithoutCancel(ctx)) }()
 
-	blobs, err := snapshot.CopyRepo(ctx, src, filepath.Join(opts.OutDir, RepoDir),
+	blobs, err := snapshot.CopyRepo(ctx, src, filepath.Join(opts.OutDir, takeout.RepoDir),
 		func(count int, bytes int64) {
 			if count%500 == 0 {
 				logger.Info("take-out progress", "blobs", count, "bytes", bytes)
 			}
 		})
 	if err != nil {
-		return Manifest{}, fmt.Errorf("takeout: copy repository: %w", err)
+		return takeout.Manifest{}, fmt.Errorf("takeout: copy repository: %w", err)
 	}
 
-	manifest := Manifest{
-		Format:    ManifestFormat,
-		Version:   ManifestVersion,
+	manifest := takeout.Manifest{
+		Format:    takeout.ManifestFormat,
+		Version:   takeout.ManifestVersion,
 		SpaceID:   opts.SpaceID,
 		CreatedAt: now().UTC(),
-		Source: SourceRef{
+		Source: takeout.SourceRef{
 			Endpoint:    redacted.Endpoint,
 			Bucket:      redacted.Bucket,
 			Prefix:      redacted.Prefix,
 			RepoPrefix:  snapshot.RepoPrefix(opts.Location, ref),
 			EnvelopeKey: snapshot.EnvelopeKey(opts.Location, ref),
 		},
-		RepoDir: RepoDir,
+		RepoDir: takeout.RepoDir,
 		Blobs:   blobs,
 	}
 	for _, b := range blobs {
@@ -125,18 +126,18 @@ func Extract(ctx context.Context, opts ExtractOptions) (Manifest, error) {
 	manifest.BlobCount = len(blobs)
 
 	if envelope != nil {
-		if err := os.WriteFile(filepath.Join(opts.OutDir, EnvelopeFile), envelope.blob, 0o600); err != nil {
-			return Manifest{}, fmt.Errorf("takeout: write key envelope: %w", err)
+		if err := os.WriteFile(filepath.Join(opts.OutDir, takeout.EnvelopeFile), envelope.blob, 0o600); err != nil {
+			return takeout.Manifest{}, fmt.Errorf("takeout: write key envelope: %w", err)
 		}
-		manifest.EnvelopeRef = EnvelopeFile
+		manifest.EnvelopeRef = takeout.EnvelopeFile
 		manifest.Envelope = &envelope.ref
 	} else {
 		logger.Warn("no key envelope found; this take-out cannot be decrypted on its own",
 			"space", opts.SpaceID)
 	}
 
-	if err := WriteManifest(opts.OutDir, manifest); err != nil {
-		return Manifest{}, err
+	if err := takeout.WriteManifest(opts.OutDir, manifest); err != nil {
+		return takeout.Manifest{}, err
 	}
 
 	logger.Info("take-out complete",
@@ -147,7 +148,7 @@ func Extract(ctx context.Context, opts ExtractOptions) (Manifest, error) {
 // envelopeCopy is the fetched envelope plus its key-material-free description.
 type envelopeCopy struct {
 	blob []byte
-	ref  EnvelopeRef
+	ref  takeout.EnvelopeRef
 }
 
 // readEnvelope fetches and validates the Space's RK-wrapped Data Key envelope.
@@ -167,7 +168,7 @@ func readEnvelope(ctx context.Context, src objstore.Store, key string, allowMiss
 			if allowMissing {
 				return nil, nil
 			}
-			return nil, ErrNoEnvelope
+			return nil, takeout.ErrNoEnvelope
 		}
 		return nil, err
 	}
@@ -180,15 +181,15 @@ func readEnvelope(ctx context.Context, src objstore.Store, key string, allowMiss
 
 	info, err := keys.Inspect(blob)
 	if err != nil {
-		return nil, fmt.Errorf("%w: key envelope is unreadable", ErrCorrupt)
+		return nil, fmt.Errorf("%w: key envelope is unreadable", takeout.ErrCorrupt)
 	}
 	if info.Kind != keys.WrapRK {
-		return nil, fmt.Errorf("%w: stored envelope is not a recovery-key envelope", ErrCorrupt)
+		return nil, fmt.Errorf("%w: stored envelope is not a recovery-key envelope", takeout.ErrCorrupt)
 	}
 
 	return &envelopeCopy{
 		blob: blob,
-		ref: EnvelopeRef{
+		ref: takeout.EnvelopeRef{
 			Version:        info.Version,
 			Kind:           info.Kind.String(),
 			KDF:            info.KDF,
@@ -197,23 +198,4 @@ func readEnvelope(ctx context.Context, src objstore.Store, key string, allowMiss
 			ArgonLanes:     info.Argon.Lanes,
 		},
 	}, nil
-}
-
-// Verify re-reads a Take-Out and checks it against its own manifest. It needs no
-// key: the integrity of the ciphertext is verifiable by whoever holds the copy.
-func Verify(ctx context.Context, dir string) error {
-	m, err := ReadManifest(dir)
-	if err != nil {
-		return err
-	}
-
-	if err := snapshot.VerifyRepoDir(ctx, m.RepoPath(dir), m.Blobs); err != nil {
-		return fmt.Errorf("%w: %s", ErrCorrupt, err.Error())
-	}
-	if m.EnvelopeRef != "" {
-		if _, err := os.Stat(m.EnvelopePath(dir)); err != nil {
-			return fmt.Errorf("%w: key envelope is missing", ErrCorrupt)
-		}
-	}
-	return nil
 }

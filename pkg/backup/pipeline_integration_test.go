@@ -38,8 +38,9 @@ import (
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/snapshot/s3repo"
 	"opencloud-backup-plugin/pkg/spacecfg"
-	"opencloud-backup-plugin/pkg/takeout"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -96,7 +97,7 @@ func newGaragePipeline(ctx context.Context, t *testing.T) *garagePipeline {
 	copy(big[1000:], []byte("große-datei"))
 	reader.put("assets/große-datei.bin", big, testMTime)
 
-	engine, err := snapshot.NewEngine(snapshot.S3Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
+	engine, err := snapshot.NewEngine(s3repo.Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -125,7 +126,7 @@ func newGaragePipeline(ctx context.Context, t *testing.T) *garagePipeline {
 		Locks:   jobStore,
 		// The real publisher: every run leaves the RK-wrapped envelope on the
 		// target, which is what makes a Take-Out self-contained.
-		Envelopes: takeout.S3Publisher{},
+		Envelopes: remote.S3Publisher{},
 		Logger:    slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 	})
 	if err != nil {

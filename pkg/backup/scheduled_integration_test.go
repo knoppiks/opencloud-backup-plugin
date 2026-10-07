@@ -33,9 +33,10 @@ import (
 	"opencloud-backup-plugin/pkg/notify"
 	"opencloud-backup-plugin/pkg/scheduler"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/snapshot/s3repo"
 	"opencloud-backup-plugin/pkg/spacecfg"
 	"opencloud-backup-plugin/pkg/state"
-	"opencloud-backup-plugin/pkg/takeout"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -127,7 +128,7 @@ func startProcess(
 	}
 	f.locker = locker
 
-	engine, err := snapshot.NewEngine(snapshot.S3Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
+	engine, err := snapshot.NewEngine(s3repo.Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -172,7 +173,7 @@ func startProcess(
 		Engine:    engine,
 		Jobs:      f.jobs,
 		Locks:     locker,
-		Envelopes: takeout.S3Publisher{},
+		Envelopes: remote.S3Publisher{},
 		Logger:    logger,
 		Clock:     clock,
 	})
