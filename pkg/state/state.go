@@ -26,6 +26,7 @@ package state
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -134,8 +135,23 @@ func EscapeSegment(s string) string {
 	return b.String()
 }
 
-// UnescapeSegment reverses EscapeSegment.
+// UnescapeSegment reverses EscapeSegment. It accepts only what EscapeSegment
+// writes, so every record has exactly one key: lowercase hex ("%2e"), an
+// escape of a safe byte ("%61" for "a"), or an unsafe byte left raw are all
+// refused, as is a malformed escape.
 func UnescapeSegment(s string) (string, error) {
+	out, err := decodeSegment(s)
+	if err != nil {
+		return "", err
+	}
+	if EscapeSegment(out) != s {
+		return "", fmt.Errorf("state: non-canonical escaping in %q", s)
+	}
+	return out, nil
+}
+
+// decodeSegment percent-decodes s, taking exactly two hex digits per escape.
+func decodeSegment(s string) (string, error) {
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); i++ {
@@ -146,11 +162,14 @@ func UnescapeSegment(s string) (string, error) {
 		if i+2 >= len(s) {
 			return "", fmt.Errorf("state: truncated escape in %q", s)
 		}
-		var v int
-		if _, err := fmt.Sscanf(s[i+1:i+3], "%02X", &v); err != nil {
+		// Exactly two hex digits. fmt.Sscanf("%02X") used to be the parser
+		// here and also took a sign, a space or a "0X" prefix ("%+1", "% 1",
+		// "%0X0").
+		var v [1]byte
+		if _, err := hex.Decode(v[:], []byte(s[i+1:i+3])); err != nil {
 			return "", fmt.Errorf("state: bad escape in %q", s)
 		}
-		b.WriteByte(byte(v))
+		b.WriteByte(v[0])
 		i += 2
 	}
 	return b.String(), nil

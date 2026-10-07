@@ -48,6 +48,41 @@ func TestEscapeSegmentRoundTrips(t *testing.T) {
 	}
 }
 
+// Found by FuzzUnescapeSegment: the escape parser took a sign, a space or a
+// "0X" prefix as part of the two hex digits.
+func TestUnescapeSegmentRefusesMalformedEscapes(t *testing.T) {
+	t.Parallel()
+
+	for _, in := range []string{"%+1", "% 1", "%0X0", "%-1", "%G0", "%4", "%"} {
+		if out, err := state.UnescapeSegment(in); err == nil {
+			t.Errorf("UnescapeSegment(%q) = %q, want an error", in, out)
+		}
+	}
+}
+
+// Each record has exactly one key: a well-formed escape EscapeSegment would
+// not have written names the same id as the canonical key, so it is refused.
+func TestUnescapeSegmentRefusesNonCanonicalKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, in := range []string{
+		"%2e%2E",  // lower-case hex
+		"%61bc",   // escaped safe byte, same id as "abc"
+		"a%2E",    // escaped "." outside the "." / ".." special case
+		"a$b",     // unsafe byte left raw
+		".", "..", // written as "%2E" and "%2E%2E"
+	} {
+		if out, err := state.UnescapeSegment(in); err == nil {
+			t.Errorf("UnescapeSegment(%q) = %q, want an error", in, out)
+		}
+	}
+	for in, want := range map[string]string{"%2E%2E": "..", "a%24b": "a$b", "abc": "abc", "": ""} {
+		if out, err := state.UnescapeSegment(in); err != nil || out != want {
+			t.Errorf("UnescapeSegment(%q) = %q, %v; want %q", in, out, err, want)
+		}
+	}
+}
+
 func TestKeyJoinsEscapedSegments(t *testing.T) {
 	t.Parallel()
 
