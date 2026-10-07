@@ -17,10 +17,14 @@ package notify
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/smtp"
 	"strings"
+	"time"
 )
 
 // LogSink writes events to the service log. It is always wired: an operator
@@ -62,7 +66,15 @@ type SMTPConfig struct {
 	// OperatorTo receives operator-audience events. When empty, operator events
 	// are recorded but not mailed.
 	OperatorTo string
+	// Timeout bounds one delivery, from dialling to QUIT. Zero uses
+	// DefaultSMTPTimeout.
+	Timeout time.Duration
 }
+
+// DefaultSMTPTimeout bounds one mail delivery. A mail server that accepts the
+// connection and then says nothing must not hold a scheduler slot, or the
+// shutdown drain, for longer than this (review-2026-10.md F7).
+const DefaultSMTPTimeout = 30 * time.Second
 
 // Valid reports whether the configuration can send anything.
 func (c SMTPConfig) Valid() bool {
@@ -73,7 +85,7 @@ func (c SMTPConfig) Valid() bool {
 type SMTPSink struct {
 	cfg SMTPConfig
 	// send is the transport, injected so tests need no mail server.
-	send func(addr string, a smtp.Auth, from string, to []string, msg []byte) error
+	send func(ctx context.Context, addr string, a smtp.Auth, from string, to []string, msg []byte) error
 }
 
 var _ Sink = (*SMTPSink)(nil)
@@ -83,12 +95,14 @@ func NewSMTPSink(cfg SMTPConfig) (*SMTPSink, error) {
 	if !cfg.Valid() {
 		return nil, fmt.Errorf("notify: smtp needs a host, port, sender and operator recipient")
 	}
-	return &SMTPSink{cfg: cfg, send: smtp.SendMail}, nil
+	sink := &SMTPSink{cfg: cfg}
+	sink.send = sink.sendMail
+	return sink, nil
 }
 
 // Deliver mails an event to its audience. Events with no email path are a
 // no-op, not an error.
-func (s *SMTPSink) Deliver(_ context.Context, e Event) error {
+func (s *SMTPSink) Deliver(ctx context.Context, e Event) error {
 	if e.Audience != AudienceOperator {
 		// See the package note: member events have no address to go to yet.
 		return nil
@@ -101,12 +115,87 @@ func (s *SMTPSink) Deliver(_ context.Context, e Event) error {
 	if s.cfg.Username != "" {
 		auth = smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
 	}
-	if err := s.send(addr, auth, s.cfg.From, []string{s.cfg.OperatorTo}, msg); err != nil {
+	if err := s.send(ctx, addr, auth, s.cfg.From, []string{s.cfg.OperatorTo}, msg); err != nil {
 		// The transport error can quote credentials on some servers; report the
 		// shape of the failure only.
 		return fmt.Errorf("notify: could not send mail")
 	}
 	return nil
+}
+
+// sendMail is net/smtp.SendMail with a deadline. SendMail itself has none: it
+// dials without a timeout and waits on every reply for as long as the server
+// cares to take. Here the whole conversation is bounded by the sink's timeout
+// and by ctx, whichever ends first. Like SendMail it upgrades to TLS when the
+// server offers STARTTLS, and smtp.PlainAuth still refuses to send a password
+// over a connection that did not.
+func (s *SMTPSink) sendMail(
+	ctx context.Context, addr string, a smtp.Auth, from string, to []string, msg []byte,
+) error {
+	timeout := s.cfg.Timeout
+	if timeout <= 0 {
+		timeout = DefaultSMTPTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	deadline, _ := ctx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	// A cancellation before the deadline closes the connection too.
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+
+	c, err := smtp.NewClient(conn, s.cfg.Host)
+	if err != nil {
+		_ = conn.Close()
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	return converse(c, s.cfg.Host, a, from, to, msg)
+}
+
+// converse runs one SMTP transaction on an open client.
+func converse(c *smtp.Client, host string, a smtp.Auth, from string, to []string, msg []byte) error {
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		if err := c.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+			return err
+		}
+	}
+	if a != nil {
+		if ok, _ := c.Extension("AUTH"); !ok {
+			return errors.New("notify: smtp server does not support AUTH")
+		}
+		if err := c.Auth(a); err != nil {
+			return err
+		}
+	}
+	if err := c.Mail(from); err != nil {
+		return err
+	}
+	for _, rcpt := range to {
+		if err := c.Rcpt(rcpt); err != nil {
+			return err
+		}
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(msg); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.Quit()
 }
 
 // subjectFor gives an event a short, non-revealing subject line.

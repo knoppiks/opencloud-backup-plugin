@@ -13,6 +13,7 @@ package snapshot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -90,6 +91,11 @@ type StorageOpener interface {
 	Open(ctx context.Context, repo Repo, createIfMissing bool) (blob.Storage, error)
 }
 
+// ErrMissingCredentials means a target was opened without both halves of its
+// static S3 credential.
+var ErrMissingCredentials = errors.New(
+	"snapshot: target S3 access key id and secret access key are both required")
+
 // S3Opener is the production StorageOpener: kopia's S3 driver pointed at the
 // resolved target. Credentials come from the Repo's Location, i.e. from the
 // TW-unwrapped target credentials held in worker memory (decisions.md #14).
@@ -108,6 +114,15 @@ func (o S3Opener) Open(ctx context.Context, r Repo, createIfMissing bool) (blob.
 	}
 	if r.Space.SpaceID == "" {
 		return nil, fmt.Errorf("snapshot: space id required")
+	}
+	// kopia's driver falls back to AWS environment variables and the cloud
+	// metadata service when handed empty credentials. A target with none is a
+	// misconfiguration to report, not a reason to go looking elsewhere
+	// (review-2026-10.md F5).
+	// Checked here rather than through objstore so the offline decrypt path,
+	// which uses this package, does not pick up the S3 SDK (phase 10.6).
+	if strings.TrimSpace(loc.AccessKeyID) == "" || strings.TrimSpace(loc.SecretAccessKey) == "" {
+		return nil, ErrMissingCredentials
 	}
 
 	st, err := kopias3.New(ctx, &kopias3.Options{

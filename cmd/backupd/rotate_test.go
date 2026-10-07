@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ import (
 func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 func TestRunCommandRejectsUnknownCommands(t *testing.T) {
-	err := runCommand(context.Background(), "rotate-everything", nil, discardLogger())
+	err := runCommand(context.Background(), "rotate-everything", nil, discardLogger(), io.Discard)
 	if err == nil {
 		t.Fatal("an unknown command was accepted")
 	}
@@ -36,7 +37,7 @@ func TestRotateRefusesWithoutTheServiceStoppedFlag(t *testing.T) {
 			t.Setenv("TW_KEY_OLD", encodedKey(t))
 			t.Setenv("TW_KEY", encodedKey(t))
 
-			err := runCommand(context.Background(), command, nil, discardLogger())
+			err := runCommand(context.Background(), command, nil, discardLogger(), io.Discard)
 			if err == nil {
 				t.Fatal("rotation ran without -service-stopped")
 			}
@@ -58,7 +59,7 @@ func TestRotateRequiresBothKeys(t *testing.T) {
 			t.Setenv("SRW_KEY_OLD", c.old)
 			t.Setenv("SRW_KEY", c.new)
 
-			err := runCommand(context.Background(), "rotate-srw", []string{"-service-stopped"}, discardLogger())
+			err := runCommand(context.Background(), "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
 			if err == nil {
 				t.Fatal("rotation ran without both keys")
 			}
@@ -77,7 +78,7 @@ func TestRotateRequiresDurableState(t *testing.T) {
 	t.Setenv("CS3_GATEWAY_ADDR", "127.0.0.1:0")
 	t.Setenv("STATE_SPACE_ID", "")
 
-	err := runCommand(context.Background(), "rotate-srw", []string{"-service-stopped"}, discardLogger())
+	err := runCommand(context.Background(), "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
 	if err == nil {
 		t.Fatal("rotation ran against in-memory state")
 	}
@@ -91,7 +92,7 @@ func TestRotateRequiresACS3Gateway(t *testing.T) {
 	t.Setenv("SRW_KEY", encodedKey(t))
 	t.Setenv("CS3_GATEWAY_ADDR", "")
 
-	err := runCommand(context.Background(), "rotate-srw", []string{"-service-stopped"}, discardLogger())
+	err := runCommand(context.Background(), "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
 	if err == nil {
 		t.Fatal("rotation ran without a gateway")
 	}

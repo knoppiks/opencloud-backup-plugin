@@ -18,6 +18,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -36,14 +37,17 @@ import (
 const rotateTimeout = 10 * time.Minute
 
 // runCommand dispatches an operator subcommand.
-func runCommand(ctx context.Context, name string, args []string, logger *slog.Logger) error {
+//
+// stdout receives the command's output and nothing else; logs go to the
+// logger, which writes to stderr.
+func runCommand(ctx context.Context, name string, args []string, logger *slog.Logger, stdout io.Writer) error {
 	switch name {
 	case "rotate-srw":
 		return runRotate(ctx, srwRotation, args, logger)
 	case "rotate-tw":
 		return runRotate(ctx, twRotation, args, logger)
 	case "provision-state-space":
-		return runProvisionStateSpace(ctx, args, logger)
+		return runProvisionStateSpace(ctx, args, logger, stdout)
 	default:
 		return fmt.Errorf(
 			"unknown command %q; known commands are provision-state-space, rotate-srw and rotate-tw",

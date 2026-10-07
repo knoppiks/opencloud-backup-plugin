@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 )
@@ -66,7 +67,7 @@ func TestProvisionStateSpace_RefusesIncompleteConfiguration(t *testing.T) {
 			for k, v := range tc.env {
 				t.Setenv(k, v)
 			}
-			err := runProvisionStateSpace(context.Background(), nil, quietLogger())
+			err := runProvisionStateSpace(context.Background(), nil, quietLogger(), io.Discard)
 			if err == nil {
 				t.Fatal("want an error")
 			}
@@ -85,7 +86,7 @@ func TestProvisionStateSpace_RefusesWhenAlreadyConfigured(t *testing.T) {
 	t.Setenv("OC_SERVICE_ACCOUNT_SECRET", "secret")
 	t.Setenv("STATE_SPACE_ID", "already-provisioned")
 
-	err := runProvisionStateSpace(context.Background(), nil, quietLogger())
+	err := runProvisionStateSpace(context.Background(), nil, quietLogger(), io.Discard)
 	if err == nil {
 		t.Fatal("provisioning must be refused while STATE_SPACE_ID is set")
 	}
@@ -97,7 +98,7 @@ func TestProvisionStateSpace_RefusesWhenAlreadyConfigured(t *testing.T) {
 // An operator who mistypes a command must be told what exists, and must not
 // have it interpreted as something else.
 func TestRunCommand_UnknownCommandNamesTheKnownOnes(t *testing.T) {
-	err := runCommand(context.Background(), "provision", nil, quietLogger())
+	err := runCommand(context.Background(), "provision", nil, quietLogger(), io.Discard)
 	if err == nil {
 		t.Fatal("an unknown command must fail")
 	}

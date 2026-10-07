@@ -108,6 +108,15 @@ func TestCheckWithNoBucketIsUnknownRatherThanUnreachable(t *testing.T) {
 	}
 }
 
+// A target saved without credentials is a credential problem, not an unknown
+// one, and the check must not go looking for ambient credentials to try.
+func TestCheckWithoutCredentialsIsAuthFailed(t *testing.T) {
+	got := S3Checker{}.Check(context.Background(), S3Config{Endpoint: "127.0.0.1:1", Bucket: "b"}, "")
+	if got != CheckAuthFailed {
+		t.Fatalf("check without credentials = %q, want %q", got, CheckAuthFailed)
+	}
+}
+
 func TestCheckerFuncAdaptsAFunction(t *testing.T) {
 	var c Checker = CheckerFunc(func(context.Context, S3Config, string) CheckOutcome {
 		return CheckDenied

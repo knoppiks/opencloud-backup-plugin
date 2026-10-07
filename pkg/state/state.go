@@ -306,6 +306,29 @@ func (d *Documents[T]) IDs(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// skipUnreadable decides what a listing does with a document it listed but
+// could not read. It returns a non-nil error when the whole listing must fail.
+//
+//   - Not found: the document went away between listing and reading. Skipped
+//     without a trace; that is what a concurrent delete looks like.
+//   - Malformed: one corrupt document must not make the collection unreadable,
+//     and it must not vanish either. Skipped and reported in unreadable.
+//   - Anything else (a transient backend error, a permission error) says
+//     nothing about the document. Skipping it would make a record that exists
+//     disappear from the listing — for a Space configuration, a Space that
+//     silently stops being backed up — so the listing fails and the caller
+//     retries (review-2026-10.md F2).
+func skipUnreadable(key string, err error, unreadable []string) ([]string, error) {
+	switch {
+	case IsNotFound(err):
+		return unreadable, nil
+	case IsMalformed(err):
+		return append(unreadable, key), nil
+	default:
+		return unreadable, fmt.Errorf("state: read %s: %w", key, err)
+	}
+}
+
 // All decodes every document below an id path, in key order. A document that
 // fails to decode is left out and reported by key in unreadable: one corrupt
 // record must not make a Space's entire history unreadable, and it must not
@@ -321,11 +344,9 @@ func (d *Documents[T]) All(ctx context.Context, id ...string) (values []T, unrea
 	for _, k := range keys {
 		v, err := d.GetKey(ctx, k)
 		if err != nil {
-			if IsMalformed(err) {
-				unreadable = append(unreadable, k)
+			if unreadable, err = skipUnreadable(k, err, unreadable); err != nil {
+				return nil, nil, err
 			}
-			// Anything else means the document went away between listing and
-			// reading, which is not worth reporting.
 			continue
 		}
 		out = append(out, v)

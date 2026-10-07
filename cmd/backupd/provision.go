@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -42,7 +43,7 @@ const provisionTimeout = 2 * time.Minute
 const defaultStateSpaceName = "Backup service state"
 
 // runProvisionStateSpace creates a state Space and prints its id.
-func runProvisionStateSpace(ctx context.Context, args []string, logger *slog.Logger) error {
+func runProvisionStateSpace(ctx context.Context, args []string, logger *slog.Logger, stdout io.Writer) error {
 	name, err := parseProvisionFlags(args)
 	if err != nil {
 		return err
@@ -88,7 +89,47 @@ func runProvisionStateSpace(ctx context.Context, args []string, logger *slog.Log
 				"with nothing pointing at it")
 	}
 
-	id, err := cs3.CreateProjectSpace(ctx, gw, auth, name)
+	return provisionStateSpace(ctx, name, cs3SpaceProvisioner{
+		create: func(ctx context.Context, name string) (string, error) {
+			return cs3.CreateProjectSpace(ctx, gw, auth, name)
+		},
+		check: func(ctx context.Context, id string) error {
+			store, err := cs3state.New(client, cs3state.Options{
+				SpaceID:          id,
+				Prefix:           envOr("STATE_PREFIX", cs3state.DefaultPrefix),
+				ServiceAccountID: saID,
+			})
+			if err != nil {
+				return err
+			}
+			return store.Check(ctx)
+		},
+	}, logger, stdout)
+}
+
+// spaceProvisioner creates a state Space and checks it the way startup will.
+type spaceProvisioner interface {
+	Create(ctx context.Context, name string) (string, error)
+	Check(ctx context.Context, id string) error
+}
+
+// cs3SpaceProvisioner is the spaceProvisioner over a live CS3 gateway.
+type cs3SpaceProvisioner struct {
+	create func(ctx context.Context, name string) (string, error)
+	check  func(ctx context.Context, id string) error
+}
+
+func (p cs3SpaceProvisioner) Create(ctx context.Context, name string) (string, error) {
+	return p.create(ctx, name)
+}
+
+func (p cs3SpaceProvisioner) Check(ctx context.Context, id string) error { return p.check(ctx, id) }
+
+// provisionStateSpace creates the Space, verifies it, and prints its id.
+func provisionStateSpace(
+	ctx context.Context, name string, p spaceProvisioner, logger *slog.Logger, stdout io.Writer,
+) error {
+	id, err := p.Create(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -97,23 +138,16 @@ func runProvisionStateSpace(ctx context.Context, args []string, logger *slog.Log
 	// creation did what this file claims. If OpenCloud ever changes who gets
 	// the initial grant, the operator finds out here and not at the next
 	// restart.
-	store, err := cs3state.New(client, cs3state.Options{
-		SpaceID:          id,
-		Prefix:           envOr("STATE_PREFIX", cs3state.DefaultPrefix),
-		ServiceAccountID: saID,
-	})
-	if err != nil {
-		return err
-	}
-	if err := store.Check(ctx); err != nil {
+	if err := p.Check(ctx, id); err != nil {
 		return fmt.Errorf("the Space was created (id %s) but is not usable as service state: %w", id, err)
 	}
 
 	logger.Info("state space created", "name", name, "space", id)
 	// stdout, unadorned: this is the one value the operator has to copy into
-	// their deployment, and it should survive a pipe into a variable.
-	fmt.Println(id)
-	return nil
+	// their deployment, and it should survive a pipe into a variable. The log
+	// line above goes to stderr (newLogger), never here.
+	_, err = fmt.Fprintln(stdout, id)
+	return err
 }
 
 // parseProvisionFlags reads the command's only flag.

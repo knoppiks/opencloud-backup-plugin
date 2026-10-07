@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -286,12 +287,26 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.deps.Logger.Info("scheduler stopped")
 			return nil
 		case <-ticker.C:
-			if err := s.RunOnce(ctx); err != nil {
+			if err := s.tick(ctx); err != nil {
 				// A tick failing is not fatal: the next one re-reads everything.
 				s.deps.Logger.Error("scheduler tick failed", "err", err)
 			}
 		}
 	}
+}
+
+// tick is one RunOnce on the Run loop. A panic in it is logged and the loop
+// goes on: the next tick re-reads everything, and a scheduler that dies takes
+// every Space's backups with it (review-2026-10.md F7).
+func (s *Scheduler) tick(ctx context.Context) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			s.deps.Logger.Error("scheduler tick panicked; the next tick starts afresh",
+				"panic", fmt.Sprint(v), "stack", string(debug.Stack()))
+			err = nil
+		}
+	}()
+	return s.RunOnce(ctx)
 }
 
 // RunOnce performs a single evaluation: recover abandoned runs, dispatch the
@@ -578,6 +593,17 @@ func (s *Scheduler) dispatch(ctx context.Context, spaceID string, kind jobs.Kind
 			delete(s.inflight, spaceID)
 			s.mu.Unlock()
 			<-s.slots
+		}()
+		// Contained here so a panic outside the run itself — in a hook, or in
+		// the runner's own bookkeeping — frees the slot and the Space instead
+		// of ending the process. The runner turns a panic inside the run into
+		// a failed run on its own.
+		defer func() {
+			if v := recover(); v != nil {
+				s.deps.Logger.Error("scheduled run panicked",
+					"space", spaceID, "kind", string(kind),
+					"panic", fmt.Sprint(v), "stack", string(debug.Stack()))
+			}
 		}()
 		s.execute(ctx, spaceID, kind)
 	}()

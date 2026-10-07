@@ -429,3 +429,64 @@ func (m *memSource) Open(_ context.Context, p string, offset int64) (io.ReadClos
 	}
 	return io.NopCloser(strings.NewReader(content[offset:])), nil
 }
+
+// writeRawManifest writes a manifest with the given extra fields, valid
+// otherwise.
+func writeRawManifest(t *testing.T, version int, repoDir, envelopeRef string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := WriteManifest(dir, Manifest{
+		Format:      ManifestFormat,
+		Version:     version,
+		SpaceID:     "space-1",
+		RepoDir:     repoDir,
+		EnvelopeRef: envelopeRef,
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	return dir
+}
+
+// A Take-Out travels from the admin to a family member; its manifest must not
+// be able to point decrypt outside the directory (review-2026-10.md F4).
+func TestReadManifestRejectsPathsOutsideTheTakeOut(t *testing.T) {
+	for name, tc := range map[string]struct{ repoDir, envelope string }{
+		"repo parent":       {repoDir: "../elsewhere"},
+		"repo absolute":     {repoDir: "/etc"},
+		"repo nested up":    {repoDir: "repo/../../x"},
+		"envelope parent":   {envelope: "../recovery.ocbke"},
+		"envelope absolute": {envelope: "/home/user/.ssh/id_ed25519"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := writeRawManifest(t, ManifestVersion, tc.repoDir, tc.envelope)
+			if _, err := ReadManifest(dir); !errors.Is(err, ErrCorrupt) {
+				t.Fatalf("ReadManifest = %v, want ErrCorrupt", err)
+			}
+		})
+	}
+}
+
+func TestReadManifestAcceptsLocalPaths(t *testing.T) {
+	dir := writeRawManifest(t, ManifestVersion, "repo/sub", "keys/recovery.ocbke")
+	m, err := ReadManifest(dir)
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+	if got, want := m.RepoPath(dir), filepath.Join(dir, "repo", "sub"); got != want {
+		t.Fatalf("RepoPath = %q, want %q", got, want)
+	}
+	if got, want := m.EnvelopePath(dir), filepath.Join(dir, "keys", "recovery.ocbke"); got != want {
+		t.Fatalf("EnvelopePath = %q, want %q", got, want)
+	}
+}
+
+func TestReadManifestReportsANewerFormat(t *testing.T) {
+	dir := writeRawManifest(t, ManifestVersion+1, "", "")
+	_, err := ReadManifest(dir)
+	if !errors.Is(err, ErrNewerTakeOut) {
+		t.Fatalf("ReadManifest = %v, want ErrNewerTakeOut", err)
+	}
+	if errors.Is(err, ErrCorrupt) {
+		t.Fatal("a newer Take-Out is not a damaged one")
+	}
+}

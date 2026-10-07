@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -60,17 +61,45 @@ import (
 	"opencloud-backup-plugin/pkg/targets"
 )
 
-// schedulerDrainTimeout bounds how long shutdown waits for in-flight scheduled
-// runs. A backup can legitimately take hours, so waiting for one to finish is
-// not an option; a run cut short here fails through the normal path, or — if
-// the process dies first — is recovered from its lease on the next start.
-const schedulerDrainTimeout = 30 * time.Second
+// Shutdown budget.
+//
+// A backup can legitimately take hours, so waiting for one to finish is not an
+// option: shutdown cancels every run, and a run cut short fails through the
+// normal path. What the drain must cover is that failure being *recorded*. A
+// run whose outcome write is cut off stays "running" until its lease expires
+// and the next start recovers it. So the drain is derived from the outcome
+// write's own worst case, plus a margin for the run to notice the cancellation
+// and give its lock back (review-2026-10.md F7).
+//
+// The whole budget, HTTP shutdown included, must fit in the deployment's
+// terminationGracePeriodSeconds (deploy/deployment-backupd.yaml; a test holds
+// the two together).
+const (
+	httpShutdownTimeout = 10 * time.Second
+	drainMargin         = 5 * time.Second
+	drainTimeout        = jobs.OutcomeWorstCase + drainMargin
+)
+
+// startupDeps are the parts of startup a test substitutes. Production wires
+// productionStartup.
+type startupDeps struct {
+	// openState returns the durable state store.
+	openState func(client *cs3.Client, logger *slog.Logger) (state.Store, error)
+}
+
+// productionStartup is what the service runs with.
+func productionStartup() startupDeps {
+	return startupDeps{openState: buildStateStore}
+}
 
 // service is everything main runs: the HTTP API and, when configured, the
 // scheduler that makes backups unattended.
 type service struct {
 	api       *api.Server
 	scheduler *scheduler.Scheduler
+	// background tracks manual runs, which outlive the request that started
+	// them but not the process.
+	background *jobs.Background
 	// openCloud watches the OpenCloud version; nil without OC_BASE_URL.
 	openCloud *ocversion.Monitor
 }
@@ -85,40 +114,57 @@ const (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// newLogger is the service's logger. It writes to stderr: stdout belongs to
+// what a command prints, and `STATE_SPACE_ID=$(backupd provision-state-space)`
+// must capture the id and nothing else (review-2026-10.md F6).
+func newLogger(stderr io.Writer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(stderr, nil))
+}
+
+// run is the whole program behind main, returning its exit code. main is the
+// only place that exits, so every deferred cleanup on the way here has run —
+// in particular the one that withdraws this instance's registration.
+func run(args []string, stdout, stderr io.Writer) int {
+	logger := newLogger(stderr)
 
 	// With no arguments the binary is the service. With one it is an operator
 	// tool: the maintenance commands ship in the same image because they need
 	// the same configuration, the same state Space and the same custody keys.
-	if len(os.Args) > 1 {
-		if err := runCommand(context.Background(), os.Args[1], os.Args[2:], logger); err != nil {
-			logger.Error("command failed", "command", os.Args[1], "err", err)
-			os.Exit(1)
+	if len(args) > 0 {
+		if err := runCommand(context.Background(), args[0], args[1:], logger, stdout); err != nil {
+			logger.Error("command failed", "command", args[0], "err", err)
+			return 1
 		}
-		return
+		return 0
 	}
-	serve(logger)
+	if err := serve(logger, productionStartup()); err != nil {
+		logger.Error("service stopped with an error", "err", err)
+		return 1
+	}
+	return 0
 }
 
-// serve runs the API and, when configured, the scheduler until a signal arrives.
-func serve(logger *slog.Logger) {
-	svc, cleanup, err := buildService(context.Background(), logger)
+// serve runs the API and, when configured, the scheduler until a signal
+// arrives. Every return path, including a failed startup, has released what
+// buildService acquired.
+func serve(logger *slog.Logger, deps startupDeps) error {
+	svc, cleanup, err := buildService(context.Background(), logger, deps)
 	if err != nil {
-		logger.Error("startup failed", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("startup failed: %w", err)
 	}
 	defer cleanup()
 
 	certFile, keyFile, err := tlsFiles()
 	if err != nil {
-		logger.Error("startup failed", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("startup failed: %w", err)
 	}
 
 	basePath, err := resolveBasePath()
 	if err != nil {
-		logger.Error("startup failed", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("startup failed: %w", err)
 	}
 	if basePath != "" {
 		logger.Info("API mounted under a path prefix", "basePath", basePath)
@@ -127,7 +173,7 @@ func serve(logger *slog.Logger) {
 	addr := envOr("BACKUPD_ADDR", ":8080")
 	httpSrv := &http.Server{
 		Addr:    addr,
-		Handler: mountBasePath(svc.api.Handler(), basePath),
+		Handler: api.RecoverPanics(mountBasePath(svc.api.Handler(), basePath), logger),
 		// A stalled or slow client must not be able to hold a connection open
 		// indefinitely. WriteTimeout is generous because a snapshot listing for
 		// a large Space is served synchronously; backup runs are background jobs
@@ -159,6 +205,7 @@ func serve(logger *slog.Logger) {
 		}()
 	}
 
+	serveErr := make(chan error, 1)
 	go func() {
 		var err error
 		if certFile != "" {
@@ -171,23 +218,57 @@ func serve(logger *slog.Logger) {
 			err = httpSrv.ListenAndServe()
 		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("http server failed", "err", err)
+			serveErr <- fmt.Errorf("http server failed: %w", err)
 			stop()
 		}
 	}()
 
 	<-ctx.Done()
 	logger.Info("shutting down")
+	return shutdown(httpSrv, svc.background, &workers, serveErr, logger)
+}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+// shutdown stops accepting work, cancels what is running, and waits for it to
+// record how it ended.
+//
+// Manual runs are cancelled together with the scheduler's (the signal context
+// already reached those), so every run in the process starts failing at the
+// same moment and all of them share one drain budget.
+func shutdown(
+	httpSrv *http.Server,
+	background *jobs.Background,
+	workers *sync.WaitGroup,
+	serveErr <-chan error,
+	logger *slog.Logger,
+) error {
+	if background != nil {
+		background.Stop()
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 	defer cancel()
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("graceful shutdown failed", "err", err)
-		os.Exit(1)
+	shutdownErr := httpSrv.Shutdown(shutdownCtx)
+
+	if background != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			background.Wait()
+		}()
 	}
-	if !waitFor(&workers, schedulerDrainTimeout) {
-		logger.Warn("scheduled runs did not stop in time; their locks expire on their own")
+	if !waitFor(workers, drainTimeout) {
+		logger.Warn("runs did not stop in time; their locks expire on their own")
 	}
+
+	select {
+	case err := <-serveErr:
+		return err
+	default:
+	}
+	if shutdownErr != nil {
+		return fmt.Errorf("graceful shutdown failed: %w", shutdownErr)
+	}
+	return nil
 }
 
 // waitFor waits for wg, reporting whether it finished within d.
@@ -209,9 +290,23 @@ func waitFor(wg *sync.WaitGroup, d time.Duration) bool {
 // Missing OIDC/CS3 config is tolerated so the health endpoint stays up
 // (protected routes then fail closed), but a misconfigured value that we can
 // detect is a hard error.
-func buildService(ctx context.Context, logger *slog.Logger) (service, func(), error) {
+//
+// On error, everything acquired so far has already been released and the
+// returned cleanup does nothing. That matters most for the instance record: a
+// startup that fails after claiming it and leaves it live makes every restart
+// within its TTL fail with "another instance is running", hiding the real
+// error behind a misleading one (review-2026-10.md F1).
+func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
+	svc service, cleanup func(), err error,
+) {
 	var opts []api.Option
-	cleanup := func() {}
+	cleanup = func() {}
+	defer func() {
+		if err != nil {
+			cleanup()
+			cleanup = func() {}
+		}
+	}()
 
 	// --- unedited manifest -------------------------------------------------
 	// First, because it is the cheapest check there is and because every
@@ -330,7 +425,7 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	// pkg/cs3state for the trade-offs; the short version is that a scheduler
 	// whose memory dies with the process cannot tell a missed run from a fresh
 	// install.
-	backing, err := buildStateStore(cs3Client, logger)
+	backing, err := deps.openState(cs3Client, logger)
 	if err != nil {
 		return service{}, cleanup, err
 	}
@@ -462,6 +557,10 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	opts = append(opts, api.WithNotificationStore(events))
 
 	var sched *scheduler.Scheduler
+	// Manual runs outlive their request but not the process: serve stops
+	// this at shutdown, which cancels them, and waits for them to record how
+	// they ended.
+	background := jobs.NewBackground(logger)
 
 	if spaceReader != nil && srwWrapper != nil && credSealer != nil {
 		limits, err := bandwidthLimits()
@@ -482,15 +581,16 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 		}
 
 		runner, err := backup.NewRunner(backup.Deps{
-			Spaces:  spaceReader,
-			Configs: spaceConfigs,
-			Targets: targetStore,
-			Sealer:  credSealer,
-			Keys:    keyStore,
-			Unwrap:  srwWrapper,
-			Engine:  engine,
-			Jobs:    jobStore,
-			Locks:   locker,
+			Background: background,
+			Spaces:     spaceReader,
+			Configs:    spaceConfigs,
+			Targets:    targetStore,
+			Sealer:     credSealer,
+			Keys:       keyStore,
+			Unwrap:     srwWrapper,
+			Engine:     engine,
+			Jobs:       jobStore,
+			Locks:      locker,
 			// Publishing the RK-wrapped envelope to the target is what makes an
 			// admin Take-Out self-contained, so Path A works with OpenCloud
 			// down. It is ciphertext the server cannot open (Phase 5).
@@ -509,17 +609,18 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 		// Restore Path B: same collaborators, plus the CS3 write path. It is a
 		// user-only capability; the API gates every route on membership.
 		restorer, err := restore.NewRunner(restore.Deps{
-			Spaces:  spaceReader,
-			Writer:  spaceWriter,
-			Configs: spaceConfigs,
-			Targets: targetStore,
-			Sealer:  credSealer,
-			Keys:    keyStore,
-			Unwrap:  srwWrapper,
-			Engine:  engine,
-			Jobs:    jobStore,
-			Locks:   locker,
-			Logger:  logger,
+			Background: background,
+			Spaces:     spaceReader,
+			Writer:     spaceWriter,
+			Configs:    spaceConfigs,
+			Targets:    targetStore,
+			Sealer:     credSealer,
+			Keys:       keyStore,
+			Unwrap:     srwWrapper,
+			Engine:     engine,
+			Jobs:       jobStore,
+			Locks:      locker,
+			Logger:     logger,
 		})
 		if err != nil {
 			return service{}, cleanup, err
@@ -570,7 +671,12 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	// --- readiness --------------------------------------------------------
 	opts = append(opts, api.WithReadiness(readiness(spaceReader)))
 
-	return service{api: api.NewServer(opts...), scheduler: sched, openCloud: openCloud}, cleanup, nil
+	return service{
+		api:        api.NewServer(opts...),
+		scheduler:  sched,
+		background: background,
+		openCloud:  openCloud,
+	}, cleanup, nil
 }
 
 // buildOpenCloudMonitor watches OpenCloud's version through OC_BASE_URL, the
