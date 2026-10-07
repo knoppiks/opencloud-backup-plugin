@@ -152,3 +152,67 @@ func TestSMTPSink_DeliversThroughARealConversation(t *testing.T) {
 		t.Fatal("no message received")
 	}
 }
+
+// A server that refuses the sender is reported by step and reply code, and its
+// reply text is not repeated: a reply can quote what the client sent
+// (review-2026-10.md F3).
+func TestSMTPSink_ARefusalNamesTheStepAndCodeOnly(t *testing.T) {
+	host, port := listen(t, func(conn net.Conn) {
+		r := bufio.NewReader(conn)
+		reply := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
+		reply("220 fake ESMTP")
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			switch cmd := strings.ToUpper(strings.TrimSpace(line)); {
+			case strings.HasPrefix(cmd, "EHLO"), strings.HasPrefix(cmd, "HELO"):
+				reply("250 fake")
+			case strings.HasPrefix(cmd, "MAIL"):
+				reply("553 sender quoted-server-text refused")
+			default:
+				reply("221 bye")
+				return
+			}
+		}
+	})
+
+	err := sinkFor(t, host, port, 5*time.Second).Deliver(context.Background(), operatorEvent())
+	if err == nil {
+		t.Fatal("Deliver succeeded against a refusing server")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "mail from: server replied 553") {
+		t.Fatalf("error = %q, want the step and the reply code", msg)
+	}
+	if strings.Contains(err.Error(), "quoted-server-text") {
+		t.Fatalf("error repeats the server's reply text: %v", err)
+	}
+}
+
+// A mail server that is not there is reported as a connection failure, with
+// the address the operator configured.
+func TestSMTPSink_AnUnreachableServerSaysSo(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().(*net.TCPAddr)
+	_ = ln.Close()
+
+	err = sinkFor(t, addr.IP.String(), addr.Port, 5*time.Second).Deliver(context.Background(), operatorEvent())
+	if err == nil {
+		t.Fatal("Deliver succeeded against a closed port")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "connect: ") || !strings.Contains(msg, addr.String()) {
+		t.Fatalf("error = %q, want a connection failure naming %s", msg, addr)
+	}
+}
+
+func TestSMTPSink_ATimeoutSaysSo(t *testing.T) {
+	host, port := listen(t, silent)
+	err := sinkFor(t, host, port, 200*time.Millisecond).Deliver(context.Background(), operatorEvent())
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("error = %v, want a timeout", err)
+	}
+}

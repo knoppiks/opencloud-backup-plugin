@@ -417,11 +417,11 @@ func TestRunBackup_PublishesEnvelopesToTarget(t *testing.T) {
 
 	// What is published must be exactly the stored envelopes — ciphertext,
 	// never a raw key.
-	storedRK, err := h.keys.GetRK(testSpaceID)
+	storedRK, err := h.keys.GetRK(context.Background(), testSpaceID)
 	if err != nil {
 		t.Fatalf("GetRK: %v", err)
 	}
-	storedSRW, err := h.keys.GetSRW(testSpaceID)
+	storedSRW, err := h.keys.GetSRW(context.Background(), testSpaceID)
 	if err != nil {
 		t.Fatalf("GetSRW: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestRunBackup_WithoutStoredRecoveryEnvelope(t *testing.T) {
 	if len(published) != 1 {
 		t.Fatalf("published %d envelopes, want only the server one", len(published))
 	}
-	stored, err := h.keys.GetSRW(testSpaceID)
+	stored, err := h.keys.GetSRW(context.Background(), testSpaceID)
 	if err != nil {
 		t.Fatalf("GetSRW: %v", err)
 	}

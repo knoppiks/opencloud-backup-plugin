@@ -291,7 +291,7 @@ func seedKeys(t *testing.T, store *keys.MemoryStore, wrapper *keys.SRWWrapper, s
 	if err != nil {
 		t.Fatalf("WrapSRW: %v", err)
 	}
-	if err := store.PutSRW(spaceID, wrapped); err != nil {
+	if err := store.PutSRW(context.Background(), spaceID, wrapped); err != nil {
 		t.Fatalf("PutSRW: %v", err)
 	}
 	return dk
@@ -309,7 +309,7 @@ func seedRK(t *testing.T, store *keys.MemoryStore, spaceID string, dk []byte) []
 	if err != nil {
 		t.Fatalf("WrapWithRK: %v", err)
 	}
-	if err := store.PutRK(spaceID, wrapped); err != nil {
+	if err := store.PutRK(context.Background(), spaceID, wrapped); err != nil {
 		t.Fatalf("PutRK: %v", err)
 	}
 	return rk

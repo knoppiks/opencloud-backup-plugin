@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -132,7 +133,7 @@ func TestKeySetupAndStatus(t *testing.T) {
 	assertNoKeyMaterial(t, rec.Body.String(), dk, rkSecret)
 
 	// The server-side SRW wrap really recovers the same DK (unattended path).
-	stored, err := env.store.GetSRW("space-alice")
+	stored, err := env.store.GetSRW(context.Background(), "space-alice")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestKeySetupAndStatus(t *testing.T) {
 	}
 
 	// And the stored RK envelope still opens with the user's RK only.
-	rkEnv, err := env.store.GetRK("space-alice")
+	rkEnv, err := env.store.GetRK(context.Background(), "space-alice")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +184,7 @@ func TestKeySetupRejectsNonMember(t *testing.T) {
 		t.Fatalf("non-member setup = %d, want 403", rec.Code)
 	}
 	// Nothing was stored.
-	if _, err := env.store.GetRK("space-alice"); err == nil {
+	if _, err := env.store.GetRK(context.Background(), "space-alice"); err == nil {
 		t.Fatal("non-member setup must not store anything")
 	}
 }
@@ -342,7 +343,7 @@ func TestKeySetupIsRefusedOnceTheSpaceIsConfigured(t *testing.T) {
 	// Both envelopes are exactly what the first ceremony stored: the original
 	// Recovery Key still opens the Space, and the server still holds the
 	// original Data Key.
-	rkEnv, err := env.store.GetRK("space-shared")
+	rkEnv, err := env.store.GetRK(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +354,7 @@ func TestKeySetupIsRefusedOnceTheSpaceIsConfigured(t *testing.T) {
 	if !bytes.Equal(gotRK, firstDK) {
 		t.Fatal("the stored recovery envelope wraps a different data key")
 	}
-	srwEnv, err := env.store.GetSRW("space-shared")
+	srwEnv, err := env.store.GetSRW(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +411,7 @@ func TestKeySetupConcurrentCeremoniesOneWins(t *testing.T) {
 		t.Fatal("no setup landed")
 	}
 
-	rkEnv, err := env.store.GetRK("space-shared")
+	rkEnv, err := env.store.GetRK(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +422,7 @@ func TestKeySetupConcurrentCeremoniesOneWins(t *testing.T) {
 	if !bytes.Equal(gotRK, dks[winner]) {
 		t.Fatal("the stored recovery envelope wraps another ceremony's data key")
 	}
-	srwEnv, err := env.store.GetSRW("space-shared")
+	srwEnv, err := env.store.GetSRW(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +453,7 @@ func TestKeySetupCompletesAHalfFinishedCeremony(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := env.store.PutRK("space-alice", partial); err != nil {
+	if err := env.store.PutRK(context.Background(), "space-alice", partial); err != nil {
 		t.Fatal(err)
 	}
 
@@ -494,7 +495,7 @@ func TestKeySetupRejectsWeakRecoveryEnvelope(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "too weak") {
 		t.Fatalf("the client cannot tell what to fix: %s", rec.Body.String())
 	}
-	if _, err := env.store.GetRK("space-alice"); err == nil {
+	if _, err := env.store.GetRK(context.Background(), "space-alice"); err == nil {
 		t.Fatal("a weak envelope was stored")
 	}
 }
@@ -507,7 +508,7 @@ func TestRotateRecoveryKeyKeepsTheDataKey(t *testing.T) {
 	if rec := doJSON(env.srv, http.MethodPost, "/api/v1/spaces/space-shared/backup/setup", "alice-tok", body); rec.Code != http.StatusCreated {
 		t.Fatalf("setup = %d", rec.Code)
 	}
-	srwBefore, err := env.store.GetSRW("space-shared")
+	srwBefore, err := env.store.GetSRW(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +519,7 @@ func TestRotateRecoveryKeyKeepsTheDataKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := env.store.GetRK("space-shared")
+	current, err := env.store.GetRK(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +542,7 @@ func TestRotateRecoveryKeyKeepsTheDataKey(t *testing.T) {
 	assertNoKeyMaterial(t, rec.Body.String(), dk, oldRK, newRK)
 
 	// The new key opens the space; the old one does not.
-	stored, err := env.store.GetRK("space-shared")
+	stored, err := env.store.GetRK(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +559,7 @@ func TestRotateRecoveryKeyKeepsTheDataKey(t *testing.T) {
 
 	// The server's own envelope is untouched, so unattended runs keep working
 	// against the existing repository.
-	srwAfter, err := env.store.GetSRW("space-shared")
+	srwAfter, err := env.store.GetSRW(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +585,7 @@ func TestRotateRecoveryKeyRejectsBadRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := env.store.GetRK("space-shared")
+	current, err := env.store.GetRK(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +662,7 @@ func TestRotateRecoveryKeyRejectsBadRequests(t *testing.T) {
 
 	// Whatever was refused, the space still opens with the key it was set up
 	// with.
-	stored, err := env.store.GetRK("space-shared")
+	stored, err := env.store.GetRK(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +683,7 @@ func TestRotateRecoveryKeyConcurrentRotationsOneWins(t *testing.T) {
 	if rec := doJSON(env.srv, http.MethodPost, "/api/v1/spaces/space-shared/backup/setup", "alice-tok", body); rec.Code != http.StatusCreated {
 		t.Fatalf("setup = %d", rec.Code)
 	}
-	current, err := env.store.GetRK("space-shared")
+	current, err := env.store.GetRK(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -730,7 +731,7 @@ func TestRotateRecoveryKeyConcurrentRotationsOneWins(t *testing.T) {
 	if winner < 0 {
 		t.Fatal("no rotation landed")
 	}
-	stored, err := env.store.GetRK("space-shared")
+	stored, err := env.store.GetRK(context.Background(), "space-shared")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -113,7 +113,7 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.spaceConfigs == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup configuration not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup configuration not available", nil)
 		return
 	}
 
@@ -144,7 +144,7 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "not_configured", "backup is not configured for this space")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read backup configuration")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read backup configuration", err)
 		return
 	}
 
@@ -152,7 +152,7 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 	cfg.Enabled = req.Enabled
 	stored, err := s.spaceConfigs.Put(r.Context(), cfg)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store the schedule")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store the schedule", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.toScheduleResponse(stored))
@@ -165,7 +165,7 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.spaceConfigs == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup configuration not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup configuration not available", nil)
 		return
 	}
 
@@ -176,7 +176,7 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "backup is not configured for this space")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read backup configuration")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read backup configuration", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.toScheduleResponse(cfg))
@@ -190,7 +190,7 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.spaceConfigs == nil || s.jobStore == nil || s.keyStore == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup status not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup status not available", nil)
 		return
 	}
 
@@ -198,7 +198,7 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 
 	// A key store that cannot answer is an error, not "no keys": the UI would
 	// otherwise offer a setup the server must refuse (decisions.md #17).
-	keyStatus, ok := s.keyStatus(w, spaceID)
+	keyStatus, ok := s.keyStatus(w, r, spaceID)
 	if !ok {
 		return
 	}
@@ -217,13 +217,13 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 		// An unconfigured Space is a normal answer, not an error: the UI shows
 		// "not set up yet".
 	default:
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read backup configuration")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read backup configuration", err)
 		return
 	}
 
 	history, err := s.jobStore.ListRecent(r.Context(), spaceID, defaultHistoryLimit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read run history", err)
 		return
 	}
 	// Backups are read separately rather than picked out of the line above:
@@ -234,7 +234,7 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 	// exactly what the monitor reads.
 	backups, err := s.jobStore.ListRecentOfKind(r.Context(), spaceID, jobs.KindBackup, notify.StaleLookback)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read run history", err)
 		return
 	}
 	applyHistory(&out, history, backups)
@@ -294,7 +294,7 @@ func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if s.notifications == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "notifications are not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "notifications are not available", nil)
 		return
 	}
 
@@ -305,7 +305,7 @@ func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request)
 
 	events, err := s.notifications.List(r.Context(), spaceID, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read notifications")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read notifications", err)
 		return
 	}
 

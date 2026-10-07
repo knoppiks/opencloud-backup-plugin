@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -167,13 +168,16 @@ func serve(logger *slog.Logger, deps startupDeps) error {
 		return fmt.Errorf("startup failed: %w", err)
 	}
 	if basePath != "" {
-		logger.Info("API mounted under a path prefix", "basePath", basePath)
+		logger.Info("API mounted under a path prefix", "base_path", basePath)
 	}
 
 	addr := envOr("BACKUPD_ADDR", ":8080")
 	httpSrv := &http.Server{
 		Addr:    addr,
-		Handler: api.RecoverPanics(mountBasePath(svc.api.Handler(), basePath), logger),
+		Handler: mountBasePath(svc.api.Handler(), basePath),
+		// net/http's own errors (TLS handshakes, malformed requests) go to
+		// the structured log rather than to a plain line on stderr.
+		ErrorLog: httpErrorLog(logger),
 		// A stalled or slow client must not be able to hold a connection open
 		// indefinitely. WriteTimeout is generous because a snapshot listing for
 		// a large Space is served synchronously; backup runs are background jobs
@@ -373,7 +377,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 	} else if base := os.Getenv("OC_BASE_URL"); base != "" {
 		roleID := envOr("OC_ADMIN_APP_ROLE_ID", api.DefaultAdminAppRoleID)
 		opts = append(opts, api.WithAdminResolver(api.NewGraphAdminResolver(base, roleID, httpClient())))
-		logger.Info("admin detection: graph appRoleAssignments", "adminAppRoleId", roleID)
+		logger.Info("admin detection: graph appRoleAssignments", "admin_app_role_id", roleID)
 	} else {
 		logger.Warn("no admin resolver configured; admin routes will 403 for everyone")
 	}
@@ -670,6 +674,9 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 
 	// --- readiness --------------------------------------------------------
 	opts = append(opts, api.WithReadiness(readiness(spaceReader)))
+
+	// Request lines and the cause of every 5xx answer (pkg/api/observe.go).
+	opts = append(opts, api.WithLogger(logger))
 
 	return service{
 		api:        api.NewServer(opts...),
@@ -1065,6 +1072,13 @@ func loadWrapKey(envVar string) ([]byte, error) {
 		return nil, fmt.Errorf("%s must decode to %d bytes", envVar, keys.SRWKeySize)
 	}
 	return key, nil
+}
+
+// httpErrorLog bridges the *log.Logger net/http writes its own errors to into
+// the service's structured log, at WARN: they are about a client or a
+// connection, not about a request this service answered.
+func httpErrorLog(logger *slog.Logger) *log.Logger {
+	return slog.NewLogLogger(logger.Handler(), slog.LevelWarn)
 }
 
 func httpClient() *http.Client { return &http.Client{Timeout: 15 * time.Second} }

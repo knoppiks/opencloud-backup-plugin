@@ -405,12 +405,12 @@ func (e *scheduleEnv) status(t *testing.T) statusResponse {
 func (e *scheduleEnv) storeKeys(t *testing.T, rk, srw bool) {
 	t.Helper()
 	if rk {
-		if err := e.keys.PutRK("space-alice", keys.WrappedDK{Kind: keys.WrapRK, Version: 1, Blob: []byte{1}}); err != nil {
+		if err := e.keys.PutRK(context.Background(), "space-alice", keys.WrappedDK{Kind: keys.WrapRK, Version: 1, Blob: []byte{1}}); err != nil {
 			t.Fatalf("PutRK: %v", err)
 		}
 	}
 	if srw {
-		if err := e.keys.PutSRW("space-alice", keys.WrappedDK{Kind: keys.WrapSRW, Version: 1, Blob: []byte{2}}); err != nil {
+		if err := e.keys.PutSRW(context.Background(), "space-alice", keys.WrappedDK{Kind: keys.WrapSRW, Version: 1, Blob: []byte{2}}); err != nil {
 			t.Fatalf("PutSRW: %v", err)
 		}
 	}
@@ -449,7 +449,7 @@ func TestBackupStatus_ReportsKeyState(t *testing.T) {
 // failingKeyStore answers every status question with an error.
 type failingKeyStore struct{ keys.Store }
 
-func (failingKeyStore) Status(string) (keys.Status, error) {
+func (failingKeyStore) Status(context.Context, string) (keys.Status, error) {
 	return keys.Status{}, errors.New("state space unreachable: internal detail")
 }
 

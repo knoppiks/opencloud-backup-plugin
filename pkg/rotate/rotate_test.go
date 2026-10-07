@@ -35,7 +35,7 @@ func seedSpaces(t *testing.T, key []byte, spaceIDs ...string) (*keys.MemoryStore
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.PutSRW(id, w); err != nil {
+		if err := store.PutSRW(context.Background(), id, w); err != nil {
 			t.Fatal(err)
 		}
 		dataKeys[id] = dk
@@ -49,7 +49,7 @@ func TestSRWKeepsEveryDataKey(t *testing.T) {
 	oldKey, newKey := mustKey(t), mustKey(t)
 	store, dataKeys := seedSpaces(t, oldKey, "space-a", "space-b")
 
-	got, err := rotate.SRW(store, oldKey, newKey)
+	got, err := rotate.SRW(context.Background(), store, oldKey, newKey)
 	if err != nil {
 		t.Fatalf("SRW: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestSRWKeepsEveryDataKey(t *testing.T) {
 	}
 
 	for id, dk := range dataKeys {
-		stored, err := store.GetSRW(id)
+		stored, err := store.GetSRW(context.Background(), id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,11 +87,11 @@ func TestSRWIsResumable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutSRW("space-a", ahead); err != nil {
+	if err := store.PutSRW(context.Background(), "space-a", ahead); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := rotate.SRW(store, oldKey, newKey)
+	got, err := rotate.SRW(context.Background(), store, oldKey, newKey)
 	if err != nil {
 		t.Fatalf("SRW: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestSRWIsResumable(t *testing.T) {
 	}
 
 	// Re-running again is a no-op, not a failure.
-	got, err = rotate.SRW(store, oldKey, newKey)
+	got, err = rotate.SRW(context.Background(), store, oldKey, newKey)
 	if err != nil {
 		t.Fatalf("second SRW: %v", err)
 	}
@@ -114,14 +114,14 @@ func TestSRWRefusesAnEnvelopeThatOpensWithNeitherKey(t *testing.T) {
 	realKey, newKey, wrongKey := mustKey(t), mustKey(t), mustKey(t)
 	store, _ := seedSpaces(t, realKey, "space-a")
 
-	_, err := rotate.SRW(store, wrongKey, newKey)
+	_, err := rotate.SRW(context.Background(), store, wrongKey, newKey)
 	if !errors.Is(err, rotate.ErrKeyMismatch) {
 		t.Fatalf("err = %v, want ErrKeyMismatch", err)
 	}
 
 	// Nothing was touched: the space still opens with the key it was sealed
 	// under.
-	stored, err := store.GetSRW("space-a")
+	stored, err := store.GetSRW(context.Background(), "space-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,11 +144,11 @@ func TestSRWSkipsSpacesWithoutAServerEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutRK("space-half", rkOnly); err != nil {
+	if err := store.PutRK(context.Background(), "space-half", rkOnly); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := rotate.SRW(store, oldKey, newKey)
+	got, err := rotate.SRW(context.Background(), store, oldKey, newKey)
 	if err != nil {
 		t.Fatalf("SRW: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestSRWRejectsBadKeyPairs(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := rotate.SRW(store, c.oldKey, c.newKey); err == nil {
+			if _, err := rotate.SRW(context.Background(), store, c.oldKey, c.newKey); err == nil {
 				t.Fatal("the rotation was accepted")
 			}
 		})

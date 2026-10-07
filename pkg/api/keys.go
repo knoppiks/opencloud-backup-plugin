@@ -90,7 +90,7 @@ func (s *Server) handleKeySetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.keyStore == nil || s.srw == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "key service not configured")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "key service not configured", nil)
 		return
 	}
 
@@ -100,7 +100,7 @@ func (s *Server) handleKeySetup(w http.ResponseWriter, r *http.Request) {
 	// listed, intact, and permanently unreadable. There is no override: a Space
 	// that needs a new Recovery Key rotates it (see handleRotateRecoveryKey),
 	// and one that genuinely needs a new Data Key starts a new repository.
-	if !s.assertNotConfigured(w, spaceID) {
+	if !s.assertNotConfigured(w, r, spaceID) {
 		return
 	}
 
@@ -135,30 +135,30 @@ func (s *Server) handleKeySetup(w http.ResponseWriter, r *http.Request) {
 	// Recovery Key that opens nothing the unattended runs write (#17).
 	unlock := s.rkLocks.lock(spaceID)
 	defer unlock()
-	if !s.assertNotConfigured(w, spaceID) {
+	if !s.assertNotConfigured(w, r, spaceID) {
 		return
 	}
 
 	srwWrapped, err := s.srw.WrapSRW(dk)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not complete key setup")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not complete key setup", err)
 		return
 	}
 
-	if err := s.keyStore.PutRK(spaceID, keys.WrappedDK{
+	if err := s.keyStore.PutRK(r.Context(), spaceID, keys.WrappedDK{
 		Version: info.Version, Kind: keys.WrapRK, Blob: rkBlob,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store recovery envelope")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store recovery envelope", err)
 		return
 	}
-	if err := s.keyStore.PutSRW(spaceID, srwWrapped); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store server envelope")
+	if err := s.keyStore.PutSRW(r.Context(), spaceID, srwWrapped); err != nil {
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store server envelope", err)
 		return
 	}
 
-	st, err := s.keyStore.Status(spaceID)
+	st, err := s.keyStore.Status(r.Context(), spaceID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read key status")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read key status", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toKeyStatusResponse(st))
@@ -237,13 +237,13 @@ func (s *Server) handleRotateRecoveryKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if s.keyStore == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "key service not configured")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "key service not configured", nil)
 		return
 	}
 	// Rotation replaces something. A Space with no envelope has nothing to
 	// rotate, and accepting one here would be a second way to run the ceremony
 	// — the exact thing the setup guard exists to prevent.
-	if !s.assertConfigured(w, spaceID) {
+	if !s.assertConfigured(w, r, spaceID) {
 		return
 	}
 
@@ -269,9 +269,9 @@ func (s *Server) handleRotateRecoveryKey(w http.ResponseWriter, r *http.Request)
 	unlock := s.rkLocks.lock(spaceID)
 	defer unlock()
 
-	current, err := s.keyStore.GetRK(spaceID)
+	current, err := s.keyStore.GetRK(r.Context(), spaceID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read recovery envelope")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read recovery envelope", err)
 		return
 	}
 	if envelopeDigest(current.Blob) != req.ReplacesSHA256 {
@@ -282,16 +282,16 @@ func (s *Server) handleRotateRecoveryKey(w http.ResponseWriter, r *http.Request)
 
 	// Append-only: the superseded envelope stays readable, which is what makes
 	// a botched client-side rotation recoverable rather than terminal.
-	if err := s.keyStore.PutRK(spaceID, keys.WrappedDK{
+	if err := s.keyStore.PutRK(r.Context(), spaceID, keys.WrappedDK{
 		Version: info.Version, Kind: keys.WrapRK, Blob: rkBlob,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store recovery envelope")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store recovery envelope", err)
 		return
 	}
 
-	st, err := s.keyStore.Status(spaceID)
+	st, err := s.keyStore.Status(r.Context(), spaceID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read key status")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read key status", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toKeyStatusResponse(st))
@@ -304,13 +304,13 @@ func (s *Server) handleKeyStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.keyStore == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "key service not configured")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "key service not configured", nil)
 		return
 	}
 
-	st, err := s.keyStore.Status(spaceID)
+	st, err := s.keyStore.Status(r.Context(), spaceID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read key status")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read key status", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toKeyStatusResponse(st))
@@ -325,23 +325,23 @@ func (s *Server) handleRecoveryEnvelope(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if s.keyStore == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "key service not configured")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "key service not configured", nil)
 		return
 	}
 
-	wrapped, err := s.keyStore.GetRK(spaceID)
+	wrapped, err := s.keyStore.GetRK(r.Context(), spaceID)
 	if err != nil {
 		var nf keys.ErrNotFound
 		if errors.As(err, &nf) {
 			writeError(w, http.StatusNotFound, "not_found", "backup not configured for this space")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read recovery envelope")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read recovery envelope", err)
 		return
 	}
 	info, err := keys.Inspect(wrapped.Blob)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read recovery envelope")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read recovery envelope", err)
 		return
 	}
 
@@ -362,8 +362,8 @@ func (s *Server) handleRecoveryEnvelope(w http.ResponseWriter, r *http.Request) 
 // The predicate is "both envelopes present", so a setup interrupted between the
 // two writes can be finished by re-running it — that is a half-finished ceremony
 // with no snapshots behind it, not a Data Key anything depends on.
-func (s *Server) assertNotConfigured(w http.ResponseWriter, spaceID string) bool {
-	st, ok := s.keyStatus(w, spaceID)
+func (s *Server) assertNotConfigured(w http.ResponseWriter, r *http.Request, spaceID string) bool {
+	st, ok := s.keyStatus(w, r, spaceID)
 	if !ok {
 		return false
 	}
@@ -378,8 +378,8 @@ func (s *Server) assertNotConfigured(w http.ResponseWriter, spaceID string) bool
 // assertConfigured allows a request through only when the Space has a complete
 // key setup. It writes 404 and returns false otherwise — the same answer a
 // member gets for a Space that was never set up, because that is what it is.
-func (s *Server) assertConfigured(w http.ResponseWriter, spaceID string) bool {
-	st, ok := s.keyStatus(w, spaceID)
+func (s *Server) assertConfigured(w http.ResponseWriter, r *http.Request, spaceID string) bool {
+	st, ok := s.keyStatus(w, r, spaceID)
 	if !ok {
 		return false
 	}
@@ -393,10 +393,10 @@ func (s *Server) assertConfigured(w http.ResponseWriter, spaceID string) bool {
 // keyStatus reads a Space's setup state, writing the error response itself when
 // the store cannot answer. A store that fails here must not be read as "not
 // configured": that would turn an outage into permission to overwrite a Data Key.
-func (s *Server) keyStatus(w http.ResponseWriter, spaceID string) (keys.Status, bool) {
-	st, err := s.keyStore.Status(spaceID)
+func (s *Server) keyStatus(w http.ResponseWriter, r *http.Request, spaceID string) (keys.Status, bool) {
+	st, err := s.keyStore.Status(r.Context(), spaceID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read key status")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read key status", err)
 		return keys.Status{}, false
 	}
 	return st, true
