@@ -25,6 +25,47 @@ of the fixes is not buried in a rename — and before the lint expansion
 | F6 stdout pollution | logs go to **stderr**; stdout is reserved for command output | test: `provision-state-space` stdout is exactly the id |
 | F7 background work | manual runs registered with a service-level `WaitGroup`/context so SIGTERM cancels and drains them; `recover()` at each goroutine boundary (run, scheduler tick, HTTP handler) converts a panic to a failed run + ERROR log; SMTP via a dialer with deadline; drain budget ≥ outcome-write worst case, derived from the same constants | unit per item; panic test proves the scheduler survives |
 
+**Outcome (10.1, #70).** All six fixed, each with a test that fails on the
+old code. Where it differs from the table:
+
+- **F1.** `buildService` itself releases what it acquired when it fails
+  (named result + deferred cleanup), so the caller's contract is "on error,
+  nothing to clean up". `main` is `os.Exit(run(args, stdout, stderr))`;
+  `serve` returns an error and every exit path runs its defers. The test
+  shares one state store across two `buildService` calls (an injected
+  `startupDeps.openState`, not a fake guard), which is the restarted pod
+  finding the same state Space.
+- **F2.** *Proposed, owner to confirm:* any read error other than not-found
+  or malformed **fails the listing** (`Versions.Latest` and `Documents.All`,
+  one helper), rather than being collected next to `unreadable`. A failed
+  tick is logged and the next tick retries; collecting would have reported a
+  blinking backend as "corrupt record". *Also proposed:* the targets store's
+  `ListTargets` now returns `ErrUnreadableTargets` when a record cannot be
+  decoded, instead of dropping it — its callers are TW rotation (would leave
+  that target sealed under the retiring key) and bootstrap (would take a
+  store whose only record is corrupt for an empty one), the same reasoning as
+  the admin API's existing "unreadable configuration is an error". The
+  member-facing `VisibleTargets` still skips it, so one corrupt record does
+  not take the target list from every member.
+- **F4.** As planned. The fuzz target for `ReadManifest` is 10.4's.
+- **F5.** Also applied to kopia's S3 driver (`snapshot.S3Opener`), which has
+  the same fallback (env, then IAM/IMDS) — the server-side path the review
+  mentions. That check is local to `pkg/snapshot` so the decrypt path does
+  not import `objstore` (10.6). The admin connection check reports missing
+  credentials as `auth_failed`.
+- **F6.** As planned; the browser E2E setup now reads the id as the whole of
+  stdout instead of its last line.
+- **F7.** `jobs.Background` owns manual backups and restores (cancelled at
+  SIGTERM, refused afterwards with a 503, waited for). A panic inside a run
+  becomes a failed run through `jobs.Recover`; the scheduler recovers per run
+  goroutine and per tick; `api.RecoverPanics` wraps the HTTP handler. Drain =
+  `jobs.OutcomeWorstCase` (34 s) + 5 s; with the 10 s HTTP shutdown that is
+  49 s, under the manifest's 60 s grace period — a test holds the two
+  together. SMTP is a `net/smtp` client over a dialer with a 30 s deadline
+  for the whole conversation. **Not covered:** a panic in a goroutine kopia
+  starts itself still ends the process; only kopia can recover there. The
+  HTTP recovery logs method and path only; the request id comes with 10.2.
+
 ## 10.2 Diagnosability (the minimum; metrics are Phase 14)
 
 - `api.Server` gets a logger. Every 5xx logs the cause server-side with a
@@ -129,6 +170,7 @@ asserted by a dependency-graph test like the existing one for `takeout`.
 ## Exit criteria
 
 - [ ] F1–F7 fixed, each with a test that fails on the old code.
+      (F1, F2, F4–F7 done in 10.1; F3 is 10.2.)
 - [ ] Every 5xx leaves exactly one server-side log line with a request id;
       `noleak` tests cover the new lines.
 - [ ] One config struct; environment reference generated from it.

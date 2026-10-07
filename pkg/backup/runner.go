@@ -94,6 +94,10 @@ type Deps struct {
 	// Outcome tunes how a run's terminal outcome is written. The zero value is
 	// the production setting; tests shorten the retry backoff.
 	Outcome jobs.RecordOptions
+	// Background owns the runs StartBackup puts in the background, so that
+	// shutdown cancels and waits for them. Optional: when nil the Runner keeps
+	// its own, which nothing stops — fine for tests, wrong for the service.
+	Background *jobs.Background
 }
 
 // DefaultRunTimeout bounds a background backup run. It is generous: a first run
@@ -149,6 +153,9 @@ func NewRunner(d Deps) (*Runner, error) {
 	if d.Clock == nil {
 		d.Clock = systemClock{}
 	}
+	if d.Background == nil {
+		d.Background = jobs.NewBackground(d.Logger)
+	}
 	return &Runner{deps: d}, nil
 }
 
@@ -201,13 +208,18 @@ func (r *Runner) StartBackup(ctx context.Context, spaceID string) (string, error
 		return "", err
 	}
 
-	// The run must outlive the HTTP request that triggered it, but must not
-	// outlive the process without bound.
-	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.runTimeout())
-	go func() {
+	// The run must outlive the HTTP request that triggered it, but not the
+	// process: it runs on the service's background context, which shutdown
+	// cancels and waits for, and within the run timeout.
+	err = r.deps.Background.Go("backup", func(bg context.Context) {
+		runCtx, cancel := context.WithTimeout(bg, r.runTimeout())
 		defer cancel()
 		_, _ = r.finish(runCtx, pending)
-	}()
+	})
+	if err != nil {
+		r.fail(ctx, pending, err)
+		return "", err
+	}
 	return pending.job.ID, nil
 }
 
@@ -257,7 +269,9 @@ func (r *Runner) begin(ctx context.Context, spaceID string, kind jobs.Kind, trig
 func (r *Runner) finish(ctx context.Context, pending run) (Result, error) {
 	spaceID := pending.space.ID
 
-	info, err := r.snapshotSpace(ctx, pending.space)
+	info, err := jobs.Recover(func() (snapshot.Info, error) {
+		return r.snapshotSpace(ctx, pending.space)
+	})
 	if err != nil {
 		r.fail(ctx, pending, err)
 		return Result{}, err
@@ -528,8 +542,17 @@ func (r *Runner) fail(ctx context.Context, pending run, cause error) {
 		cause = fmt.Errorf("%w: %w", ErrRunTimedOut, cause)
 	}
 	r.settle(ctx, pending, jobs.Outcome{State: jobs.StateFailed, Error: userMessage(pending.job.Kind, cause)})
-	r.deps.Logger.Error("run failed",
-		"kind", pending.job.Kind, "space", pending.space.ID, "job", pending.job.ID, "err", cause)
+	logRunFailure(r.deps.Logger, "run failed", cause,
+		"kind", pending.job.Kind, "space", pending.space.ID, "job", pending.job.ID)
+}
+
+// logRunFailure logs a failed run at ERROR, with the stack when it panicked.
+func logRunFailure(logger *slog.Logger, msg string, cause error, args ...any) {
+	args = append(args, "err", cause)
+	if stack := jobs.PanicStack(cause); stack != "" {
+		args = append(args, "stack", stack)
+	}
+	logger.Error(msg, args...)
 }
 
 // settle records the run's terminal outcome and then, and only then, drops the

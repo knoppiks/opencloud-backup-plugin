@@ -126,8 +126,8 @@ function stateSpace(binDir: string): string {
     ['provision-state-space', '-name', STATE_SPACE_NAME],
     { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }
   )
-  // backupd logs to stdout as well; the id is the command's last line.
-  const id = (result.stdout ?? '').trim().split('\n').at(-1)?.trim() ?? ''
+  // stdout carries the id and nothing else; backupd logs to stderr.
+  const id = (result.stdout ?? '').trim()
   if (result.status !== 0 || id === '') {
     throw new Error('backupd provision-state-space failed; see its output above')
   }

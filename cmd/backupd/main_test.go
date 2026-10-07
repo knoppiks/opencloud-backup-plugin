@@ -168,7 +168,7 @@ func TestBuildService_RequiresOCBaseURLWithOIDC(t *testing.T) {
 	t.Setenv("OIDC_AUDIENCE", "web")
 	t.Setenv("OC_BASE_URL", "")
 
-	_, cleanup, err := buildService(context.Background(), discardLogger())
+	_, cleanup, err := buildService(context.Background(), discardLogger(), productionStartup())
 	defer cleanup()
 	if err == nil || !strings.Contains(err.Error(), "OC_BASE_URL is required") {
 		t.Fatalf("err = %v, want a refusal naming OC_BASE_URL", err)

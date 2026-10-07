@@ -129,8 +129,38 @@ func TestValidateRequiresTargetAndSpace(t *testing.T) {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
-	if err := validate(config{bucket: "b", spaceID: "s", outDir: "o"}); err != nil {
+	if err := validate(config{bucket: "b", spaceID: "s", outDir: "o", accessKey: "id", secretKey: "s"}); err != nil {
 		t.Errorf("valid config rejected: %v", err)
+	}
+}
+
+// Missing credentials are named before anything reaches the network; the S3
+// SDK would otherwise ask the cloud metadata service (review-2026-10.md F5).
+func TestValidateNamesTheMissingCredentialVariable(t *testing.T) {
+	base := config{bucket: "b", spaceID: "s", outDir: "o"}
+	cases := map[string]struct {
+		access, secret, want string
+	}{
+		"no access key id": {secret: "s", want: "S3_ACCESS_KEY_ID"},
+		"no secret":        {access: "id", want: "S3_SECRET_ACCESS_KEY"},
+		"neither":          {want: "S3_ACCESS_KEY_ID"},
+	}
+	for name, tc := range cases {
+		cfg := base
+		cfg.accessKey, cfg.secretKey = tc.access, tc.secret
+		err := validate(cfg)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: validate = %v, want it to name %s", name, err, tc.want)
+		}
+	}
+}
+
+func TestRunWithoutCredentialsNamesTheVariable(t *testing.T) {
+	t.Setenv("S3_ACCESS_KEY_ID", "")
+	t.Setenv("S3_SECRET_ACCESS_KEY", "")
+	err := run([]string{"-bucket", "b", "-space", "s", "-out", t.TempDir()}, os.Stderr)
+	if err == nil || !strings.Contains(err.Error(), "S3_ACCESS_KEY_ID") {
+		t.Fatalf("run = %v, want it to name S3_ACCESS_KEY_ID", err)
 	}
 }
 

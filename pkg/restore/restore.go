@@ -82,6 +82,10 @@ type Deps struct {
 	// Outcome tunes how a run's terminal outcome is written. The zero value is
 	// the production setting; tests shorten the retry backoff.
 	Outcome jobs.RecordOptions
+	// Background owns the restores StartRestore puts in the background, so
+	// that shutdown cancels and waits for them. Optional: when nil the Runner
+	// keeps its own, which nothing stops — fine for tests, wrong for the service.
+	Background *jobs.Background
 }
 
 // Clock supplies the current time.
@@ -132,6 +136,9 @@ func NewRunner(d Deps) (*Runner, error) {
 	}
 	if d.Logger == nil {
 		d.Logger = slog.New(slog.DiscardHandler)
+	}
+	if d.Background == nil {
+		d.Background = jobs.NewBackground(d.Logger)
 	}
 	if d.Clock == nil {
 		d.Clock = systemClock{}
@@ -189,11 +196,17 @@ func (r *Runner) StartRestore(ctx context.Context, spaceID string, id snapshot.S
 		return "", err
 	}
 
-	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.runTimeout())
-	go func() {
+	// Outlives the request, not the process: shutdown cancels and waits for
+	// the service's background work.
+	err = r.deps.Background.Go("restore", func(bg context.Context) {
+		runCtx, cancel := context.WithTimeout(bg, r.runTimeout())
 		defer cancel()
 		_, _ = r.finish(runCtx, pending)
-	}()
+	})
+	if err != nil {
+		r.fail(ctx, pending, err)
+		return "", err
+	}
 	return pending.job.ID, nil
 }
 
@@ -250,7 +263,9 @@ func (r *Runner) begin(ctx context.Context, spaceID string, id snapshot.Snapshot
 // finish performs the restore, records the outcome, and gives the run lock
 // back. It owns the lock from the moment begin returned it.
 func (r *Runner) finish(ctx context.Context, pending run) (Result, error) {
-	stats, err := r.restoreSnapshot(ctx, pending)
+	stats, err := jobs.Recover(func() (stats, error) {
+		return r.restoreSnapshot(ctx, pending)
+	})
 	if err != nil {
 		r.fail(ctx, pending, err)
 		return Result{}, err
@@ -462,7 +477,11 @@ func (r *Runner) unwrapDataKey(spaceID string) ([]byte, error) {
 // fail records a sanitized failure on the job record.
 func (r *Runner) fail(ctx context.Context, pending run, cause error) {
 	r.settle(ctx, pending, jobs.Outcome{State: jobs.StateFailed, Error: userMessage(cause)})
-	r.deps.Logger.Error("restore run failed", "space", pending.space.ID, "job", pending.job.ID, "err", cause)
+	args := []any{"space", pending.space.ID, "job", pending.job.ID, "err", cause}
+	if stack := jobs.PanicStack(cause); stack != "" {
+		args = append(args, "stack", stack)
+	}
+	r.deps.Logger.Error("restore run failed", args...)
 }
 
 // settle records the run's terminal outcome and then, and only then, drops the

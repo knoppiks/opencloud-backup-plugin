@@ -95,9 +95,15 @@ func (c S3Checker) Check(ctx context.Context, cfg S3Config, prefix string) Check
 	defer cancel()
 
 	store, err := NewS3(ctx, cfg)
+	if errors.Is(err, ErrMissingCredentials) {
+		// No credential to present is a credential problem, and the admin's
+		// to fix in the same form field as a typo in the secret.
+		c.report(CheckAuthFailed, cfg, err)
+		return CheckAuthFailed
+	}
 	if err != nil {
 		// The configuration could not even be assembled — a missing bucket
-		// name, or an unusable ambient AWS config. Not a network verdict.
+		// name. Not a network verdict.
 		c.report(CheckUnknown, cfg, err)
 		return CheckUnknown
 	}

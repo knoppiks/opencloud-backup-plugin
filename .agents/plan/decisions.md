@@ -1284,6 +1284,27 @@ layout, which was a scaffolding choice rather than a locked decision.
   §3). Neither has bound anything yet: the plugin is 0.x and the only drop
   (7.2.x) came before any release.
 
+### Amendments from Phase 10.1 (silent-failure bugs, #70)
+
+None reopens a locked decision. Two choices the plan left to the PR,
+**proposed, owner to confirm**:
+
+- **A state read that fails for any reason other than not-found or
+  malformed fails the whole listing** (Space configurations, targets, run
+  history). Alternative rejected for now: collecting it next to the
+  `unreadable` keys, which would report a blinking backend as a corrupt
+  record. Cost: one transient error fails that scheduler tick (logged; the
+  next tick retries) or that API call.
+- **An undecodable target record is an error for the full target list**
+  (`ErrUnreadableTargets`), not a silent omission, because TW rotation and
+  bootstrap act on what the list does not show. Members' own target view
+  still skips it.
+
+Also recorded: S3 access never falls back to ambient AWS credentials or the
+cloud metadata service, server side (kopia) or in `takeout`; credentials are
+static and explicit (review-2026-10.md F5, consistent with #14). Logs go to
+stderr; stdout is command output only.
+
 ---
 
 ## Trust & key model

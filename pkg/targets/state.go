@@ -125,16 +125,32 @@ func (s *StateStore) GetTarget(ctx context.Context, id string) (Target, error) {
 }
 
 // ListTargets returns all targets (admin view).
+//
+// A target record that cannot be decoded fails the listing with
+// ErrUnreadableTargets rather than dropping out of it. Every caller of the full
+// list acts on what it does not see: TW rotation would leave that target sealed
+// under the retiring key, and bootstrap would take a store whose one record is
+// corrupt for an empty one (review-2026-10.md F2).
 func (s *StateStore) ListTargets(ctx context.Context) ([]Target, error) {
-	// An unreadable target record is not silent the way a Space configuration
-	// is: the admin UI lists targets, so a missing one is visible to the person
-	// who can fix it.
-	out, _, err := s.targets.Latest(ctx)
+	out, unreadable, err := s.listTargets(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("targets: list targets: %w", err)
+		return nil, err
+	}
+	if len(unreadable) > 0 {
+		return nil, ErrUnreadableTargets{Keys: unreadable}
+	}
+	return out, nil
+}
+
+// listTargets returns every readable target, in id order, and the keys of the
+// records that could not be decoded.
+func (s *StateStore) listTargets(ctx context.Context) ([]Target, []string, error) {
+	out, unreadable, err := s.targets.Latest(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("targets: list targets: %w", err)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return out, unreadable, nil
 }
 
 // writeTarget appends a new version of a target record.
@@ -213,8 +229,12 @@ func (s *StateStore) writeGrants(ctx context.Context, targetID string, list []Gr
 
 // VisibleTargets returns least-disclosure projections of the targets granted to
 // the user, given the spaces they are a member of (server-side check).
+//
+// Unlike ListTargets it skips a target record that cannot be decoded: a member
+// cannot use or repair it either way, and one corrupt record must not take the
+// target list away from every member of every Space.
 func (s *StateStore) VisibleTargets(ctx context.Context, userID string, spaceIDs []string) ([]PublicView, error) {
-	all, err := s.ListTargets(ctx)
+	all, _, err := s.listTargets(ctx)
 	if err != nil {
 		return nil, err
 	}

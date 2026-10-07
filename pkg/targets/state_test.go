@@ -263,3 +263,39 @@ func TestStateStore_SurvivesRestart(t *testing.T) {
 		t.Fatalf("MayUse after restart = %v, %v", allowed, err)
 	}
 }
+
+// A corrupt target record is reported, not dropped: rotation and bootstrap act
+// on what the full list does not show (review-2026-10.md F2). Members keep
+// their view of the targets that can be read.
+func TestStateStore_UnreadableTargetIsReportedNotDropped(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	store := NewStateStore(backing)
+
+	for _, id := range []string{"good", "bad"} {
+		if _, err := store.CreateTarget(ctx, Target{ID: id, Name: id}); err != nil {
+			t.Fatalf("CreateTarget: %v", err)
+		}
+		if err := store.PutGrant(ctx, Grant{TargetID: id, Scope: ScopeAllUsers}); err != nil {
+			t.Fatalf("PutGrant: %v", err)
+		}
+	}
+	keys, err := backing.List(ctx, targetPrefix+"/bad")
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("List = %v (%v)", keys, err)
+	}
+	if err := backing.Replace(ctx, keys[0], []byte("{not json")); err != nil {
+		t.Fatalf("corrupt: %v", err)
+	}
+
+	_, err = store.ListTargets(ctx)
+	var unreadable ErrUnreadableTargets
+	if !errors.As(err, &unreadable) || len(unreadable.Keys) != 1 || unreadable.Keys[0] != keys[0] {
+		t.Fatalf("ListTargets = %v, want ErrUnreadableTargets naming %s", err, keys[0])
+	}
+
+	views, err := store.VisibleTargets(ctx, "alice", []string{"s1"})
+	if err != nil || len(views) != 1 || views[0].ID != "good" {
+		t.Fatalf("VisibleTargets = %+v (%v), want the readable target", views, err)
+	}
+}
