@@ -1,17 +1,21 @@
-// Package takeout implements the admin half of restore Path A: extracting a
-// Space's ciphertext from a target and verifying it (decisions.md, "Restore
-// paths (contract)").
+// Package takeout defines the Take-Out of restore Path A: its directory
+// layout, its manifest, and the key-free integrity check both halves of the
+// path run on it (decisions.md, "Restore paths (contract)").
 //
 // The split of powers is the whole point and is enforced by the package layout:
 //
-//   - Extract runs with S3 access only. It has no key parameter of any kind and
-//     therefore *cannot* decrypt: the admin moves ciphertext, nothing else
-//     (decisions.md #2, #15).
+//   - The admin half, takeout/remote, runs with S3 access only. Extract has no
+//     key parameter of any kind and therefore *cannot* decrypt: the admin moves
+//     ciphertext, nothing else (decisions.md #2, #15).
 //   - The user-side half lives in the subpackage takeout/decrypt, which runs on
 //     the user's own machine with the Recovery Key, touches no network and needs
-//     no OpenCloud (decisions.md, Path A). Keeping it out of this package is
-//     what lets the admin's binary be built without any code that unwraps a Data
-//     Key or restores a repository, rather than merely not calling it.
+//     no OpenCloud (decisions.md, Path A). Keeping it out of the admin's
+//     packages is what lets the admin's binary be built without any code that
+//     unwraps a Data Key or restores a repository, rather than merely not
+//     calling it.
+//   - This package sits under both and links neither an S3 client nor an
+//     unwrap path, so each side can read the format without the other's
+//     capabilities (phase 10.6).
 //
 // A Take-Out is a plain directory so it stays readable by hand and by future
 // tooling:

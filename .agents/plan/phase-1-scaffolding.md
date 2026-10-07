@@ -19,10 +19,12 @@ layout does not depend on spike outcomes; the `/pkg/snapshot` internals do).
    /pkg/targets/        # admin-managed S3 targets, grants, TW cred sealing
    /pkg/spacecfg/       # per-Space backup config (target binding, retention)
    /pkg/snapshot/       # kopia wrapper (repo-per-space lifecycle)
+   /pkg/snapshot/s3repo/# kopia's S3 storage for it (kept out of decrypt, 10.6)
    /pkg/objstore/       # object boundary for what sits beside a repository
    /pkg/backup/         # run orchestration (CS3 -> snapshot -> target), prune
    /pkg/restore/        # Path B: snapshot -> CS3, into Restore/<ts>/
-   /pkg/takeout/        # Path A: admin extract + verify
+   /pkg/takeout/        # Path A: Take-Out format (manifest, layout, verify)
+   /pkg/takeout/remote/ # Path A: admin extract + envelope publishing (S3 side)
    /pkg/takeout/decrypt/# Path A: the user-side offline decrypt (own package on
                         # purpose — see its doc comment)
    /pkg/scheduler/      # per-space cron scheduling, prune cadence

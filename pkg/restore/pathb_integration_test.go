@@ -40,6 +40,7 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/restore"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/snapshot/s3repo"
 	"opencloud-backup-plugin/pkg/spacecfg"
 	"opencloud-backup-plugin/pkg/targets"
 )
@@ -232,7 +233,7 @@ func newFixture(ctx context.Context, t *testing.T) *fixture {
 	}
 	space.put("assets/big.bin", big, mtime)
 
-	engine, err := snapshot.NewEngine(snapshot.S3Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
+	engine, err := snapshot.NewEngine(s3repo.Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
