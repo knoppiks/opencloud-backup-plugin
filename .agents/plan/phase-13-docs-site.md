@@ -90,7 +90,7 @@ page is stale:
 | Configuration reference | Phase 10's config struct (`go generate`) |
 | CLI reference | the binaries' flag sets (`-h` output captured) |
 | HTTP API | the OpenAPI spec (13.4) |
-| Compatibility matrix | `test/fixtures/opencloud/versions.yaml` + release notes |
+| Compatibility matrix | `pkg/ocversion/versions.yaml` + release notes |
 | Screenshots | `web/e2e/screens.e2e.ts` artifacts |
 
 ## 13.4 OpenAPI
