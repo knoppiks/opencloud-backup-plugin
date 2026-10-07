@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"opencloud-backup-plugin/internal/cli"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/state"
 )
@@ -15,9 +16,9 @@ import (
 func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 func TestRunCommandRejectsUnknownCommands(t *testing.T) {
-	err := runCommand(context.Background(), testConfig(t), "rotate-everything", nil, discardLogger(), io.Discard)
-	if err == nil {
-		t.Fatal("an unknown command was accepted")
+	err := runCommand(t, testConfig(t), "rotate-everything")
+	if cli.ExitCode(err) != cli.ExitUsage {
+		t.Fatalf("err = %v, want a usage error", err)
 	}
 	if !strings.Contains(err.Error(), "rotate-srw") {
 		t.Fatalf("err = %v, want the known commands listed", err)
@@ -36,9 +37,9 @@ func TestRotateRefusesWithoutTheServiceStoppedFlag(t *testing.T) {
 				"SRW_KEY_OLD="+encodedKey(t), "SRW_KEY="+encodedKey(t),
 				"TW_KEY_OLD="+encodedKey(t), "TW_KEY="+encodedKey(t))
 
-			err := runCommand(context.Background(), cfg, command, nil, discardLogger(), io.Discard)
-			if err == nil {
-				t.Fatal("rotation ran without -service-stopped")
+			err := runCommand(t, cfg, command)
+			if cli.ExitCode(err) != cli.ExitUsage {
+				t.Fatalf("err = %v, want a usage error: rotation ran without -service-stopped", err)
 			}
 			if !strings.Contains(err.Error(), "-service-stopped") {
 				t.Fatalf("err = %v, want it to say what to do", err)
@@ -57,7 +58,7 @@ func TestRotateRequiresBothKeys(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := testConfig(t, "SRW_KEY_OLD="+c.old, "SRW_KEY="+c.new)
 
-			err := runCommand(context.Background(), cfg, "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
+			err := runCommand(t, cfg, "rotate-srw", "-service-stopped")
 			if err == nil {
 				t.Fatal("rotation ran without both keys")
 			}
@@ -75,7 +76,7 @@ func TestRotateRequiresDurableState(t *testing.T) {
 		"SRW_KEY_OLD="+encodedKey(t), "SRW_KEY="+encodedKey(t),
 		"CS3_GATEWAY_ADDR=127.0.0.1:0", "OC_SERVICE_ACCOUNT_ID=svc", "OC_SERVICE_ACCOUNT_SECRET=s")
 
-	err := runCommand(context.Background(), cfg, "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
+	err := runCommand(t, cfg, "rotate-srw", "-service-stopped")
 	if err == nil {
 		t.Fatal("rotation ran against in-memory state")
 	}
@@ -87,7 +88,7 @@ func TestRotateRequiresDurableState(t *testing.T) {
 func TestRotateRequiresACS3Gateway(t *testing.T) {
 	cfg := testConfig(t, "SRW_KEY_OLD="+encodedKey(t), "SRW_KEY="+encodedKey(t))
 
-	err := runCommand(context.Background(), cfg, "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
+	err := runCommand(t, cfg, "rotate-srw", "-service-stopped")
 	if err == nil {
 		t.Fatal("rotation ran without a gateway")
 	}
@@ -97,8 +98,9 @@ func TestRotateRequiresACS3Gateway(t *testing.T) {
 }
 
 func TestRotateRejectsStrayArguments(t *testing.T) {
-	if _, err := parseRotateFlags(srwRotation, []string{"-service-stopped", "everything"}); err == nil {
-		t.Fatal("a stray argument was accepted")
+	_, err := parseRotate(srwRotation)([]string{"-service-stopped", "everything"}, io.Discard, io.Discard)
+	if cli.ExitCode(err) != cli.ExitUsage {
+		t.Fatalf("err = %v, want a usage error for a stray argument", err)
 	}
 }
 

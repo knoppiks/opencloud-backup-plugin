@@ -1429,6 +1429,27 @@ and opened by every test run. Frozen fixtures are append-only.
   OpenCloud canary. Only a failing input the fuzzer wrote counts; a run
   that fails for any other reason stays red without an issue.
 
+### Amendments from Phase 10.5 (command line, #78)
+
+None reopens a locked decision. `takeout` and `decrypt` keep their input
+surface (no key flag, credentials from the environment only); the tests that
+audit it are unchanged.
+
+- **One exit-status convention for all three programs:** 0 success and
+  help, 1 failure, 2 wrong usage. **Proposed, owner to confirm:** "usage"
+  is whatever is decidable from the command line alone, including a missing
+  required flag, a stray positional argument (ignored before) and a rotation
+  without `-service-stopped`; anything read from the environment is a
+  failure.
+- **`backupd` reads a command's flags before its configuration**, so help,
+  version and wrong usage need no environment.
+- **Proposed, owner to confirm:** `takeout -insecure` is renamed
+  `-plain-http` outright, with no deprecated alias: nothing has been
+  released and the version is 0.x (compatibility-policy.md §1). The flag
+  rules that do apply from 1.0.0 are added to §2: `decrypt`'s flags are
+  never removed or renamed (an alias at most); `takeout`'s and `backupd`'s
+  get the environment variables' one-MINOR deprecation with a warning.
+
 ---
 
 ## Trust & key model

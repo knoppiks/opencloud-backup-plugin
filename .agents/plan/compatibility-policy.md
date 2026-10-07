@@ -75,11 +75,18 @@ No MAJOR bump licenses dropping them:
   versions read older layouts (as R1 does with the pre-versioned ones). The
   credential blob's shapes are frozen in
   `pkg/targets/testdata/sealed-credentials-v1.json`.
+- **`decrypt`'s command line** (from 1.0.0): no flag is removed or renamed;
+  a new name may be added as an alias. `decrypt` is run years after the
+  instructions for it were written down, by someone who cannot ask.
 
 ### Things with a deprecation period
 
 - **Environment variables**: a renamed variable keeps working for at least one
   MINOR release, logging a warning that names its replacement.
+- **Flags and commands of `takeout` and `backupd`** (from 1.0.0): same rule.
+  A renamed flag or command keeps working for at least one MINOR release,
+  with a warning that names its replacement. Before 1.0.0 (§1) they are
+  renamed outright, as `takeout -insecure` → `-plain-http` was (#78).
 - **HTTP API** (`/api/v1`): the only client is the bundle of the same version,
   so the API is versioned by an **API level** integer in
   `GET /api/v1/version`, not by URL. `/api/v2` is reserved for a change that

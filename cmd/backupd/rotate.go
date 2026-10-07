@@ -20,9 +20,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"time"
 
+	"opencloud-backup-plugin/internal/cli"
 	"opencloud-backup-plugin/internal/config"
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
@@ -37,27 +37,6 @@ import (
 // against an unreachable state Space is not something an operator should have to
 // interrupt by hand.
 const rotateTimeout = 10 * time.Minute
-
-// runCommand dispatches an operator subcommand.
-//
-// stdout receives the command's output and nothing else; logs go to the
-// logger, which writes to stderr.
-func runCommand(
-	ctx context.Context, cfg serviceEnv, name string, args []string, logger *slog.Logger, stdout io.Writer,
-) error {
-	switch name {
-	case "rotate-srw":
-		return runRotate(ctx, srwRotation, cfg.Keys, cfg.CS3, cfg.State, args, logger)
-	case "rotate-tw":
-		return runRotate(ctx, twRotation, cfg.Keys, cfg.CS3, cfg.State, args, logger)
-	case "provision-state-space":
-		return runProvisionStateSpace(ctx, cfg.CS3, cfg.State, args, logger, stdout)
-	default:
-		return fmt.Errorf(
-			"unknown command %q; known commands are provision-state-space, rotate-srw and rotate-tw",
-			name)
-	}
-}
 
 // rotation describes one custody key's rotation: where its keys come from, and
 // what re-wrapping means for it.
@@ -97,23 +76,43 @@ var twRotation = rotation{
 	},
 }
 
+// parseRotate reads a rotation's command line. The operator's assertion is
+// required before anything is read, let alone written: a rotation racing a
+// backup run hands that run an envelope it cannot open.
+func parseRotate(r rotation) func(args []string, stdout, stderr io.Writer) (action, error) {
+	return func(args []string, stdout, stderr io.Writer) (action, error) {
+		fs := flag.NewFlagSet(r.name, flag.ContinueOnError)
+		stopped := fs.Bool("service-stopped", false,
+			"confirm the backup service is stopped; rotation must not run alongside backups")
+		fs.Usage = func() {
+			_, _ = fmt.Fprintf(fs.Output(),
+				"usage: backupd %s -service-stopped\n\n"+
+					"Re-wraps %s from $%s to $%s. Data keys, snapshots and Recovery Keys\n"+
+					"are untouched. Safe to re-run: an interrupted rotation is finished by\n"+
+					"running it again.\n\n",
+				r.name, r.what, r.oldEnv, r.newEnv)
+			fs.PrintDefaults()
+		}
+		if err := cli.Parse(fs, args, stdout, stderr); err != nil {
+			return nil, err
+		}
+		if !*stopped {
+			return nil, cli.Usagef(
+				"refusing to rotate while the service may be running: stop it, then pass -service-stopped. "+
+					"A run that starts mid-rotation can read an envelope this command has already re-wrapped "+
+					"under a key that run does not hold (%s)", r.name)
+		}
+		return func(ctx context.Context, cfg serviceEnv, logger *slog.Logger, _ io.Writer) error {
+			return runRotate(ctx, r, cfg.Keys, cfg.CS3, cfg.State, logger)
+		}, nil
+	}
+}
+
 // runRotate re-wraps every affected record from the old key to the new one, in
 // the state Space reached through the gateway.
 func runRotate(
-	ctx context.Context, r rotation, custody custodyEnv, cs3Env cs3.Env, st stateEnv,
-	args []string, logger *slog.Logger,
+	ctx context.Context, r rotation, custody custodyEnv, cs3Env cs3.Env, st stateEnv, logger *slog.Logger,
 ) error {
-	stopped, err := parseRotateFlags(r, args)
-	if err != nil {
-		return err
-	}
-	if !stopped {
-		return fmt.Errorf(
-			"refusing to rotate while the service may be running: stop it, then pass -service-stopped. "+
-				"A run that starts mid-rotation can read an envelope this command has already re-wrapped "+
-				"under a key that run does not hold (%s)", r.name)
-	}
-
 	oldSecret, newSecret := r.keys(custody)
 	oldKey, err := requireWrapKey(r.oldEnv, oldSecret)
 	if err != nil {
@@ -163,30 +162,6 @@ func runRotate(
 	}
 	logger.Warn("remove the old key from the deployment now; it opens nothing any more", "variable", r.oldEnv)
 	return nil
-}
-
-// parseRotateFlags reads the command's only flag.
-func parseRotateFlags(r rotation, args []string) (bool, error) {
-	fs := flag.NewFlagSet(r.name, flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	stopped := fs.Bool("service-stopped", false,
-		"confirm the backup service is stopped; rotation must not run alongside backups")
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr,
-			"usage: backupd %s -service-stopped\n\n"+
-				"Re-wraps %s from $%s to $%s. Data keys, snapshots and Recovery Keys\n"+
-				"are untouched. Safe to re-run: an interrupted rotation is finished by\n"+
-				"running it again.\n\n",
-			r.name, r.what, r.oldEnv, r.newEnv)
-		fs.PrintDefaults()
-	}
-	if err := fs.Parse(args); err != nil {
-		return false, err
-	}
-	if fs.NArg() > 0 {
-		return false, fmt.Errorf("unexpected argument %q", fs.Arg(0))
-	}
-	return *stopped, nil
 }
 
 // requireWrapKey loads a wrapping key that must be present.
