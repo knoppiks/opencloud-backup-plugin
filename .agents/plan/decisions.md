@@ -189,9 +189,13 @@ than drifting.
     OpenCloud's; formats with their own version numbers are read forever
     regardless. Spelled out in `compatibility-policy.md`.
 
-25. **Supported OpenCloud = the current Production line plus every Rolling
-    release since it**, each one exercised in CI. Outside that window the
-    service warns and keeps running. `compatibility-policy.md` §3.
+25. **Supported OpenCloud = every release of the newest two majors from the
+    oldest tested one up, plus the current Production line**, bracketed by
+    CI legs (the oldest release, the newest minor of each major, the newest
+    Production patch). Outside that window the service warns and keeps
+    running. `compatibility-policy.md` §3. *(Amended 2026-10-08, "Moving to
+    OpenCloud 8.x"; was "the current Production line plus every Rolling
+    release since it".)*
 
 26. **Module path `github.com/knoppiks/opencloud-backup-plugin`; everything
     under `internal/` except the format reference implementations**
@@ -1222,7 +1226,8 @@ layout, which was a scaffolding choice rather than a locked decision.
 
 - **Still open, owned by the phase docs:** dropping an OpenCloud version that
   left the window — MINOR or MAJOR (policy §2); the grace period for the
-  previous Production line (policy §3); per-Space metric labels (Phase 14);
+  previous Production line (policy §3; superseded by the #25 amendment in
+  "Moving to OpenCloud 8.x"); per-Space metric labels (Phase 14);
   the CSP mechanism for the compose add-on (Phase 12); busybox (Phase 11);
   R10's option; Phase 5b — v1 or backlog.
 
@@ -1242,11 +1247,68 @@ layout, which was a scaffolding choice rather than a locked decision.
   while its Go integration suite passed. Working around it would need an
   admin to create the Space and hand it over, which is the procedure 8c
   replaced because it leaves a non-removable admin grant (decisions.md, 8c
-  amendment). So the window is **Rolling 7.3.0 to 8.1.0** until the next
-  Production line (due 2026-10-26, built on a reva with the fix) joins it.
-  `versions.yaml` has no `production` leg until then; #25 is otherwise
-  unchanged. An upstream backport request to stable-2.46 would bring 7.2.x
+  amendment). So 7.3.0 is a floor, and `versions.yaml` has no `production`
+  leg until the next Production line (due 2026-10-26, built on a reva with
+  the fix). An upstream backport request to stable-2.46 would bring 7.2.x
   back.
+- **#25 amended: a version range over two majors, not a channel rule (owner
+  decision, 2026-10-08).** Production is not a separate codebase: it is a
+  Rolling release OpenCloud keeps patching on a side branch, and each new
+  line restarts from `main`. The old rule ("the current Production line plus
+  every Rolling release since it was cut") therefore restarted the window at
+  every cut: on 2026-10-26 everything from 7.3.0 to the new line would have
+  left at once, including the release households ran the day before, and
+  the proposed 90-day grace for the previous Production line covered nobody.
+  The rule now: every release of the newest two majors, from the oldest leg
+  up, plus every patch of the current Production line, whatever its major.
+  Legs: `oldest` (first release of the previous major, floor 7.3.0), because
+  breaks land in minors too (7.5.0's data URLs) and the oldest version
+  claimed must run; `previous-major` (its newest minor); `newest`;
+  `production` (newest patch, kept because its patches come from a side
+  branch). `Parse` refuses Rolling legs spanning three majors, so the window
+  cannot silently grow. Rejected: a time-based window (would have pulled the
+  broken 7.2 reva into range); newest-only (drops anyone a release behind).
+  The channel survives only in the pin file, for the image and the
+  Production patches.
+- **Supported range: 7.3.0 to 8.1.0.** CI legs `oldest` (7.3.0),
+  `previous-major` (7.5.0) and `newest` (8.1.0), pinned by digest. The full
+  OpenCloud suite and the browser E2E passed on 7.3.0 and 8.1.0 in PR #66;
+  7.5.0 was the only leg before PR #66 and is a leg again since #67.
+  Per-item measurements: phase-9 doc, 9.3 outcome.
+- **What did not change from 7.3.0 to 8.1.0:** the admin app-role id
+  (`71881883-…`) and the `appRoleAssignments` / `memberOf` shape; the Space
+  grants `Opaque` map and the permission sets `role.go` maps to roles; the
+  state Space's overwrite semantics; graph `/me` as the source of the user
+  id; read-straight-after-upload (the "too early" retry stays; whether 8.1
+  still answers 425 was not observed). OpenCloud 8.1.0 vendors the same
+  `go-cs3apis` pseudo-version as 7.3.0 and as this module, so no bump.
+- **What changed, and what the plugin did about it (PR #66):**
+  - *Data path below 7.5.* 7.3.0 and 7.4.0 hand out the public data gateway
+    with a transfer token; 7.5.0 and 8.x the data server's own address
+    without one (`expose_data_server` hard-coded on). `CS3_DATA_SERVER_URL`
+    now rewrites only tokenless URLs, so one configuration serves the whole
+    window and an upgrade across 7.5. It keys on the gateway's response,
+    not on a version number.
+  - *Default CSP.* 8.1.0 adds `blob:` to `style-src`. Neither 7.x nor 8.1
+    allows `'wasm-unsafe-eval'`. The fixture's CSP is now 8.1's default plus
+    that one line, on every leg; operators are told to start from their own
+    version's default.
+  - *Web SDK.* `extension-sdk`, `web-pkg`, `web-client` at 8.1.0. **One
+    bundle serves both majors**: the same build passes E2E on a 7.3.0 and an
+    8.1.0 host, so the policy needs no "bundle per OpenCloud major" clause.
+  - *Version detection.* `backupd` reads `/status.php` `productversion` (no
+    credential, same shape 7.2–8.1), warns outside the embedded window,
+    never refuses (#25).
+- **Canary proven (#67):** a hand-started dry run resolved
+  `opencloud-rolling:latest` to 8.1.0, passed, and opened its test issue
+  (#68).
+- **Policy items (#67):** dropping a version that left the window is MINOR
+  (policy §2): proposed, owner to confirm, applied as the working rule. The
+  90-day grace for the previous Production line (policy §3) is superseded by
+  the amended #25: a release leaves only when the second major after its own
+  ships, and the current Production line never leaves (proposed, owner to
+  confirm). Neither has bound anything yet: the plugin is 0.x and the only
+  drop (7.2.x) came before any release.
 
 ---
 

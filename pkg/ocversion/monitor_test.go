@@ -63,7 +63,7 @@ func newTestMonitor(src Source) (*Monitor, *syncBuffer) {
 }
 
 func TestMonitorInsideWindow(t *testing.T) {
-	src := &fakeSource{info: Info{Version: "7.2.4", Edition: "stable"}}
+	src := &fakeSource{info: Info{Version: "8.2.3", Edition: "stable"}}
 	m, logs := newTestMonitor(src)
 	if m.Status().Known {
 		t.Fatal("known before the first check")
@@ -72,11 +72,11 @@ func TestMonitorInsideWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := m.Status()
-	if !st.Known || !st.InWindow || st.Version != "7.2.4" || st.Edition != "stable" {
+	if !st.Known || !st.InWindow || st.Version != "8.2.3" || st.Edition != "stable" {
 		t.Errorf("status = %+v", st)
 	}
 	out := logs.String()
-	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "version=7.2.4") {
+	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "version=8.2.3") {
 		t.Errorf("version not logged:\n%s", out)
 	}
 	if strings.Contains(out, "level=WARN") {

@@ -201,7 +201,7 @@ jobs:
       run: echo "legs=$(yq -o=json -I=0 '[.legs[].name]' pkg/ocversion/versions.yaml)" >> "$GITHUB_OUTPUT"
 
   # The fixture suite and the browser E2E on every supported leg, all blocking.
-  # Job names carry the leg's role, not its version ("opencloud (newest-rolling)
+  # Job names carry the leg's role, not its version ("opencloud (newest)
   # / e2e"), so a ruleset can require them across version bumps.
   opencloud:
     name: opencloud (${{ matrix.leg }})
