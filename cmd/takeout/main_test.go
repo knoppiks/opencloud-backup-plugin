@@ -173,12 +173,13 @@ func TestRunReportsMissingArguments(t *testing.T) {
 
 // Credentials are taken from the environment, never from the command line.
 func TestCredentialsComeFromTheEnvironment(t *testing.T) {
-	src, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatalf("read source: %v", err)
-	}
-	if !strings.Contains(string(src), `os.Getenv("S3_ACCESS_KEY_ID")`) {
-		t.Error("S3 credentials must be read from the environment")
+	// The environment is read, and through the shared configuration: an
+	// unedited placeholder there is refused by name before anything else.
+	t.Setenv("S3_ACCESS_KEY_ID", "REPLACE_ME")
+	t.Setenv("S3_SECRET_ACCESS_KEY", "")
+	err := run([]string{"-bucket", "b", "-space", "s", "-out", t.TempDir()}, os.Stderr)
+	if err == nil || !strings.Contains(err.Error(), "S3_ACCESS_KEY_ID still holds the manifest's placeholder") {
+		t.Errorf("run = %v, want the placeholder in S3_ACCESS_KEY_ID refused", err)
 	}
 
 	var cfg config

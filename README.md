@@ -266,7 +266,11 @@ blocked.
 ## Deployment: step by step
 
 In order, for a Kubernetes deployment next to an existing OpenCloud. `deploy/`
-holds the manifests; every `REPLACE_ME` in them is refused at startup.
+holds the manifests; every `REPLACE_ME` in them is refused at startup. Every
+environment variable, its default and what it does is listed in the
+[environment reference](docs/reference/environment.md), which is generated from
+the code. The service logs the configuration it ended up with at startup, with
+secrets shown only as set or unset.
 
 1. **OpenCloud: expose the gateway and the data server.**
    - Set `OC_GATEWAY_GRPC_ADDR=0.0.0.0:9142` and add port 9142 to a Service.
@@ -687,6 +691,8 @@ Playwright's.
 
 ## Documentation
 
+- Environment reference (generated):
+  [`docs/reference/environment.md`](docs/reference/environment.md)
 - Design decisions, trust model, and threat model:
   [`.agents/plan/decisions.md`](.agents/plan/decisions.md)
 - Phased implementation roadmap: [`.agents/plan/`](.agents/plan/)

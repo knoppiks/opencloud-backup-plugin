@@ -12,30 +12,26 @@ import (
 	"testing"
 	"time"
 
+	"opencloud-backup-plugin/internal/config"
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/instance"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/state"
 )
 
-// minimalServiceEnv is the smallest environment buildService accepts: no
+// minimalServiceEnv is the smallest configuration buildService accepts: no
 // OIDC, no CS3, no keys, state supplied by the test.
-func minimalServiceEnv(t *testing.T) {
+func minimalServiceEnv(t *testing.T) []string {
 	t.Helper()
-	t.Setenv(workDirAllowDiskVar, "true")
-	t.Setenv(workDirVar, t.TempDir())
-	for _, name := range []string{
-		"OIDC_ISSUER", "OC_BASE_URL", "ADMIN_SUBJECT_ALLOWLIST", "CS3_GATEWAY_ADDR",
-		"SRW_KEY", "TW_KEY", "SMTP_HOST", "SMTP_PORT", "BOOTSTRAP_ENABLE",
-	} {
-		t.Setenv(name, "")
-	}
+	return []string{"BACKUP_WORK_DIR_ALLOW_DISK=true", "BACKUP_WORK_DIR=" + t.TempDir()}
 }
 
 // sharedState hands every startup the same store, as a restarted pod finds
 // the same state Space.
 func sharedState(st state.Store) startupDeps {
-	return startupDeps{openState: func(*cs3.Client, *slog.Logger) (state.Store, error) { return st, nil }}
+	return startupDeps{openState: func(config.Backupd, *cs3.Client, *slog.Logger) (state.Store, error) {
+		return st, nil
+	}}
 }
 
 // A startup that fails after registering the instance must withdraw the
@@ -43,21 +39,22 @@ func sharedState(st state.Store) startupDeps {
 // instance is running" and the real error is never seen again
 // (review-2026-10.md F1).
 func TestBuildService_AFailedStartupReleasesTheInstanceRecord(t *testing.T) {
-	minimalServiceEnv(t)
+	env := minimalServiceEnv(t)
 	st := state.NewMemoryStore()
 
-	// Fails in buildNotifier, well after the claim.
-	t.Setenv("SMTP_PORT", "not-a-port")
+	// Fails in targets.Bootstrap, well after the claim: seeding is switched
+	// on with no target to seed.
+	broken := testConfig(t, append(env, "TW_KEY="+encodedKey(t), "BOOTSTRAP_ENABLE=true")...)
 	// The returned cleanup is deliberately not called: buildService owns
 	// releasing what it acquired when it fails.
-	_, _, err := buildService(context.Background(), discardLogger(), sharedState(st))
-	if err == nil || !strings.Contains(err.Error(), "SMTP_PORT") {
-		t.Fatalf("first start = %v, want the SMTP_PORT error", err)
+	_, _, err := buildService(context.Background(), broken, discardLogger(), sharedState(st))
+	if err == nil || !strings.Contains(err.Error(), "bootstrap") {
+		t.Fatalf("first start = %v, want the bootstrap error", err)
 	}
 
 	// The restart, inside the record's TTL, gets past the guard.
-	t.Setenv("SMTP_PORT", "")
-	svc, cleanup, err := buildService(context.Background(), discardLogger(), sharedState(st))
+	cfg := testConfig(t, env...)
+	svc, cleanup, err := buildService(context.Background(), cfg, discardLogger(), sharedState(st))
 	if errors.Is(err, instance.ErrAnotherInstance) {
 		t.Fatalf("restart refused by the failed start's instance record: %v", err)
 	}
@@ -70,7 +67,7 @@ func TestBuildService_AFailedStartupReleasesTheInstanceRecord(t *testing.T) {
 	cleanup()
 
 	// And a clean stop releases it as well.
-	_, cleanup, err = buildService(context.Background(), discardLogger(), sharedState(st))
+	_, cleanup, err = buildService(context.Background(), cfg, discardLogger(), sharedState(st))
 	if err != nil {
 		t.Fatalf("start after a clean stop: %v", err)
 	}
@@ -79,16 +76,16 @@ func TestBuildService_AFailedStartupReleasesTheInstanceRecord(t *testing.T) {
 
 // The live instance is still protected: the guard has not been weakened.
 func TestBuildService_ASecondLiveInstanceIsStillRefused(t *testing.T) {
-	minimalServiceEnv(t)
+	cfg := testConfig(t, minimalServiceEnv(t)...)
 	st := state.NewMemoryStore()
 
-	_, cleanup, err := buildService(context.Background(), discardLogger(), sharedState(st))
+	_, cleanup, err := buildService(context.Background(), cfg, discardLogger(), sharedState(st))
 	if err != nil {
 		t.Fatalf("first start: %v", err)
 	}
 	defer cleanup()
 
-	_, cleanup2, err := buildService(context.Background(), discardLogger(), sharedState(st))
+	_, cleanup2, err := buildService(context.Background(), cfg, discardLogger(), sharedState(st))
 	defer cleanup2()
 	if !errors.Is(err, instance.ErrAnotherInstance) {
 		t.Fatalf("second start = %v, want ErrAnotherInstance", err)
@@ -120,7 +117,7 @@ func TestProvisionStateSpace_StdoutIsExactlyTheID(t *testing.T) {
 
 func TestRun_ACommandFailureLogsToStderrOnly(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"no-such-command"}, &stdout, &stderr); code != 1 {
+	if code := run([]string{"no-such-command"}, nil, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
 	if stdout.Len() != 0 {

@@ -128,6 +128,56 @@ old code. Where it differs from the table:
 - Service-account credentials checked in serve mode (today only in
   `provision`).
 
+**Outcome (10.3, #74).** All six done, in `internal/config` from the start
+(10.7 does not have to move it). Where it differs from the plan:
+
+- **One struct per binary**: `config.Backupd` (the service and its operator
+  commands, 48 variables in ten sections) and `config.Takeout` (its two S3
+  credentials). Each field carries `env`, `default` and `doc` tags; `run`
+  loads the configuration once and hands it down, so no `os.Getenv` is left
+  under `cmd/`.
+- **Reference** at `docs/reference/environment.md` (13.1 puts the docs site's
+  source under `docs/`). `go generate ./internal/config` (or `make
+  generate`) writes it; `TestReferenceIsCurrent` fails when it is stale.
+  Defaults are declared as real values (`2`, `365`, `24`, the admin role id,
+  the state prefix) and a test holds them equal to the packages' own
+  fallbacks.
+- **Every problem in one error.** Type errors and cross-field checks are
+  collected and reported together, so one restart shows them all. An
+  unreplaced placeholder is reported alone, as before, because everything
+  after it is a symptom.
+- **Strictness, *proposed, owner to confirm*:** booleans are exactly `true`
+  or `false` (not `1`, `yes`, `True`); `STATE_BACKEND` refuses anything but
+  `memory` (case-insensitive, as before) instead of reading a typo as
+  "durable". Both used to be silently accepted. The shipped manifests only
+  use `"true"`/`"false"`.
+- **Redaction by type, *proposed, owner to confirm*:** `config.Secret`
+  holds its value behind an unexported pointer and prints `[redacted]` (or
+  nothing when unset) through `String`, `GoString`, `LogValue` and
+  `MarshalText`, so even `%d` or reflection over the struct shows no value.
+  The rule for what is a Secret: whatever the manifest takes from a
+  Kubernetes Secret, which includes `OC_SERVICE_ACCOUNT_ID` and the S3
+  access key ids. A test fails if a credential-named variable is declared as
+  a plain string.
+- **Effective-config line:** `msg=configuration`, one attribute per variable
+  under `config`, keyed by the lower-cased variable name, unset ones
+  included so defaults are visible. Logged by `serve` before anything can
+  fail; the commands do not log it.
+- **Service account, *proposed, owner to confirm*:** required whenever
+  `CS3_GATEWAY_ADDR` is set, in every mode (service, rotation, provision),
+  since every CS3 call is made as it.
+- **Moved into config:** the base-path rules, the TLS pair, the OIDC
+  prerequisites, the timezone, the wrapping keys' shape and SRW ≠ TW (the
+  `_OLD` keys are now shape-checked at load too). **Left with the
+  consumer:** `CS3_DATA_SERVER_URL` parsing (`pkg/cs3`; config stays free of
+  the gRPC stack `takeout` would then link), "`STATE_SPACE_ID` required" (the
+  provisioning command needs it *unset*), the work directory's filesystem,
+  and the bootstrap target's completeness (`targets.Bootstrap`).
+- **Placeholder check** reads the declared variables, so a placeholder in a
+  name the service does not read (even one with a familiar prefix) is no
+  longer refused. In exchange a new test fails if a shipped manifest names
+  a variable the service does not read.
+
 ## 10.4 Formats that must parse forever
 
 - **Fuzz targets**, seeded from `pkg/keys/testdata/vectors.json`:
@@ -209,7 +259,8 @@ asserted by a dependency-graph test like the existing one for `takeout`.
       (F1, F2, F4–F7 done in 10.1 (#70); F3 in 10.2 (#72).)
 - [x] Every 5xx leaves exactly one server-side log line with a request id;
       `noleak` tests cover the new lines. (10.2, #72)
-- [ ] One config struct; environment reference generated from it.
+- [x] One config struct; environment reference generated from it.
+      (10.3, #74: one per binary, `internal/config`.)
 - [ ] Fuzz targets run in CI; frozen Take-Out and TW-blob fixtures opened by
       tests; gitleaks clean.
 - [ ] `decrypt` dependency test passes (no S3/AWS/Azure).
