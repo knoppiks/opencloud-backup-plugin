@@ -14,10 +14,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"path"
-	"sort"
-	"strings"
 
 	"opencloud-backup-plugin/pkg/snapshot"
 )
@@ -27,63 +23,7 @@ const (
 	workDirVar = "BACKUP_WORK_DIR"
 	// workDirAllowDiskVar lets an operator accept a disk-backed work directory.
 	workDirAllowDiskVar = "BACKUP_WORK_DIR_ALLOW_DISK"
-	// stateBackendVar selects the state backend; only "memory" is special.
-	stateBackendVar = "STATE_BACKEND"
-	// stateBackendMemory is the explicit opt-in to throwaway state.
-	stateBackendMemory = "memory"
-	// tlsCertVar / tlsKeyVar make the service terminate TLS itself.
-	tlsCertVar = "TLS_CERT_FILE"
-	tlsKeyVar  = "TLS_KEY_FILE"
-	// basePathVar is the path prefix the ingress routes to this service.
-	basePathVar = "BACKUPD_BASE_PATH"
 )
-
-// probePaths are reached directly on the pod and therefore never carry the
-// ingress's path prefix.
-var probePaths = []string{"/healthz", "/readyz"}
-
-// resolveBasePath returns the validated path prefix the routes are mounted
-// under, or "" for none.
-//
-// The service shares an origin with OpenCloud (decisions.md, R5: the listener is
-// plain HTTP behind an ingress, and a Data Key crosses it once at key setup), so
-// `/api/v1/` is a namespace it shares with OpenCloud's own. Nothing collides on
-// 7.3.0, which is a statement about one release of software this project does
-// not control. A prefix retires the whole collision class.
-//
-// This is a *path*, never an origin — the same constraint the browser client
-// enforces on its side. Accepting an absolute URL here would let a deployment
-// place the API somewhere the extension cannot reach it without CORS, which the
-// service deliberately does not implement.
-func resolveBasePath() (string, error) {
-	raw := strings.TrimSpace(os.Getenv(basePathVar))
-	if raw == "" {
-		return "", nil
-	}
-	if strings.Contains(raw, "://") || strings.ContainsAny(raw, "?#") {
-		return "", fmt.Errorf(
-			"%s must be a path such as /backup, not a URL or a query: got %q", basePathVar, raw)
-	}
-	if !strings.HasPrefix(raw, "/") {
-		return "", fmt.Errorf("%s must start with a slash: got %q", basePathVar, raw)
-	}
-	trimmed := strings.TrimRight(raw, "/")
-	if trimmed == "" {
-		// "/" and "//" mean "no prefix". Saying so beats refusing a value that
-		// expresses the default.
-		return "", nil
-	}
-	if path.Clean(trimmed) != trimmed {
-		return "", fmt.Errorf(
-			"%s must be a clean path without empty or relative segments: got %q", basePathVar, raw)
-	}
-	for _, probe := range probePaths {
-		if trimmed == probe {
-			return "", fmt.Errorf("%s must not be %s: the health probes live there", basePathVar, probe)
-		}
-	}
-	return trimmed, nil
-}
 
 // mountBasePath serves h under basePath, keeping the health probes at the root.
 //
@@ -110,8 +50,8 @@ func mountBasePath(h http.Handler, basePath string) http.Handler {
 // Credentials no longer go there at all (pkg/snapshot/handle.go); a memory-backed
 // filesystem takes care of the rest by making "left behind after a crash"
 // impossible rather than unlikely.
-func resolveWorkDir(logger *slog.Logger) (string, error) {
-	dir := os.Getenv(workDirVar)
+func resolveWorkDir(cfg workEnv, logger *slog.Logger) (string, error) {
+	dir := cfg.WorkDir
 	resolved := snapshot.WorkDirOrTemp(dir)
 
 	if removed, err := snapshot.SweepWorkDir(dir); err != nil {
@@ -130,7 +70,7 @@ func resolveWorkDir(logger *slog.Logger) (string, error) {
 		return "", fmt.Errorf("%s: %w", workDirVar, err)
 	case memory:
 		logger.Info("work directory is memory-backed", "dir", resolved)
-	case envBool(workDirAllowDiskVar):
+	case cfg.WorkDirAllowDisk:
 		logger.Warn("work directory is on disk; kopia's per-run cache can outlive a crash there. "+
 			"Accepted because "+workDirAllowDiskVar+" is set", "dir", resolved)
 	default:
@@ -143,58 +83,6 @@ func resolveWorkDir(logger *slog.Logger) (string, error) {
 	return dir, nil
 }
 
-// placeholderMarker is what the shipped manifests put where a deployer must fill
-// something in.
-const placeholderMarker = "REPLACE_ME"
-
-// configPrefixes are the environment variables this service reads. The list is
-// by prefix so it does not have to track every variable, and it is scoped so a
-// placeholder belonging to some other component of the deployment is not this
-// service's business to refuse.
-var configPrefixes = []string{
-	"ADMIN_", "BACKUP_", "BACKUPD_", "BOOTSTRAP_", "CS3_", "JOB_", "NOTIFY_",
-	"OC_", "OIDC_", "PRUNE_", "SCHEDULE", "SMTP_", "SRW_KEY", "STATE_",
-	"TLS_", "TW_KEY",
-}
-
-// checkPlaceholders refuses to start on a manifest that was deployed unedited.
-//
-// The placeholders are not all equal: an unreplaced wrapping key fails loudly on
-// its own (it is not base64), while an unreplaced OIDC audience or state Space id
-// used to start perfectly well and then reject every token, or write state to a
-// Space that does not exist. "Comes up and does not work" is the worst of the
-// available outcomes, because it looks like a bug in the service rather than an
-// unfinished deployment.
-func checkPlaceholders(environ []string) error {
-	names := unreplacedPlaceholders(environ)
-	if len(names) == 0 {
-		return nil
-	}
-	return fmt.Errorf(
-		"%s still holds the manifest's placeholder value: fill it in before deploying "+
-			"(see deploy/ and the README preconditions)", strings.Join(names, ", "))
-}
-
-// unreplacedPlaceholders returns the names of this service's configuration
-// variables whose value still contains the placeholder marker.
-func unreplacedPlaceholders(environ []string) []string {
-	var names []string
-	for _, entry := range environ {
-		name, value, ok := strings.Cut(entry, "=")
-		if !ok || !strings.Contains(value, placeholderMarker) {
-			continue
-		}
-		for _, prefix := range configPrefixes {
-			if strings.HasPrefix(name, prefix) {
-				names = append(names, name)
-				break
-			}
-		}
-	}
-	sort.Strings(names)
-	return names
-}
-
 // chain composes cleanup functions, running them in the order given.
 func chain(fns ...func()) func() {
 	return func() {
@@ -203,31 +91,5 @@ func chain(fns ...func()) func() {
 				fn()
 			}
 		}
-	}
-}
-
-// memoryStateRequested reports whether the operator explicitly asked for
-// throwaway state.
-func memoryStateRequested() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv(stateBackendVar)), stateBackendMemory)
-}
-
-// tlsFiles returns the certificate and key the listener should use, if any, and
-// refuses a half-configured pair.
-//
-// The listener is plain HTTP by default and must sit behind a TLS-terminating
-// ingress on the same origin as OpenCloud: a Space's Data Key crosses it once,
-// at key setup (decisions.md, trust & key model). A deployment with nothing in
-// front of it sets these two variables instead.
-func tlsFiles() (certFile, keyFile string, err error) {
-	certFile = strings.TrimSpace(os.Getenv(tlsCertVar))
-	keyFile = strings.TrimSpace(os.Getenv(tlsKeyVar))
-	switch {
-	case certFile == "" && keyFile == "":
-		return "", "", nil
-	case certFile == "" || keyFile == "":
-		return "", "", fmt.Errorf("%s and %s must be set together", tlsCertVar, tlsKeyVar)
-	default:
-		return certFile, keyFile, nil
 	}
 }

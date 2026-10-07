@@ -62,8 +62,12 @@ func run(args []string, errOut *os.File) error {
 
 	// S3 credentials come from the environment, not from flags: command lines
 	// are visible to every process on the host and land in shell history.
-	cfg.accessKey = os.Getenv("S3_ACCESS_KEY_ID")
-	cfg.secretKey = os.Getenv("S3_SECRET_ACCESS_KEY")
+	env, err := loadTakeoutEnv(os.Environ())
+	if err != nil {
+		return err
+	}
+	cfg.accessKey = env.S3.AccessKeyID.Reveal()
+	cfg.secretKey = env.S3.SecretAccessKey.Reveal()
 
 	if err := validate(cfg); err != nil {
 		return err

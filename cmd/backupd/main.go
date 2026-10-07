@@ -18,8 +18,6 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -28,8 +26,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -39,7 +35,6 @@ import (
 	_ "time/tzdata"
 
 	gateway "github.com/cs3org/go-cs3apis/cs3/gateway/v1beta1"
-	"github.com/kopia/kopia/repo/blob/throttling"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -85,7 +80,7 @@ const (
 // productionStartup.
 type startupDeps struct {
 	// openState returns the durable state store.
-	openState func(client *cs3.Client, logger *slog.Logger) (state.Store, error)
+	openState func(st stateEnv, client *cs3.Client, serviceAccountID string, logger *slog.Logger) (state.Store, error)
 }
 
 // productionStartup is what the service runs with.
@@ -115,7 +110,7 @@ const (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Environ(), os.Stdout, os.Stderr))
 }
 
 // newLogger is the service's logger. It writes to stderr: stdout belongs to
@@ -128,20 +123,29 @@ func newLogger(stderr io.Writer) *slog.Logger {
 // run is the whole program behind main, returning its exit code. main is the
 // only place that exits, so every deferred cleanup on the way here has run —
 // in particular the one that withdraws this instance's registration.
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args, environ []string, stdout, stderr io.Writer) int {
 	logger := newLogger(stderr)
+
+	// One configuration for the service and every command, read and checked
+	// before anything else: every diagnosis after a misconfiguration would be
+	// of a symptom.
+	cfg, err := loadServiceEnv(environ)
+	if err != nil {
+		logger.Error("invalid configuration", "err", err)
+		return 1
+	}
 
 	// With no arguments the binary is the service. With one it is an operator
 	// tool: the maintenance commands ship in the same image because they need
 	// the same configuration, the same state Space and the same custody keys.
 	if len(args) > 0 {
-		if err := runCommand(context.Background(), args[0], args[1:], logger, stdout); err != nil {
+		if err := runCommand(context.Background(), cfg, args[0], args[1:], logger, stdout); err != nil {
 			logger.Error("command failed", "command", args[0], "err", err)
 			return 1
 		}
 		return 0
 	}
-	if err := serve(logger, productionStartup()); err != nil {
+	if err := serve(cfg, logger, productionStartup()); err != nil {
 		logger.Error("service stopped with an error", "err", err)
 		return 1
 	}
@@ -151,27 +155,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 // serve runs the API and, when configured, the scheduler until a signal
 // arrives. Every return path, including a failed startup, has released what
 // buildService acquired.
-func serve(logger *slog.Logger, deps startupDeps) error {
-	svc, cleanup, err := buildService(context.Background(), logger, deps)
+func serve(cfg serviceEnv, logger *slog.Logger, deps startupDeps) error {
+	// The effective configuration, once, with every secret shown only as
+	// set or unset (serviceEnv.LogValue).
+	logger.Info("configuration", "config", cfg)
+
+	svc, cleanup, err := buildService(context.Background(), cfg, logger, deps)
 	if err != nil {
 		return fmt.Errorf("startup failed: %w", err)
 	}
 	defer cleanup()
 
-	certFile, keyFile, err := tlsFiles()
-	if err != nil {
-		return fmt.Errorf("startup failed: %w", err)
-	}
-
-	basePath, err := resolveBasePath()
-	if err != nil {
-		return fmt.Errorf("startup failed: %w", err)
-	}
+	certFile, keyFile := cfg.HTTP.TLSCertFile, cfg.HTTP.TLSKeyFile
+	basePath := cfg.HTTP.BasePath
 	if basePath != "" {
 		logger.Info("API mounted under a path prefix", "base_path", basePath)
 	}
 
-	addr := envOr("BACKUPD_ADDR", ":8080")
+	addr := cfg.HTTP.Addr
 	httpSrv := &http.Server{
 		Addr:    addr,
 		Handler: mountBasePath(svc.api.Handler(), basePath),
@@ -290,7 +291,7 @@ func waitFor(wg *sync.WaitGroup, d time.Duration) bool {
 	}
 }
 
-// buildService wires the API and scheduler from environment configuration.
+// buildService wires the API and scheduler from the configuration.
 // Missing OIDC/CS3 config is tolerated so the health endpoint stays up
 // (protected routes then fail closed), but a misconfigured value that we can
 // detect is a hard error.
@@ -300,7 +301,7 @@ func waitFor(wg *sync.WaitGroup, d time.Duration) bool {
 // startup that fails after claiming it and leaves it live makes every restart
 // within its TTL fail with "another instance is running", hiding the real
 // error behind a misleading one (review-2026-10.md F1).
-func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
+func buildService(ctx context.Context, cfg serviceEnv, logger *slog.Logger, deps startupDeps) (
 	svc service, cleanup func(), err error,
 ) {
 	var opts []api.Option
@@ -312,31 +313,19 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 		}
 	}()
 
-	// --- unedited manifest -------------------------------------------------
-	// First, because it is the cheapest check there is and because every
-	// diagnosis after it would be of a symptom.
-	if err := checkPlaceholders(os.Environ()); err != nil {
-		return service{}, cleanup, err
-	}
-
 	// --- work directory ---------------------------------------------------
 	// Checked before anything else: it is pure configuration, and a service
 	// that will write the family's data somewhere it should not is worth
 	// refusing before it accepts a single request.
-	workDir, err := resolveWorkDir(logger)
+	workDir, err := resolveWorkDir(cfg.Backup, logger)
 	if err != nil {
 		return service{}, cleanup, err
 	}
 
 	// --- OIDC validator ---------------------------------------------------
-	issuer := os.Getenv("OIDC_ISSUER")
-	if issuer != "" {
-		audience := strings.TrimSpace(os.Getenv("OIDC_AUDIENCE"))
-		if audience == "" {
-			return service{}, cleanup, errors.New(
-				"OIDC_AUDIENCE is required when OIDC_ISSUER is set: without it any token " +
-					"the same issuer minted for any application is accepted here")
-		}
+	// An issuer without an audience or without OC_BASE_URL was refused by
+	// api.Env.Validate.
+	if issuer := cfg.API.OIDC.Issuer; issuer != "" {
 		// Discovery happens in the background: an identity provider that is not
 		// up yet must delay authentication, not the whole service (a
 		// crash-looping pod is harder to diagnose than a 503 that explains
@@ -344,7 +333,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 		ks := api.NewLazyKeySet(issuer, httpClient(), time.Hour, logger)
 		v, err := api.NewOIDCValidator(api.OIDCConfig{
 			Issuer:   issuer,
-			Audience: audience,
+			Audience: cfg.API.OIDC.Audience,
 			KeySet:   ks,
 		})
 		if err != nil {
@@ -354,15 +343,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 
 		// The token's `sub` is not the OpenCloud user id, and every
 		// authorization decision is taken on the latter (pkg/api/users.go).
-		// Without OC_BASE_URL nobody could be identified, so the service would
-		// answer 503 to every user: refuse to start instead.
-		base := strings.TrimSpace(os.Getenv("OC_BASE_URL"))
-		if base == "" {
-			return service{}, cleanup, errors.New(
-				"OC_BASE_URL is required when OIDC_ISSUER is set: a caller's OpenCloud " +
-					"user id is read from its graph API, and the token's subject is not that id")
-		}
-		opts = append(opts, api.WithUserResolver(api.NewGraphUserResolver(base, httpClient())))
+		opts = append(opts, api.WithUserResolver(api.NewGraphUserResolver(cfg.API.OpenCloud.BaseURL, httpClient())))
 	} else {
 		logger.Warn("OIDC_ISSUER unset; authenticated routes will reject all requests")
 	}
@@ -370,12 +351,11 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 	// --- admin resolver ---------------------------------------------------
 	// ADMIN_SUBJECT_ALLOWLIST holds OpenCloud user ids, despite its name,
 	// which predates the finding in pkg/api/users.go.
-	if allow := os.Getenv("ADMIN_SUBJECT_ALLOWLIST"); allow != "" {
-		ids := splitAndTrim(allow)
+	if ids := cfg.API.OpenCloud.AdminAllowlist; len(ids) > 0 {
 		opts = append(opts, api.WithAdminResolver(api.NewAllowlistAdminResolver(ids)))
 		logger.Info("admin detection: allow-list of OpenCloud user ids", "count", len(ids))
-	} else if base := os.Getenv("OC_BASE_URL"); base != "" {
-		roleID := envOr("OC_ADMIN_APP_ROLE_ID", api.DefaultAdminAppRoleID)
+	} else if base := cfg.API.OpenCloud.BaseURL; base != "" {
+		roleID := cfg.API.OpenCloud.AdminAppRoleID
 		opts = append(opts, api.WithAdminResolver(api.NewGraphAdminResolver(base, roleID, httpClient())))
 		logger.Info("admin detection: graph appRoleAssignments", "admin_app_role_id", roleID)
 	} else {
@@ -386,7 +366,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 	// Group grants on a Space are only honoured when the caller's groups can be
 	// resolved. Without this, a Space granted to a group refuses the members who
 	// need that grant rather than guessing (fail closed).
-	if base := os.Getenv("OC_BASE_URL"); base != "" {
+	if base := cfg.API.OpenCloud.BaseURL; base != "" {
 		opts = append(opts, api.WithGroupResolver(api.NewGraphGroupResolver(base, httpClient())))
 		logger.Info("group resolution: graph memberOf")
 	} else {
@@ -397,7 +377,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 	// Read, logged, and warned about when it is outside the window this build
 	// was tested in — never refused. Checked in the background by serve, so an
 	// OpenCloud that is not up yet delays nothing.
-	openCloud, err := buildOpenCloudMonitor(logger)
+	openCloud, err := buildOpenCloudMonitor(cfg.API.OpenCloud.BaseURL, logger)
 	if err != nil {
 		return service{}, cleanup, err
 	}
@@ -411,7 +391,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 		spaceWriter cs3.SpaceWriter
 		cs3Client   *cs3.Client
 	)
-	client, closeCS3, err := dialCS3()
+	client, closeCS3, err := dialCS3(cfg.CS3)
 	if err != nil {
 		return service{}, cleanup, err
 	}
@@ -429,7 +409,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 	// pkg/cs3state for the trade-offs; the short version is that a scheduler
 	// whose memory dies with the process cannot tell a missed run from a fresh
 	// install.
-	backing, err := deps.openState(cs3Client, logger)
+	backing, err := deps.openState(cfg.State, cs3Client, cfg.CS3.ServiceAccountID.Reveal(), logger)
 	if err != nil {
 		return service{}, cleanup, err
 	}
@@ -467,7 +447,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 	// Secret-backed env var, is used to wrap/unwrap DKs, and is NEVER logged.
 	// Without it the backup key endpoints stay unavailable rather than running
 	// in a degraded, insecure mode. The store holds wrapped envelopes only.
-	wrapKeys, err := loadWrapKeys()
+	wrapKeys, err := loadWrapKeys(cfg.Keys)
 	if err != nil {
 		return service{}, cleanup, err
 	}
@@ -512,14 +492,14 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 	// Seeding is skipped unless explicitly enabled and the store is empty, so it
 	// can never override what an admin configured (decisions.md #12).
 	if credSealer != nil {
-		cfg := bootstrapConfig()
-		seeded, err := targets.Bootstrap(ctx, targetStore, credSealer, cfg)
+		seed := cfg.Bootstrap.Config()
+		seeded, err := targets.Bootstrap(ctx, targetStore, credSealer, seed)
 		if err != nil {
 			return service{}, cleanup, err
 		}
 		if seeded {
 			// Name and bucket are non-secret; credentials are never logged.
-			logger.Info("seeded default backup target", "name", cfg.Name, "bucket", cfg.Bucket)
+			logger.Info("seeded default backup target", "name", seed.Name, "bucket", seed.Bucket)
 		}
 	}
 
@@ -543,7 +523,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 
 	// --- notifications (Phase 6) -----------------------------------------
 	events := notify.NewStateStore(backing, nil)
-	notifier, err := buildNotifier(events, logger)
+	notifier, err := buildNotifier(cfg.SMTP.Config(), events, logger)
 	if err != nil {
 		return service{}, cleanup, err
 	}
@@ -567,16 +547,8 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 	background := jobs.NewBackground(logger)
 
 	if spaceReader != nil && srwWrapper != nil && credSealer != nil {
-		limits, err := bandwidthLimits()
-		if err != nil {
-			return service{}, cleanup, err
-		}
-		parallelism, err := envInt("BACKUP_PARALLELISM", 0)
-		if err != nil {
-			return service{}, cleanup, err
-		}
-
-		engine, err := snapshot.NewEngine(snapshot.S3Opener{Limits: limits}, snapshot.EngineOptions{
+		parallelism := cfg.Backup.Parallelism
+		engine, err := snapshot.NewEngine(snapshot.S3Opener{Limits: cfg.Backup.limits()}, snapshot.EngineOptions{
 			Parallelism: parallelism,
 			WorkDir:     workDir,
 		})
@@ -634,10 +606,6 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 		logger.Info("backup and restore pipelines enabled", "parallelism", parallelism)
 
 		// --- scheduler (Phase 6) ------------------------------------------
-		schedOpts, err := schedulerOptions()
-		if err != nil {
-			return service{}, cleanup, err
-		}
 		sched, err = scheduler.New(scheduler.Deps{
 			Configs: spaceConfigs,
 			Jobs:    jobStore,
@@ -663,7 +631,7 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 			Logger:        logger,
 			OnRunFinished: reporter.RunFinished,
 			OnSweep:       monitor.Sweep,
-		}, schedOpts)
+		}, cfg.Scheduler.Options())
 		if err != nil {
 			return service{}, cleanup, err
 		}
@@ -689,14 +657,13 @@ func buildService(ctx context.Context, logger *slog.Logger, deps startupDeps) (
 // buildOpenCloudMonitor watches OpenCloud's version through OC_BASE_URL, the
 // same origin the Graph calls use. Without OC_BASE_URL there is nothing to ask,
 // and the version stays unknown.
-func buildOpenCloudMonitor(logger *slog.Logger) (*ocversion.Monitor, error) {
+func buildOpenCloudMonitor(base string, logger *slog.Logger) (*ocversion.Monitor, error) {
 	pins, err := ocversion.Embedded()
 	if err != nil {
 		return nil, err
 	}
 	logger.Info("supported OpenCloud versions", "supported", pins.Window().String())
 
-	base := strings.TrimSpace(os.Getenv("OC_BASE_URL"))
 	if base == "" {
 		logger.Warn("OC_BASE_URL unset; the OpenCloud version cannot be checked")
 		return nil, nil
@@ -708,10 +675,10 @@ func buildOpenCloudMonitor(logger *slog.Logger) (*ocversion.Monitor, error) {
 // dialCS3 connects to the CS3 gateway as the service account. It returns a nil
 // client when CS3_GATEWAY_ADDR is unset — the service degrades, an operator
 // command refuses — and always returns a usable close function.
-func dialCS3() (*cs3.Client, func(), error) {
+func dialCS3(cfg cs3.Env) (*cs3.Client, func(), error) {
 	noop := func() {}
 
-	addr := os.Getenv("CS3_GATEWAY_ADDR")
+	addr := cfg.GatewayAddr
 	if addr == "" {
 		return nil, noop, nil
 	}
@@ -726,10 +693,10 @@ func dialCS3() (*cs3.Client, func(), error) {
 	// moment reva rejects one.
 	auth := cs3.NewCachedAuth(cs3.ServiceAccountAuth{
 		Gateway:  gw,
-		ClientID: os.Getenv("OC_SERVICE_ACCOUNT_ID"),
-		Secret:   os.Getenv("OC_SERVICE_ACCOUNT_SECRET"),
+		ClientID: cfg.ServiceAccountID.Reveal(),
+		Secret:   cfg.ServiceAccountSecret.Reveal(),
 	})
-	opts, err := cs3ClientOptions()
+	opts, err := cs3ClientOptions(cfg)
 	if err != nil {
 		_ = conn.Close()
 		return nil, noop, err
@@ -747,17 +714,16 @@ func dialCS3() (*cs3.Client, func(), error) {
 // returns is kept. It only applies to URLs handed out without a transfer
 // token, so it is harmless on OpenCloud up to 7.4, which hands out the public
 // data gateway with one (pkg/cs3/dataorigin.go).
-func cs3ClientOptions() ([]cs3.ClientOption, error) {
+func cs3ClientOptions(cfg cs3.Env) ([]cs3.ClientOption, error) {
 	opts := []cs3.ClientOption{cs3.WithHTTPClient(dataGatewayClient())}
-	raw := strings.TrimSpace(os.Getenv("CS3_DATA_SERVER_URL"))
-	if raw == "" {
-		return opts, nil
-	}
-	origin, err := cs3.ParseDataServerOrigin(raw)
+	origin, err := cfg.DataServerOrigin()
 	if err != nil {
-		return nil, fmt.Errorf("CS3_DATA_SERVER_URL: %w", err)
+		return nil, err
 	}
-	return append(opts, cs3.WithDataServerOrigin(origin)), nil
+	if origin != nil {
+		opts = append(opts, cs3.WithDataServerOrigin(origin))
+	}
+	return opts, nil
 }
 
 // buildStateStore chooses where the service keeps its own state.
@@ -767,19 +733,17 @@ func cs3ClientOptions() ([]cs3.ClientOption, error) {
 // the loss happens on an ordinary pod restart — long after the person who
 // completed the key ceremony has stopped watching. A deployment that genuinely
 // wants throwaway state says so with STATE_BACKEND=memory.
-func buildStateStore(client *cs3.Client, logger *slog.Logger) (state.Store, error) {
-	spaceID := os.Getenv("STATE_SPACE_ID")
-
-	if memoryStateRequested() {
-		logger.Warn(stateBackendVar + "=" + stateBackendMemory + ": service state is in memory only. " +
+func buildStateStore(st stateEnv, client *cs3.Client, serviceAccountID string, logger *slog.Logger) (state.Store, error) {
+	if st.memory() {
+		logger.Warn("STATE_BACKEND=" + stateBackendMemory + ": service state is in memory only. " +
 			"Schedules, run history and key envelopes will not survive a restart")
 		return state.NewMemoryStore(), nil
 	}
-	if spaceID == "" {
+	if st.SpaceID == "" {
 		return nil, fmt.Errorf(
 			"STATE_SPACE_ID is required: without it schedules, run history and every wrapped "+
 				"Data Key die with the process. Provision a state Space (see the runbook in "+
-				"README.md), or set %s=%s to accept losing them", stateBackendVar, stateBackendMemory)
+				"README.md), or set STATE_BACKEND=%s to accept losing them", stateBackendMemory)
 	}
 	if client == nil {
 		return nil, errors.New(
@@ -787,14 +751,14 @@ func buildStateStore(client *cs3.Client, logger *slog.Logger) (state.Store, erro
 	}
 
 	store, err := cs3state.New(client, cs3state.Options{
-		SpaceID: spaceID,
-		Prefix:  envOr("STATE_PREFIX", cs3state.DefaultPrefix),
+		SpaceID: st.SpaceID,
+		Prefix:  st.Prefix,
 		// The state Space is created by the service account (see
 		// `backupd provision-state-space`), which leaves that account a manager
 		// grant OpenCloud will not let anyone remove. Check needs to know which
 		// principal that is in order to tell the service's own access apart
 		// from an end user's.
-		ServiceAccountID: os.Getenv("OC_SERVICE_ACCOUNT_ID"),
+		ServiceAccountID: serviceAccountID,
 	})
 	if err != nil {
 		return nil, err
@@ -815,7 +779,7 @@ func buildStateStore(client *cs3.Client, logger *slog.Logger) (state.Store, erro
 		logger.Warn("could not verify the state space at startup; it will be resolved on first use", "err", err)
 	}
 
-	logger.Info("service state persisted in OpenCloud", "space", spaceID)
+	logger.Info("service state persisted in OpenCloud", "space", st.SpaceID)
 	return store, nil
 }
 
@@ -825,21 +789,9 @@ const stateCheckTimeout = 30 * time.Second
 // buildNotifier wires the delivery sinks. Logs are always a sink; SMTP is added
 // when the operator configured a mail server. The password is read from a
 // Secret-backed variable and never logged.
-func buildNotifier(events notify.Store, logger *slog.Logger) (*notify.Notifier, error) {
+func buildNotifier(cfg notify.SMTPConfig, events notify.Store, logger *slog.Logger) (*notify.Notifier, error) {
 	sinks := []notify.Sink{notify.LogSink{Logger: logger}}
 
-	port, err := envInt("SMTP_PORT", 0)
-	if err != nil {
-		return nil, err
-	}
-	cfg := notify.SMTPConfig{
-		Host:       os.Getenv("SMTP_HOST"),
-		Port:       port,
-		Username:   os.Getenv("SMTP_USERNAME"),
-		Password:   os.Getenv("SMTP_PASSWORD"),
-		From:       os.Getenv("SMTP_FROM"),
-		OperatorTo: os.Getenv("NOTIFY_OPERATOR_EMAIL"),
-	}
 	if cfg.Valid() {
 		sink, err := notify.NewSMTPSink(cfg)
 		if err != nil {
@@ -852,44 +804,6 @@ func buildNotifier(events notify.Store, logger *slog.Logger) (*notify.Notifier, 
 	}
 
 	return notify.New(events, notify.Options{Sinks: sinks, Logger: logger})
-}
-
-// schedulerOptions reads the scheduler's tuning from the environment.
-func schedulerOptions() (scheduler.Options, error) {
-	maxConcurrent, err := envInt("SCHEDULER_MAX_CONCURRENT", 0)
-	if err != nil {
-		return scheduler.Options{}, err
-	}
-	historyDays, err := envInt("JOB_HISTORY_DAYS", 0)
-	if err != nil {
-		return scheduler.Options{}, err
-	}
-	// How often retention is *applied*. How much is kept is the Space owner's
-	// setting; this is the operator's, and the default (daily) suits a target
-	// that is somebody's spare disk.
-	pruneHours, err := envInt("PRUNE_INTERVAL_HOURS", 0)
-	if err != nil {
-		return scheduler.Options{}, err
-	}
-
-	opts := scheduler.Options{
-		MaxConcurrent: maxConcurrent,
-		HistoryWindow: time.Duration(historyDays) * 24 * time.Hour,
-		PruneInterval: time.Duration(pruneHours) * time.Hour,
-		// "Nightly at half past two" means the family's night. The container's
-		// own zone (TZ) is the closest thing to that this process can know, and
-		// a deployment that sets TZ for its logs has already said which zone it
-		// thinks in; defaulting to UTC would quietly disagree with it.
-		Location: time.Local,
-	}
-	if name := os.Getenv("SCHEDULE_TIMEZONE"); name != "" {
-		loc, err := time.LoadLocation(name)
-		if err != nil {
-			return scheduler.Options{}, fmt.Errorf("SCHEDULE_TIMEZONE %q is not a known timezone", name)
-		}
-		opts.Location = loc
-	}
-	return opts, nil
 }
 
 // classifyRunFailure decides who hears about a failed run. Only failures the
@@ -915,70 +829,6 @@ func classifyRunFailure(err error) notify.Classification {
 	default:
 		return notify.DefaultClassification()
 	}
-}
-
-// bootstrapConfig reads the optional default-target configuration. The
-// non-secret fields come from a ConfigMap; the credentials must come from a
-// Secret (decisions.md #14) and are handed straight to the sealer.
-func bootstrapConfig() targets.BootstrapConfig {
-	return targets.BootstrapConfig{
-		Enable:       envBool("BOOTSTRAP_ENABLE"),
-		ID:           os.Getenv("BOOTSTRAP_TARGET_ID"),
-		Name:         os.Getenv("BOOTSTRAP_TARGET_NAME"),
-		Endpoint:     os.Getenv("BOOTSTRAP_S3_ENDPOINT"),
-		Region:       os.Getenv("BOOTSTRAP_S3_REGION"),
-		Bucket:       os.Getenv("BOOTSTRAP_S3_BUCKET"),
-		Prefix:       os.Getenv("BOOTSTRAP_S3_PREFIX"),
-		UsePathStyle: envBool("BOOTSTRAP_S3_USE_PATH_STYLE"),
-		DisableTLS:   envBool("BOOTSTRAP_S3_DISABLE_TLS"),
-		Creds: targets.PlainCreds{
-			AccessKeyID:     os.Getenv("BOOTSTRAP_S3_ACCESS_KEY_ID"),
-			SecretAccessKey: os.Getenv("BOOTSTRAP_S3_SECRET_ACCESS_KEY"),
-		},
-		// Optional second credential, used only by prune runs (decisions.md #9,
-		// Tier 2). Unset means the deployment has one key and both roles use
-		// it; half-set is refused rather than silently falling back.
-		MaintenanceCreds: targets.PlainCreds{
-			AccessKeyID:     os.Getenv("BOOTSTRAP_S3_MAINTENANCE_ACCESS_KEY_ID"),
-			SecretAccessKey: os.Getenv("BOOTSTRAP_S3_MAINTENANCE_SECRET_ACCESS_KEY"),
-		},
-	}
-}
-
-// envBool reports whether an environment variable is set to a truthy value.
-func envBool(key string) bool {
-	v, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
-	return err == nil && v
-}
-
-// bandwidthLimits reads the optional upload/download caps applied to the S3
-// target, in bytes per second. Zero means unlimited.
-func bandwidthLimits() (throttling.Limits, error) {
-	up, err := envInt("BACKUP_UPLOAD_BYTES_PER_SECOND", 0)
-	if err != nil {
-		return throttling.Limits{}, err
-	}
-	down, err := envInt("BACKUP_DOWNLOAD_BYTES_PER_SECOND", 0)
-	if err != nil {
-		return throttling.Limits{}, err
-	}
-	return throttling.Limits{
-		UploadBytesPerSecond:   float64(up),
-		DownloadBytesPerSecond: float64(down),
-	}, nil
-}
-
-// envInt parses a non-negative integer environment variable.
-func envInt(key string, fallback int) (int, error) {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return fallback, nil
-	}
-	v, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || v < 0 {
-		return 0, fmt.Errorf("%s must be a non-negative integer", key)
-	}
-	return v, nil
 }
 
 // dataGatewayClient streams file bytes from reva's data gateway. It has no
@@ -1024,54 +874,20 @@ func (k wrapKeys) zeroize() {
 	keys.Zeroize(k.tw)
 }
 
-// loadWrapKeys reads SRW_KEY and TW_KEY and refuses the one combination that
-// looks like a working configuration but is not: the same key in both.
-//
-// SRW guards Data Keys, TW guards target credentials, and decisions.md keeps
-// them distinct so the two can rotate independently — retiring a leaked target
-// credential must not mean re-wrapping every Space's Data Key. Setting them to
-// one value silently collapses that into a single blast radius, and the failure
-// is invisible: everything works. It is a misconfiguration to catch at boot.
-func loadWrapKeys() (wrapKeys, error) {
-	srw, err := loadWrapKey("SRW_KEY")
+// loadWrapKeys decodes SRW_KEY and TW_KEY. Their shape, and that they are
+// two different keys, was checked by custodyEnv.Validate; this only turns them
+// into bytes the wrappers take.
+func loadWrapKeys(cfg custodyEnv) (wrapKeys, error) {
+	srw, err := decodeWrapKey("SRW_KEY", cfg.SRW)
 	if err != nil {
 		return wrapKeys{}, err
 	}
-	tw, err := loadWrapKey("TW_KEY")
+	tw, err := decodeWrapKey("TW_KEY", cfg.TW)
 	if err != nil {
 		keys.Zeroize(srw)
 		return wrapKeys{}, err
-	}
-	// Constant-time because both operands are secrets, and cheap either way.
-	if srw != nil && tw != nil && subtle.ConstantTimeCompare(srw, tw) == 1 {
-		keys.Zeroize(srw)
-		keys.Zeroize(tw)
-		return wrapKeys{}, errors.New(
-			"SRW_KEY and TW_KEY must be different keys: data-key custody and " +
-				"target-credential custody are separate on purpose (decisions.md #14)")
 	}
 	return wrapKeys{srw: srw, tw: tw}, nil
-}
-
-// loadWrapKey reads a base64-encoded 256-bit wrapping key (SRW or TW) from the
-// environment. It returns (nil, nil) when unset so the caller can decide whether
-// the feature is optional.
-//
-// The key value itself is never logged, and errors deliberately describe only
-// the shape of the problem, never the value (AGENTS.md: never log key material).
-func loadWrapKey(envVar string) ([]byte, error) {
-	raw := os.Getenv(envVar)
-	if raw == "" {
-		return nil, nil
-	}
-	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
-	if err != nil {
-		return nil, fmt.Errorf("%s must be base64-encoded", envVar)
-	}
-	if len(key) != keys.SRWKeySize {
-		return nil, fmt.Errorf("%s must decode to %d bytes", envVar, keys.SRWKeySize)
-	}
-	return key, nil
 }
 
 // httpErrorLog bridges the *log.Logger net/http writes its own errors to into
@@ -1082,21 +898,3 @@ func httpErrorLog(logger *slog.Logger) *log.Logger {
 }
 
 func httpClient() *http.Client { return &http.Client{Timeout: 15 * time.Second} }
-
-func splitAndTrim(csv string) []string {
-	parts := strings.Split(csv, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
