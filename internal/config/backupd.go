@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"opencloud-backup-plugin/pkg/keys"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
 )
 
 // Backupd is the backup service's whole configuration, every operator
@@ -202,7 +202,7 @@ func (c *Backupd) validate() error {
 					"the same issuer minted for any application is accepted here"))
 		}
 		// The token's `sub` is not the OpenCloud user id, and every
-		// authorization decision is taken on the latter (pkg/api/users.go).
+		// authorization decision is taken on the latter (internal/api/users.go).
 		if c.OpenCloud.BaseURL == "" {
 			add(errors.New(
 				"OC_BASE_URL is required when OIDC_ISSUER is set: a caller's OpenCloud " +

@@ -35,7 +35,7 @@ func TestPackageDepsListsTransitiveImports(t *testing.T) {
 	deps := PackageDeps(t, ".")
 	// This package imports os/exec, which imports os: both direct and
 	// transitive dependencies are reported, and the package itself.
-	for _, want := range []string{"os/exec", "os", "opencloud-backup-plugin/internal/testutil"} {
+	for _, want := range []string{"os/exec", "os", "github.com/knoppiks/opencloud-backup-plugin/internal/testutil"} {
 		if !deps[want] {
 			t.Errorf("PackageDeps(.) is missing %s", want)
 		}

@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"opencloud-backup-plugin/internal/testutil"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/testutil"
 )
 
 // s3Side are the import paths of everything that reaches a storage target over
@@ -32,23 +32,23 @@ var s3Side = []string{
 	"github.com/kopia/kopia/repo/blob/webdav",
 	"github.com/kopia/kopia/repo/blob/rclone",
 	// This project's target-facing packages.
-	"opencloud-backup-plugin/pkg/objstore",
-	"opencloud-backup-plugin/pkg/snapshot/s3repo",
-	"opencloud-backup-plugin/pkg/takeout/remote",
+	"github.com/knoppiks/opencloud-backup-plugin/internal/objstore",
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot/s3repo",
+	"github.com/knoppiks/opencloud-backup-plugin/internal/takeout/remote",
 }
 
 // ownPackages is every package of this module decrypt may be built from. A new
 // entry is a deliberate decision, made here and reviewed, not a side effect of
 // an import added somewhere below.
 var ownPackages = []string{
-	"opencloud-backup-plugin/cmd/decrypt",
-	"opencloud-backup-plugin/internal/buildinfo",
-	"opencloud-backup-plugin/internal/cli",
-	"opencloud-backup-plugin/pkg/keys",
-	"opencloud-backup-plugin/pkg/snapshot",
-	"opencloud-backup-plugin/pkg/state",
-	"opencloud-backup-plugin/pkg/takeout",
-	"opencloud-backup-plugin/pkg/takeout/decrypt",
+	"github.com/knoppiks/opencloud-backup-plugin/cmd/decrypt",
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo",
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli",
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot",
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state",
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys",
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/takeout",
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/takeout/decrypt",
 }
 
 func TestBinaryLinksNoStorageClient(t *testing.T) {
@@ -64,8 +64,9 @@ func TestBinaryLinksNoStorageClient(t *testing.T) {
 	adminSide := testutil.PackageDeps(t, "../takeout")
 	for _, root := range []string{
 		"github.com/aws", "github.com/minio", "github.com/kopia/kopia/repo/blob/s3",
-		"opencloud-backup-plugin/pkg/objstore", "opencloud-backup-plugin/pkg/snapshot/s3repo",
-		"opencloud-backup-plugin/pkg/takeout/remote",
+		"github.com/knoppiks/opencloud-backup-plugin/internal/objstore",
+		"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot/s3repo",
+		"github.com/knoppiks/opencloud-backup-plugin/internal/takeout/remote",
 	} {
 		if len(testutil.DepsUnder(adminSide, root)) == 0 {
 			t.Errorf("takeout no longer links %s; the forbidden list above is stale", root)
@@ -76,7 +77,7 @@ func TestBinaryLinksNoStorageClient(t *testing.T) {
 func TestBinaryIsBuiltFromTheFormatPackagesOnly(t *testing.T) {
 	deps := testutil.PackageDeps(t, ".")
 
-	got := testutil.DepsUnder(deps, "opencloud-backup-plugin")
+	got := testutil.DepsUnder(deps, "github.com/knoppiks/opencloud-backup-plugin")
 	if !slices.Equal(got, ownPackages) {
 		t.Errorf("decrypt is built from\n  %v\nwant\n  %v\n"+
 			"(adding a package to decrypt is a decision: update ownPackages with the reason)",

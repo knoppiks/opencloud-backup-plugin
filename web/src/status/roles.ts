@@ -1,6 +1,6 @@
 // What the UI offers to whom.
 //
-// These mirror the server's role table (pkg/api/access.go) so the UI does not
+// These mirror the server's role table (internal/api/access.go) so the UI does not
 // show a button that can only fail. They decide presentation only: every route
 // enforces its own minimum server-side, and a client that got this wrong would
 // get a 403, not a capability.

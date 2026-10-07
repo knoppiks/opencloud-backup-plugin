@@ -76,7 +76,7 @@ test-opencloud: ## Run the OpenCloud-fixture tests (run dev-up first; failures, 
 		{ echo "no $(OPENCLOUD_DIR)/fixture.env — run 'make dev-up' and $(OPENCLOUD_DIR)/seed.sh first" >&2; exit 1; }
 	set -a; . $(OPENCLOUD_DIR)/fixture.env; set +a; \
 	OPENCLOUD_FIXTURE_REQUIRED=1 $(GO) test -tags integration -count=1 \
-		./pkg/cs3/... ./pkg/cs3state/... ./pkg/api/... ./pkg/ocversion/... ./pkg/restore/... ./pkg/backup/...
+		./internal/cs3/... ./internal/cs3state/... ./internal/api/... ./internal/ocversion/... ./internal/restore/... ./internal/backup/...
 
 .PHONY: web-install
 web-install: ## Install the web extension's dependencies (frozen lockfile).

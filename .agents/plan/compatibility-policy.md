@@ -74,7 +74,7 @@ No MAJOR bump licenses dropping them:
 - **TW-wrapped credential blob** and **state-Space record layouts**: newer
   versions read older layouts (as R1 does with the pre-versioned ones). The
   credential blob's shapes are frozen in
-  `pkg/targets/testdata/sealed-credentials-v1.json`.
+  `internal/targets/testdata/sealed-credentials-v1.json`.
 
 ### Things with a deprecation period
 

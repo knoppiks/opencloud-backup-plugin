@@ -90,14 +90,14 @@ page is stale:
 | Configuration reference | Phase 10's config struct (`go generate`) |
 | CLI reference | the binaries' flag sets (`-h` output captured) |
 | HTTP API | the OpenAPI spec (13.4) |
-| Compatibility matrix | `pkg/ocversion/versions.yaml` + release notes |
+| Compatibility matrix | `internal/ocversion/versions.yaml` + release notes |
 | Screenshots | `web/e2e/screens.e2e.ts` artifacts |
 
 ## 13.4 OpenAPI
 
 - Hand-written `api/openapi.yaml` (OpenAPI 3.1) for `/api/v1`, user and admin
   routes, error envelope and codes.
-- **Contract test (Go):** every route registered in `pkg/api` (internal after
+- **Contract test (Go):** every route registered in `internal/api` (internal after
   Phase 10) is in the spec and vice versa; API tests validate response bodies
   against the spec (`kin-openapi`).
 - **TS types generated** from the spec (`openapi-typescript`) replace the

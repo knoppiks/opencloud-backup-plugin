@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"opencloud-backup-plugin/pkg/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
 )
 
 // Verify re-reads a Take-Out and checks it against its own manifest. It needs no

@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"opencloud-backup-plugin/internal/config"
-	"opencloud-backup-plugin/pkg/cs3"
-	"opencloud-backup-plugin/pkg/instance"
-	"opencloud-backup-plugin/pkg/jobs"
-	"opencloud-backup-plugin/pkg/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/instance"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/jobs"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
 )
 
 // minimalServiceEnv is the smallest configuration buildService accepts: no

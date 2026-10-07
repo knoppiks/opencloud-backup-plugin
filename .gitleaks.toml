@@ -39,5 +39,7 @@ paths = [
 description = "Frozen Take-Out and sealed-credential fixtures (throwaway keys generated for them)"
 paths = [
   '''^pkg/takeout/testdata/''',
+  '''^internal/targets/testdata/sealed-credentials-v\d+\.json$''',
+  # The same file before phase 10.7 moved the package; history keeps it there.
   '''^pkg/targets/testdata/sealed-credentials-v\d+\.json$''',
 ]

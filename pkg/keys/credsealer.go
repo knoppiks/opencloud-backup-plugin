@@ -14,7 +14,7 @@ package keys
 import "fmt"
 
 // TWSealer seals and opens arbitrary secret payloads under the Target Wrap key.
-// pkg/targets adapts this to its CredSealer interface, keeping the crypto here.
+// internal/targets adapts this to its CredSealer interface, keeping the crypto here.
 type TWSealer struct {
 	key []byte
 }

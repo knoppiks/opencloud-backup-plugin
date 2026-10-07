@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"opencloud-backup-plugin/internal/buildinfo"
-	"opencloud-backup-plugin/internal/cli"
-	"opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
 )
 
 // runCommand runs an operator command against a configuration the test

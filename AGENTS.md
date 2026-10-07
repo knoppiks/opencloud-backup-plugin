@@ -28,10 +28,13 @@ is*, see `README.md`. For *design decisions and rationale*, see
 
 ## Engineering conventions
 
-- **Language/tooling:** Go (module `opencloud-backup-plugin`, toolchain pinned in
-  `go.mod`). Frontend (Phase 8) is Vue 3 + TypeScript under `/web/`.
-- **Layout:** thin `/cmd/*` binaries; all logic in `/pkg/*` behind interfaces.
-  See `phase-1-scaffolding.md` for the canonical package layout — follow it.
+- **Language/tooling:** Go (module `github.com/knoppiks/opencloud-backup-plugin`,
+  toolchain pinned in `go.mod`, the same patch in CI and the Dockerfile).
+  Frontend (Phase 8) is Vue 3 + TypeScript under `/web/`.
+- **Layout:** thin `/cmd/*` binaries; all logic in `/internal/*` behind
+  interfaces, with `/pkg` reserved for the format reference implementations
+  (`pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`; decision #26). See
+  `phase-1-scaffolding.md` for the canonical package layout — follow it.
 - **Testability first:** dependency injection, interfaces at every external
   boundary (CS3 client, S3 target, key store, clock). No hidden globals.
 - **Tests are mandatory.** Untested code is incomplete. Unit tests alongside

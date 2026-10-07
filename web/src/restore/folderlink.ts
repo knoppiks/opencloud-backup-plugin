@@ -10,7 +10,7 @@
 //     server, but it is rendered as a link inside someone's Files app, so a
 //     path that leaves the restore area ("..", an absolute path, a backslash)
 //     is refused rather than trusted. The service only ever writes
-//     "Restore/<stamp>" (pkg/restore.RestoreFolderName).
+//     "Restore/<stamp>" (internal/restore.RestoreFolderName).
 //   - **Is there a Space to link into?** When the host has not loaded the
 //     Space, there is no honest link to build, and the caller shows the path
 //     as text instead of inventing a URL.

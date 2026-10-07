@@ -7,7 +7,7 @@ package main
 // to it"; on OpenCloud 7.3.0 that is impossible — the creator is given a manager
 // grant and removing the last one is refused outright. The Space the service
 // will accept is one created *by the service account*, whose only grant is the
-// service account's own (see pkg/cs3/provision.go for the measurements, and
+// service account's own (see internal/cs3/provision.go for the measurements, and
 // cs3state.Check for how that one grant is discounted).
 //
 // It is an operator command rather than something startup does implicitly. A
@@ -29,10 +29,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"opencloud-backup-plugin/internal/cli"
-	"opencloud-backup-plugin/internal/config"
-	"opencloud-backup-plugin/pkg/cs3"
-	"opencloud-backup-plugin/pkg/cs3state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3state"
 )
 
 // provisionTimeout bounds the command. It is one gateway call plus a listing.

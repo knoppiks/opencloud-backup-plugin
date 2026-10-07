@@ -11,7 +11,7 @@ package main
 //
 // The Recovery Key is deliberately absent from this file. Its plaintext never
 // reaches the server, so only the browser can rotate it (see the rotate endpoint
-// in pkg/api).
+// in internal/api).
 
 import (
 	"context"
@@ -22,13 +22,13 @@ import (
 	"log/slog"
 	"time"
 
-	"opencloud-backup-plugin/internal/cli"
-	"opencloud-backup-plugin/internal/config"
-	"opencloud-backup-plugin/pkg/jobs"
-	"opencloud-backup-plugin/pkg/keys"
-	"opencloud-backup-plugin/pkg/rotate"
-	"opencloud-backup-plugin/pkg/state"
-	"opencloud-backup-plugin/pkg/targets"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/jobs"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/rotate"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/targets"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
 )
 
 // rotateTimeout bounds a whole rotation. It visits every Space or target, each a

@@ -1,6 +1,6 @@
 // Wire types for the user-facing backup API.
 //
-// These mirror the Go DTOs in `pkg/api` field for field, including the snake_case
+// These mirror the Go DTOs in `internal/api` field for field, including the snake_case
 // names, because a rename on either side should be a compile error here rather
 // than an `undefined` in a template. Where the Go struct uses `omitempty`, the
 // field is optional here.

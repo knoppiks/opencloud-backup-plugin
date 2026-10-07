@@ -1,6 +1,6 @@
 // The target form's rules, without the form.
 //
-// Mirrors what the server refuses (pkg/api/admintargets.go, `validate`) so the
+// Mirrors what the server refuses (internal/api/admintargets.go, `validate`) so the
 // admin is told beside the field rather than by a 400 after the round trip.
 // The server stays authoritative; its 400 is still shown if it comes.
 //

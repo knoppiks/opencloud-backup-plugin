@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"opencloud-backup-plugin/pkg/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
 )
 
 func FuzzReadManifest(f *testing.F) {

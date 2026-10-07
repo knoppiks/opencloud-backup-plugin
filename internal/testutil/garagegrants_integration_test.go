@@ -23,7 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 
-	"opencloud-backup-plugin/internal/testutil"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/testutil"
 )
 
 // TestGarageGrantMatrix pins every grant combination against every operation a

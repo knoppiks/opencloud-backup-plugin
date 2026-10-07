@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"opencloud-backup-plugin/pkg/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
 )
 
 // copyFrozenTakeOut copies the committed v1 Take-Out (10.4) to a temporary

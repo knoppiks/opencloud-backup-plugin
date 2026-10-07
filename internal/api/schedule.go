@@ -1,0 +1,390 @@
+// Schedule, status and notification endpoints (phase-6 deliverable 3).
+//
+// Authorization is the same rule as everywhere space-scoped: CS3 membership,
+// checked server-side, with no admin variant. An OpenCloud admin who is not a
+// member of the Space gets the same 403 as a stranger — the admin is a
+// configuration actor, not a data actor (decisions.md #15), and a Space's
+// backup status is data about that Space.
+//
+// Responses carry schedules, states, counts and timestamps. Never key material,
+// never target credentials, never endpoints, buckets or file names.
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/jobs"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/notify"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/scheduler"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/spacecfg"
+)
+
+// maxScheduleRequestBytes caps schedule payloads.
+const maxScheduleRequestBytes = 4 << 10
+
+// defaultHistoryLimit bounds an unqualified history request, and maxHistoryLimit
+// bounds a greedy one: a client cannot ask the store for a year of runs in one
+// response.
+const (
+	defaultHistoryLimit = 50
+	maxHistoryLimit     = 200
+)
+
+// scheduleAdvisor answers when a Space next runs, and in which zone its preset
+// times are meant. It is satisfied by *scheduler.Scheduler, so the status board
+// and the scheduler cannot disagree about what "next run" or "02:30" means.
+type scheduleAdvisor interface {
+	NextRun(ctx context.Context, spaceID string) (time.Time, error)
+	// Timezone is the IANA name presets are read in, or "" when unnamed.
+	Timezone() string
+}
+
+// notificationReader serves a Space's notifications. It is satisfied by
+// *notify.StateStore. Only the space-scoped list is reachable from here: there
+// is deliberately no route to the operator's events on a space-scoped path.
+type notificationReader interface {
+	List(ctx context.Context, spaceID string, limit int) ([]notify.Event, error)
+}
+
+// scheduleRequest sets a Space's schedule. A client sends either a preset (what
+// the UI offers) or a cron expression (what an operator may prefer); presets
+// win when both are present, because that is the one a human picked.
+type scheduleRequest struct {
+	// Enabled turns scheduled runs on or off. Manual runs are unaffected.
+	Enabled bool `json:"enabled"`
+	// Preset is the family-legible form: daily/weekly plus a time.
+	Preset *scheduler.Preset `json:"preset,omitempty"`
+	// Cron is the raw expression, for schedules no preset expresses.
+	Cron string `json:"cron,omitempty"`
+}
+
+// scheduleResponse describes a Space's schedule in both representations, so a
+// UI can show the preset it recognises and the cron it does not.
+type scheduleResponse struct {
+	SpaceID string `json:"space_id"`
+	Enabled bool   `json:"enabled"`
+	Cron    string `json:"cron"`
+	// Preset is "custom" when the cron expression is not one the presets emit.
+	Preset scheduler.Preset `json:"preset"`
+	// Timezone is the IANA zone Preset's hour and minute are in. Omitted when
+	// the service cannot name it; a UI then says "server time" and nothing more.
+	Timezone string `json:"timezone,omitempty"`
+}
+
+// statusResponse is the status board's payload.
+type statusResponse struct {
+	SpaceID string `json:"space_id"`
+	// Configured reports whether the Space is bound to a target at all.
+	Configured bool             `json:"configured"`
+	Enabled    bool             `json:"enabled"`
+	Cron       string           `json:"cron,omitempty"`
+	Preset     scheduler.Preset `json:"preset,omitzero"`
+	// Timezone is the IANA zone the preset is read in; see scheduleResponse.
+	Timezone string `json:"timezone,omitempty"`
+	// KeysConfigured reports whether the Space's key ceremony is complete
+	// (both envelopes stored). A Space can be bound to a target without it,
+	// and cannot run until it has it.
+	KeysConfigured bool `json:"keys_configured"`
+	// Stale is notify.StaleRule's verdict — the same rule the monitor uses to
+	// send the backup_stale notification, so the card and the notification
+	// cannot disagree. StaleSince is set only when Stale is.
+	Stale      bool   `json:"stale"`
+	StaleSince string `json:"stale_since,omitempty"`
+	// Running reports whether a run is under way right now, and which.
+	Running      bool         `json:"running"`
+	CurrentJob   *jobResponse `json:"current_job,omitempty"`
+	LastRun      *jobResponse `json:"last_run,omitempty"`
+	LastSuccess  *jobResponse `json:"last_successful_run,omitempty"`
+	NextRun      string       `json:"next_run,omitempty"`
+	LastError    string       `json:"last_error,omitempty"`
+	RetentionDay int          `json:"retention_days,omitempty"`
+}
+
+// handlePutSchedule sets a Space's schedule.
+func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleEditor)
+	if !ok {
+		return
+	}
+	if s.spaceConfigs == nil {
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup configuration not available", nil)
+		return
+	}
+
+	var req scheduleRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxScheduleRequestBytes))
+	// Unknown fields are refused, as on PATCH /backup/config. `enabled` is a
+	// plain bool, so a body that misspelt the schedule used to be read as
+	// "default schedule, disabled" — a 200 that switched backups off.
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+		return
+	}
+
+	cron, err := resolveSchedule(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+
+	// A schedule only means something once the Space is bound to a target, and
+	// that binding is where the grant check lives (decisions.md #12). Setting a
+	// schedule must not become a second, unchecked way to configure backup.
+	cfg, err := s.spaceConfigs.Get(r.Context(), spaceID)
+	if err != nil {
+		var notFound spacecfg.ErrNotFound
+		if errors.As(err, &notFound) {
+			writeError(w, http.StatusConflict, "not_configured", "backup is not configured for this space")
+			return
+		}
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read backup configuration", err)
+		return
+	}
+
+	cfg.Schedule = cron
+	cfg.Enabled = req.Enabled
+	stored, err := s.spaceConfigs.Put(r.Context(), cfg)
+	if err != nil {
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store the schedule", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.toScheduleResponse(stored))
+}
+
+// handleGetSchedule returns a Space's schedule.
+func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
+	if !ok {
+		return
+	}
+	if s.spaceConfigs == nil {
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup configuration not available", nil)
+		return
+	}
+
+	cfg, err := s.spaceConfigs.Get(r.Context(), spaceID)
+	if err != nil {
+		var notFound spacecfg.ErrNotFound
+		if errors.As(err, &notFound) {
+			writeError(w, http.StatusNotFound, "not_found", "backup is not configured for this space")
+			return
+		}
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read backup configuration", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.toScheduleResponse(cfg))
+}
+
+// handleBackupStatus serves the status board: what happened last, what is
+// happening now, what happens next.
+func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
+	if !ok {
+		return
+	}
+	if s.spaceConfigs == nil || s.jobStore == nil || s.keyStore == nil {
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup status not available", nil)
+		return
+	}
+
+	out := statusResponse{SpaceID: spaceID, Timezone: s.scheduleTimezone()}
+
+	// A key store that cannot answer is an error, not "no keys": the UI would
+	// otherwise offer a setup the server must refuse (decisions.md #17).
+	keyStatus, ok := s.keyStatus(w, r, spaceID)
+	if !ok {
+		return
+	}
+	out.KeysConfigured = keyStatus.Configured
+
+	cfg, err := s.spaceConfigs.Get(r.Context(), spaceID)
+	configured := err == nil
+	switch {
+	case configured:
+		out.Configured = true
+		out.Enabled = cfg.Enabled
+		out.Cron = cfg.EffectiveSchedule()
+		out.Preset = scheduler.PresetOf(out.Cron)
+		out.RetentionDay = int(cfg.EffectiveRetentionWindow() / (24 * time.Hour))
+	case isConfigNotFound(err):
+		// An unconfigured Space is a normal answer, not an error: the UI shows
+		// "not set up yet".
+	default:
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read backup configuration", err)
+		return
+	}
+
+	history, err := s.jobStore.ListRecent(r.Context(), spaceID, defaultHistoryLimit)
+	if err != nil {
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read run history", err)
+		return
+	}
+	// Backups are read separately rather than picked out of the line above:
+	// restores and prunes share that history, and a Space that prunes daily
+	// would otherwise push its own last backup out of the window and report
+	// "never backed up".
+	// The window is the staleness rule's, so this verdict is computed from
+	// exactly what the monitor reads.
+	backups, err := s.jobStore.ListRecentOfKind(r.Context(), spaceID, jobs.KindBackup, notify.StaleLookback)
+	if err != nil {
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read run history", err)
+		return
+	}
+	applyHistory(&out, history, backups)
+	if configured {
+		applyStaleness(&out, s.staleRule.Assess(cfg, backups, s.clock()))
+	}
+
+	if s.schedules != nil && out.Enabled {
+		next, err := s.schedules.NextRun(r.Context(), spaceID)
+		if err == nil && !next.IsZero() {
+			out.NextRun = formatTime(next)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// applyHistory fills the run-derived parts of a status response. history is the
+// Space's runs of every kind — a restore or a prune is a run the board should
+// show as in progress — while backups is the same history narrowed to backups,
+// which is what "last run" and "last successful run" mean here.
+func applyHistory(out *statusResponse, history, backups []jobs.Job) {
+	for _, j := range history {
+		if !j.State.Terminal() {
+			out.Running = true
+			current := toJobResponse(j)
+			out.CurrentJob = &current
+			break
+		}
+	}
+	if last, ok := jobs.LastOf(backups, jobs.KindBackup, ""); ok {
+		resp := toJobResponse(last)
+		out.LastRun = &resp
+		if last.State == jobs.StateFailed {
+			out.LastError = last.Error
+		}
+	}
+	if success, ok := jobs.LastOf(backups, jobs.KindBackup, jobs.StateSucceeded); ok {
+		resp := toJobResponse(success)
+		out.LastSuccess = &resp
+	}
+}
+
+// applyStaleness copies the staleness verdict into a status response.
+func applyStaleness(out *statusResponse, verdict notify.Staleness) {
+	out.Stale = verdict.Stale
+	if verdict.Stale {
+		out.StaleSince = formatTime(verdict.Since)
+	}
+}
+
+// handleListNotifications returns a Space's notifications, newest first. Only
+// the Space's own events are reachable here; operator events live in a
+// different scope and have no space-scoped route (decisions.md #15).
+func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request) {
+	_, spaceID, ok := s.requireRole(w, r, cs3.RoleViewer)
+	if !ok {
+		return
+	}
+	if s.notifications == nil {
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "notifications are not available", nil)
+		return
+	}
+
+	limit, ok := parseLimit(w, r)
+	if !ok {
+		return
+	}
+
+	events, err := s.notifications.List(r.Context(), spaceID, limit)
+	if err != nil {
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read notifications", err)
+		return
+	}
+
+	type notificationDTO struct {
+		ID        string `json:"id"`
+		Kind      string `json:"kind"`
+		Message   string `json:"message"`
+		CreatedAt string `json:"created_at"`
+	}
+	out := make([]notificationDTO, 0, len(events))
+	for _, e := range events {
+		out = append(out, notificationDTO{
+			ID:        e.ID,
+			Kind:      string(e.Kind),
+			Message:   e.Message,
+			CreatedAt: formatTime(e.CreatedAt),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"notifications": out})
+}
+
+// resolveSchedule turns a request into the one stored representation.
+func resolveSchedule(req scheduleRequest) (string, error) {
+	if req.Preset != nil {
+		cron, err := req.Preset.Cron()
+		if err != nil {
+			return "", errors.New("unsupported schedule preset")
+		}
+		return cron, nil
+	}
+	if req.Cron == "" {
+		// No schedule given: the Space keeps the default nightly run rather
+		// than silently never running.
+		return "", nil
+	}
+	if err := scheduler.ValidateCron(req.Cron); err != nil {
+		return "", errors.New("schedule is not a valid cron expression")
+	}
+	return req.Cron, nil
+}
+
+// parseLimit reads an optional ?limit=, clamped to a sane maximum.
+func parseLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return defaultHistoryLimit, true
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 {
+		writeError(w, http.StatusBadRequest, "bad_request", "limit must be a positive integer")
+		return 0, false
+	}
+	if limit > maxHistoryLimit {
+		limit = maxHistoryLimit
+	}
+	return limit, true
+}
+
+func (s *Server) toScheduleResponse(c spacecfg.Config) scheduleResponse {
+	cron := c.EffectiveSchedule()
+	return scheduleResponse{
+		SpaceID:  c.SpaceID,
+		Enabled:  c.Enabled,
+		Cron:     cron,
+		Preset:   scheduler.PresetOf(cron),
+		Timezone: s.scheduleTimezone(),
+	}
+}
+
+// scheduleTimezone is the scheduler's zone name, or "" when there is no
+// scheduler to ask (the pipeline is disabled) or it cannot name its zone.
+func (s *Server) scheduleTimezone() string {
+	if s.schedules == nil {
+		return ""
+	}
+	return s.schedules.Timezone()
+}
+
+func isConfigNotFound(err error) bool {
+	var notFound spacecfg.ErrNotFound
+	return errors.As(err, &notFound)
+}

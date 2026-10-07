@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"opencloud-backup-plugin/internal/cli"
-	"opencloud-backup-plugin/internal/testutil"
-	"opencloud-backup-plugin/pkg/takeout"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/testutil"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/takeout"
 )
 
 // keyFlagNames are the things a key input would plausibly be called.
@@ -76,8 +76,8 @@ func TestSourceDoesNotUseKeyUnwrappingAPIs(t *testing.T) {
 // public header, so the package is linked. That its unwrap functions stay
 // unreferenced is what the source audit above checks.
 var forbiddenDeps = []string{
-	"opencloud-backup-plugin/pkg/takeout/decrypt",
-	"opencloud-backup-plugin/pkg/restore",
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/takeout/decrypt",
+	"github.com/knoppiks/opencloud-backup-plugin/internal/restore",
 }
 
 func TestBinaryDoesNotLinkTheDecryptPath(t *testing.T) {
@@ -91,7 +91,7 @@ func TestBinaryDoesNotLinkTheDecryptPath(t *testing.T) {
 	// A control: the check above must be failing for the right reason. If the
 	// decrypt package were renamed or removed, the loop would pass vacuously.
 	userSide := testutil.PackageDeps(t, "../decrypt")
-	if !userSide["opencloud-backup-plugin/pkg/takeout/decrypt"] {
+	if !userSide["github.com/knoppiks/opencloud-backup-plugin/pkg/takeout/decrypt"] {
 		t.Fatal("the user-side decrypt CLI no longer links pkg/takeout/decrypt; " +
 			"the forbidden-dependency list above is now checking nothing")
 	}

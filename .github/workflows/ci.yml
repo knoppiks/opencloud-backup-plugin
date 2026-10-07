@@ -26,7 +26,7 @@ concurrency:
 
 env:
   # Keep in sync with go.mod's toolchain pin.
-  GO_VERSION: "1.26.0"
+  GO_VERSION: "1.26.8"
   # The web extension's floor is Node 20.19 (vite 8); CI runs the current LTS.
   NODE_VERSION: "24.17.0"
   # Pinned tool versions (AGENTS.md: pin external versions).
@@ -225,7 +225,7 @@ jobs:
 
     # yq (mikefarah, v4) is preinstalled on ubuntu-latest.
     - id: legs
-      run: echo "legs=$(yq -o=json -I=0 '[.legs[].name]' pkg/ocversion/versions.yaml)" >> "$GITHUB_OUTPUT"
+      run: echo "legs=$(yq -o=json -I=0 '[.legs[].name]' internal/ocversion/versions.yaml)" >> "$GITHUB_OUTPUT"
 
   # The fixture suite and the browser E2E on every supported leg, all blocking.
   # Job names carry the leg's role, not its version ("opencloud (newest-rolling)
