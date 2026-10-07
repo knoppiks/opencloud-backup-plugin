@@ -103,6 +103,14 @@ change: confirm `CS3_DATA_SERVER_URL` is harmless when set (or document that
 it must be unset). Fix what breaks, or — if 7.2 needs a code path the rest of
 the window does not — bring that to the owner before writing it.
 
+**Outcome (PR B, #64):** 7.2.4 needs exactly such a path, and the owner chose
+to drop it. Its Go integration suite passed, but its E2E failed in
+`provision-state-space`: on reva 2.46.x a service account cannot create a
+project Space (fixed in 7.3.0, not backported). The `production` leg is
+removed from `versions.yaml` until the next Production line; see decisions.md,
+"Moving to OpenCloud 8.x". `CS3_DATA_SERVER_URL` is harmless below 7.5 since
+PR B: the rewrite applies only to URLs without a transfer token.
+
 ### 9.5 The CI matrix
 
 `integration-opencloud` and `e2e` become matrix jobs over the legs in

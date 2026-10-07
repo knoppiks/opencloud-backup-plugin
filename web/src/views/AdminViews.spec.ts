@@ -107,6 +107,39 @@ describe('AdminTargets', () => {
       name: 'backup-vault-admin-target-new'
     })
   })
+
+  // compatibility-policy.md §3: warn, never block. The list stays usable.
+  it('warns above the list when OpenCloud runs an untested version', async () => {
+    api.listTargets.mockResolvedValue([adminTarget()])
+    api.openCloudVersion.mockResolvedValue({
+      known: true,
+      version: '9.0.0',
+      edition: 'rolling',
+      in_window: false,
+      supported: 'Rolling 7.3.0 to 8.1.0'
+    })
+    const wrapper = await mounted(AdminTargets)
+
+    const notice = wrapper.find('[data-testid="opencloud-untested"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('OpenCloud 9.0.0')
+    expect(wrapper.findAll('[data-testid="destinations"] tbody tr')).toHaveLength(1)
+  })
+
+  it.each([
+    [
+      'inside the window',
+      () => Promise.resolve({ known: true, version: '8.1.0', in_window: true, supported: 'x' })
+    ],
+    ['the version route failing', () => Promise.reject(new ApiError('unavailable', 'x', 503))]
+  ])('says nothing about OpenCloud with %s', async (_name, answer) => {
+    api.listTargets.mockResolvedValue([adminTarget()])
+    api.openCloudVersion.mockImplementation(answer)
+    const wrapper = await mounted(AdminTargets)
+
+    expect(wrapper.find('[data-testid="opencloud-untested"]').exists()).toBe(false)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
 })
 
 describe('AdminTargetNew', () => {

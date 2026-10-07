@@ -18,15 +18,27 @@
 # is where the owner's deployment runs and where breakage arrives first.
 default: newest-rolling
 
-# Only the newest Rolling release for now: below 7.5 backupd's
-# CS3_DATA_SERVER_URL breaks every state write (phase-9 doc, 9.4). The
-# Production and oldest-Rolling legs return with that fix (#64).
+# The policy's legs (compatibility-policy.md §3): the current Production line's
+# newest patch, the oldest Rolling release since that line was cut, and the
+# newest Rolling release. Production ships from its own repository.
+#
+# There is no Production leg today. The Production line 7.2.x cannot run this
+# plugin: on it, a service account cannot create a project Space (the gateway
+# denies the creator's initial manager share, so the state Space cannot be
+# provisioned). OpenCloud fixed that in 7.3.0 (reva 2.47.0) and did not
+# backport it. A Production leg returns with the next Production line
+# (decisions.md, amendment "Moving to OpenCloud 8.x").
 legs:
+- name: oldest-rolling
+  channel: rolling
+  image: opencloudeu/opencloud-rolling
+  tag: 7.3.0
+  digest: sha256:f988f14779cbfe26dec78ea3fc2492ae063fe14a069857dd2d5a397a927fc361
 - name: newest-rolling
   channel: rolling
   image: opencloudeu/opencloud-rolling
-  tag: 7.5.0
-  digest: sha256:6db1cfb06d430a663f16e9f33dcd4596d82a4875be0b4df233c26ce5f667ea74
+  tag: 8.1.0
+  digest: sha256:8fc64ca861739cc62095cd558814f2eba6a90acf5998d884e439b33a47875da8
 
 # Followed by tag, never by digest: its job is to notice the release nobody has
 # pinned yet. Not part of the support window.

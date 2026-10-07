@@ -4,16 +4,20 @@
 // (decisions.md #14).
 //
 // This page manages destinations and who may use them, nothing else. It shows
-// no Space, no run and no user data (decisions.md #15).
+// no Space, no run and no user data (decisions.md #15). Above the list it
+// warns when OpenCloud runs a version this release was not tested with
+// (compatibility-policy.md §3).
 //
 // `oc-*` elements are host globals: see components/RequestState.vue.
 import { computed, onMounted, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { asApiError, type AdminTarget, type ApiError } from '../api'
+import { asApiError, type AdminTarget, type ApiError, type OpenCloudVersion } from '../api'
+import { openCloudNotice } from '../admin/compat'
 import { targetRow } from '../admin/targetrow'
 import { adminErrorAdvice, adminErrorTitle } from '../admin/wording'
 import AdminOnly from '../components/admin/AdminOnly.vue'
 import EmptyState from '../components/EmptyState.vue'
+import NoticeBanner from '../components/NoticeBanner.vue'
 import PageLayout from '../components/PageLayout.vue'
 import { destinationsCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
@@ -28,7 +32,10 @@ const loading = ref(true)
 const error = ref<ApiError | undefined>(undefined)
 const targets = ref<AdminTarget[]>([])
 
+const openCloud = ref<OpenCloudVersion | undefined>(undefined)
+
 const rows = computed(() => targets.value.map((t) => targetRow(t, $gettext)))
+const compatNotice = computed(() => openCloudNotice(openCloud.value, $gettext))
 
 /** fields are the columns; the location gives way on narrow screens. */
 const fields = computed(() => [
@@ -54,9 +61,22 @@ async function load(): Promise<void> {
   }
 }
 
+/**
+ * loadOpenCloudVersion is advisory: if the service cannot say, the page says
+ * nothing about it rather than showing an error next to working destinations.
+ */
+async function loadOpenCloudVersion(): Promise<void> {
+  try {
+    openCloud.value = await api.openCloudVersion()
+  } catch {
+    openCloud.value = undefined
+  }
+}
+
 onMounted(() => {
   if (isAdmin) {
     void load()
+    void loadOpenCloudVersion()
   }
 })
 </script>
@@ -75,6 +95,14 @@ onMounted(() => {
       </oc-button>
     </template>
     <AdminOnly>
+      <NoticeBanner
+        v-if="compatNotice"
+        tone="warning"
+        :title="compatNotice.title"
+        :message="compatNotice.message"
+        class="ext:mb-4"
+        data-testid="opencloud-untested"
+      />
       <RequestState
         :loading="loading"
         :error="error"

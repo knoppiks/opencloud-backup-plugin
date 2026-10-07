@@ -355,6 +355,11 @@ const de: Record<string, string> = {
   Connection: 'Verbindung',
   'Connection check': 'Verbindungstest',
   'Danger zone': 'Gefahrenbereich',
+  // Untested OpenCloud version (admin/compat.ts).
+  'This OpenCloud version has not been tested with Backup Vault':
+    'Diese OpenCloud-Version wurde nicht mit dem Backup-Tresor getestet',
+  'OpenCloud %{version} is running; this release of Backup Vault was tested with %{supported}. Backups continue. Look for a newer release of Backup Vault before relying on them.':
+    'Es läuft OpenCloud %{version}; diese Version des Backup-Tresors wurde mit %{supported} getestet. Sicherungen laufen weiter. Suchen Sie nach einer neueren Version des Backup-Tresors, bevor Sie sich auf sie verlassen.',
   'Only administrators can manage backup destinations':
     'Nur Administratoren können Sicherungsziele verwalten',
   'Sign in with an administrator account to continue.':

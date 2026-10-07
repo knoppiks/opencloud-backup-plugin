@@ -495,3 +495,35 @@ boundary; the client gate is UX only — decisions.md #15).
 (idempotent; password `Test-User-1!`) and appends `OC_ADMIN_APP_ROLE_ID`,
 `OC_NORMAL_USER_ID`, `OC_ADMIN_USER_ID` to `fixture.env`. `down.sh --purge` still
 yields a clean slate (the user lives only in the disposable `data/` volume).
+
+## Phase 9 spike — reading OpenCloud's version ✅
+
+Measured 2026-10-06 against throwaway single-container instances of 7.2.4
+(Production image `opencloudeu/opencloud`), 7.3.0 and 8.1.0 (Rolling), plus the
+running 7.5.0 fixture. Same digests as `pkg/ocversion/versions.yaml`.
+
+| Candidate | Credential | Result |
+|---|---|---|
+| `GET /status.php` | **none** | `productversion` = the release (`7.2.4`, `7.3.0`, `7.5.0`, `8.1.0`); `edition` = `stable` on Production, `rolling` on Rolling |
+| `GET /ocs/v1.php/cloud/capabilities?format=json` | none (200 anonymously) | `ocs.data.version.productversion` and `.edition`, same values; larger body |
+| graph | — | no version field found |
+| gateway RPC | service account | not needed; not measured |
+| `opencloud version` (CLI in the image) | shell in the container | `Version: 8.1.0`, `Edition: rolling` — useless to an external service |
+
+`version` / `versionstring` are a frozen ownCloud-compat `0.1.0` on every
+release and must be ignored.
+
+**Decision:** `backupd` reads `GET <OC_BASE_URL>/status.php` and uses
+`productversion` (and `edition` for the log line). No credential, identical
+shape on the whole window, served by OpenCloud's own proxy, so it travels the
+same route as the Graph calls `backupd` already makes.
+
+### Measured on the same instances (inputs to 9.3 / 9.4)
+
+- **Admin app-role id** `71881883-1768-46bd-a24d-a356a2afdf7f` on 7.2.4, 7.3.0
+  and 8.1.0. `/me?$expand=appRoleAssignments,memberOf` has the same shape
+  (`appRoleId`, `principalType: User`, `resourceDisplayName: OpenCloud`).
+- **Default CSP** is identical on 7.2.4 and 7.3.0. **8.1.0 adds `blob:` to
+  `style-src`.** Neither has `'wasm-unsafe-eval'`. The fixture's `csp.yaml`
+  (7.3.0 default + wasm) therefore withholds `blob:` styles from an 8.1 host;
+  re-derived from 8.1's default in 9.3.

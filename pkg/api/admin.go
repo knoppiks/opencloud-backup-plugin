@@ -58,8 +58,10 @@ type GraphAdminResolver struct {
 	graph graphMeFetcher
 }
 
-// DefaultAdminAppRoleID is the OpenCloud 7.3.0 "Admin" app-role id
-// (phase-0-findings.md, admin-role spike).
+// DefaultAdminAppRoleID is OpenCloud's "Admin" app-role id, first measured on
+// 7.3.0 (phase-0-findings.md, admin-role spike) and unchanged on 7.2.4 and
+// 8.1.0 (Phase 9 spike). TestAdminAppRoleIDPinnedIntegration checks it on
+// every CI leg.
 const DefaultAdminAppRoleID = "71881883-1768-46bd-a24d-a356a2afdf7f"
 
 // NewGraphAdminResolver constructs a graph resolver. If adminAppRoleID is empty

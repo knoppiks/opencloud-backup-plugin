@@ -1,9 +1,11 @@
-# OpenCloud's Content Security Policy for the fixture: the 7.3.0 default,
-# measured from the fixture's own response header, plus ONE addition.
+# OpenCloud's Content Security Policy for the fixture: the 8.1.0 default,
+# measured from its response header (phase-0-findings.md, Phase 9 spike), plus
+# ONE addition. 8.1.0's default is 7.2/7.3's plus `blob:` in style-src; the
+# superset is used on every leg, older releases simply do not need the extra.
 #
 # 'wasm-unsafe-eval' in script-src lets the page compile WebAssembly. Backup
 # Vault needs it: Argon2id (the Recovery Key's key derivation) comes from
-# hash-wasm, and the 7.3.0 default blocks WebAssembly.compile(). Without it the
+# hash-wasm, and no supported default allows WebAssembly.compile(). Without it the
 # setup wizard, "Check my Recovery Key" and the key replacement all fail in the
 # browser. It permits WebAssembly compilation only; it is not 'unsafe-eval' and
 # does not allow eval() or new Function().
@@ -48,3 +50,4 @@ directives:
   style-src:
   - '''self'''
   - '''unsafe-inline'''
+  - 'blob:'

@@ -9,7 +9,7 @@
 // one into an error, and neither does anything here.
 
 import { ApiTransport, type BackupApiOptions } from './transport'
-import type { AdminTarget, AdminTargetRequest, CheckResult, Grant } from './types'
+import type { AdminTarget, AdminTargetRequest, CheckResult, Grant, OpenCloudVersion } from './types'
 
 /** AdminApi is the typed surface of `/admin/targets`. */
 export class AdminApi {
@@ -83,6 +83,17 @@ export class AdminApi {
       body: { grants }
     })
     return body.grants ?? []
+  }
+
+  /**
+   * openCloudVersion reports the OpenCloud the service runs against and
+   * whether this release was tested with it. The route is open to every
+   * signed-in user; only the admin view asks for now, so it lives here
+   * rather than in every user's bundle.
+   */
+  async openCloudVersion(): Promise<OpenCloudVersion> {
+    const body = await this.transport.request<{ opencloud: OpenCloudVersion }>('/version')
+    return body.opencloud
   }
 
   private path(id: string, suffix = ''): string {

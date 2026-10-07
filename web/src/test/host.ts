@@ -169,9 +169,10 @@ const table = defineComponent({
   }
 })
 
-// Like the real OcRadio (design system 7.4): attributes land on the wrapping
-// span, the native radio sits inside it and is checked when the model equals
-// `option`. Specs reach it with `[data-testid=…] input`.
+// Like the real OcRadio (design system 7.4; the E2E checks the real one on
+// every leg): attributes land on the wrapping span, the native radio sits
+// inside it and is checked when the model equals `option`. Specs reach it
+// with `[data-testid=…] input`.
 const radio = defineComponent({
   name: 'OcRadioStub',
   props: {

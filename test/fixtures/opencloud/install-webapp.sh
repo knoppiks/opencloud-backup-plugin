@@ -85,7 +85,7 @@ echo "  entrypoint: ${ENTRY} (200)"
 
 # The page's CSP must allow WebAssembly compilation, or the Recovery Key
 # ceremony's Argon2id is blocked in the browser while everything above passes.
-# OpenCloud 7.3.0's default policy does not allow it; ./csp.yaml adds it.
+# No supported OpenCloud's default policy allows it; ./csp.yaml adds it.
 CSP=$(curl -sk -D - -o /dev/null "${BASE}/" | tr -d '\r' | grep -i '^content-security-policy:' || true)
 SCRIPT_SRC=$(printf '%s' "${CSP}" | tr ';' '\n' | grep -i 'script-src' || true)
 if ! printf '%s' "${SCRIPT_SRC}" | grep -q "'wasm-unsafe-eval'"; then

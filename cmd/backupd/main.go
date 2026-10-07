@@ -50,6 +50,7 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/notify"
 	"opencloud-backup-plugin/pkg/objstore"
+	"opencloud-backup-plugin/pkg/ocversion"
 	"opencloud-backup-plugin/pkg/restore"
 	"opencloud-backup-plugin/pkg/scheduler"
 	"opencloud-backup-plugin/pkg/snapshot"
@@ -70,7 +71,18 @@ const schedulerDrainTimeout = 30 * time.Second
 type service struct {
 	api       *api.Server
 	scheduler *scheduler.Scheduler
+	// openCloud watches the OpenCloud version; nil without OC_BASE_URL.
+	openCloud *ocversion.Monitor
 }
+
+// How often the OpenCloud version is re-read once known, and how soon it is
+// retried while OpenCloud has not answered yet (it may start after us). An
+// upgrade is rare and changes nothing here but a log line and a notice, so the
+// slow cadence is enough.
+const (
+	openCloudVersionInterval = time.Hour
+	openCloudVersionRetry    = 30 * time.Second
+)
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -130,6 +142,13 @@ func serve(logger *slog.Logger) {
 	defer stop()
 
 	var workers sync.WaitGroup
+	if svc.openCloud != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			svc.openCloud.Run(ctx, openCloudVersionInterval, openCloudVersionRetry)
+		}()
+	}
 	if svc.scheduler != nil {
 		workers.Add(1)
 		go func() {
@@ -273,6 +292,18 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 		logger.Info("group resolution: graph memberOf")
 	} else {
 		logger.Warn("OC_BASE_URL unset; group grants on a Space cannot be honoured")
+	}
+
+	// --- OpenCloud version (compatibility-policy.md §3) ------------------
+	// Read, logged, and warned about when it is outside the window this build
+	// was tested in — never refused. Checked in the background by serve, so an
+	// OpenCloud that is not up yet delays nothing.
+	openCloud, err := buildOpenCloudMonitor(logger)
+	if err != nil {
+		return service{}, cleanup, err
+	}
+	if openCloud != nil {
+		opts = append(opts, api.WithOpenCloudVersion(openCloud))
 	}
 
 	// --- CS3 space reader / writer ---------------------------------------
@@ -539,7 +570,26 @@ func buildService(ctx context.Context, logger *slog.Logger) (service, func(), er
 	// --- readiness --------------------------------------------------------
 	opts = append(opts, api.WithReadiness(readiness(spaceReader)))
 
-	return service{api: api.NewServer(opts...), scheduler: sched}, cleanup, nil
+	return service{api: api.NewServer(opts...), scheduler: sched, openCloud: openCloud}, cleanup, nil
+}
+
+// buildOpenCloudMonitor watches OpenCloud's version through OC_BASE_URL, the
+// same origin the Graph calls use. Without OC_BASE_URL there is nothing to ask,
+// and the version stays unknown.
+func buildOpenCloudMonitor(logger *slog.Logger) (*ocversion.Monitor, error) {
+	pins, err := ocversion.Embedded()
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("supported OpenCloud versions", "supported", pins.Window().String())
+
+	base := strings.TrimSpace(os.Getenv("OC_BASE_URL"))
+	if base == "" {
+		logger.Warn("OC_BASE_URL unset; the OpenCloud version cannot be checked")
+		return nil, nil
+	}
+	source := ocversion.StatusSource{BaseURL: base, Client: httpClient()}
+	return ocversion.NewMonitor(source, pins.Window(), logger), nil
 }
 
 // dialCS3 connects to the CS3 gateway as the service account. It returns a nil
@@ -581,8 +631,9 @@ func dialCS3() (*cs3.Client, func(), error) {
 // out the storage provider's own address (http://localhost:9158/data by
 // default) instead of the public data gateway. It names where that data server
 // is reachable from this service — scheme and host only, the path OpenCloud
-// returns is kept. Unset, the gateway's URL is used as it is, which is right
-// for OpenCloud up to 7.4.
+// returns is kept. It only applies to URLs handed out without a transfer
+// token, so it is harmless on OpenCloud up to 7.4, which hands out the public
+// data gateway with one (pkg/cs3/dataorigin.go).
 func cs3ClientOptions() ([]cs3.ClientOption, error) {
 	opts := []cs3.ClientOption{cs3.WithHTTPClient(dataGatewayClient())}
 	raw := strings.TrimSpace(os.Getenv("CS3_DATA_SERVER_URL"))

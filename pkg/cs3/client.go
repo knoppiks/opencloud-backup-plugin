@@ -274,7 +274,7 @@ func (c *Client) openOnce(ctx context.Context, space Space, rel string, offset i
 	if endpoint == "" {
 		return nil, fmt.Errorf("cs3 initiate download: no download endpoint returned")
 	}
-	endpoint, err = c.dataEndpoint(endpoint)
+	endpoint, err = c.dataEndpoint(endpoint, transfer)
 	if err != nil {
 		return nil, err
 	}

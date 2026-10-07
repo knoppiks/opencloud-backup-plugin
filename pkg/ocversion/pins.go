@@ -179,20 +179,7 @@ func (p Pins) versionsOf(channel string) []Version {
 }
 
 // SupportedSentence is the README's claim, generated so it cannot drift from
-// what CI runs. A Production leg stands for its whole line (all patch
-// releases, policy §3); Rolling is the range between the outer legs.
+// what CI runs.
 func (p Pins) SupportedSentence() string {
-	var parts []string
-	if prod := p.versionsOf(ChannelProduction); len(prod) > 0 {
-		newest := prod[len(prod)-1]
-		parts = append(parts, fmt.Sprintf("Production %d.%d.x", newest.Major, newest.Minor))
-	}
-	rolling := p.versionsOf(ChannelRolling)
-	oldest, newest := rolling[0], rolling[len(rolling)-1]
-	if oldest == newest {
-		parts = append(parts, "Rolling "+oldest.String())
-	} else {
-		parts = append(parts, fmt.Sprintf("Rolling %s to %s", oldest, newest))
-	}
-	return "**Supported OpenCloud versions: " + strings.Join(parts, " and ") + ".**"
+	return "**Supported OpenCloud versions: " + p.Window().String() + ".**"
 }

@@ -89,12 +89,19 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
 
 ## Deployment preconditions
 
-**Supported OpenCloud versions: Rolling 7.5.0.** CI runs the full OpenCloud
-suite and the browser tests against every version pinned by digest in
-[`pkg/ocversion/versions.yaml`](pkg/ocversion/versions.yaml); a test keeps
-this sentence equal to that file. The service talks to OpenCloud over CS3,
-which OpenCloud does not treat as a public interface, so test a new OpenCloud
-release against the fixture before upgrading a deployment that runs backups.
+**Supported OpenCloud versions: Rolling 7.3.0 to 8.1.0.**
+CI runs the full OpenCloud suite and the browser tests against every version
+pinned by digest in [`pkg/ocversion/versions.yaml`](pkg/ocversion/versions.yaml);
+a test keeps this sentence equal to that file. Outside that range the service
+logs a warning and the admin view shows a notice, and backups keep running.
+The service talks to OpenCloud over CS3, which OpenCloud does not treat as a
+public interface, so test a new OpenCloud release against the fixture before
+upgrading a deployment that runs backups.
+
+**Upgrading OpenCloud to 8.x** needs a search reindex on the OpenCloud side
+(see OpenCloud's 8.0.0 release notes). That is unrelated to this service:
+backups and restores do not use search. Configure `CS3_DATA_SERVER_URL` before
+crossing 7.5 (step 1 below); it is harmless on older releases.
 
 The image is published as `ghcr.io/knoppiks/opencloud-backupd` for every
 release tag, or built from the `Dockerfile` in this repository (`make image`). It
@@ -226,8 +233,8 @@ gets for free. Copying into a running pod does nothing until it restarts.
 
 **OpenCloud's Content Security Policy has to allow WebAssembly.** The Recovery
 Key's key derivation (Argon2id) runs in the browser as WebAssembly, and the
-default policy of OpenCloud 7.3.0 to 7.5.0 (`script-src 'self' 'unsafe-inline'`) blocks
-compiling it. Everything else still works, so the failure shows up late: setup,
+default policy of every supported OpenCloud (`script-src 'self' 'unsafe-inline'`)
+blocks compiling it. Everything else still works, so the failure shows up late: setup,
 "Check my Recovery Key" and the key replacement all fail in the browser. Add
 `'wasm-unsafe-eval'` to `script-src` in the CSP file OpenCloud reads
 (`PROXY_CSP_CONFIG_FILE_LOCATION`):
@@ -241,8 +248,10 @@ directives:
 ```
 
 OpenCloud uses that file **instead of** its default, so start from your current
-policy and add the one line. [`test/fixtures/opencloud/csp.yaml`](test/fixtures/opencloud/csp.yaml)
-is the 7.3.0 default plus that line. `'wasm-unsafe-eval'` allows WebAssembly
+version's policy and add the one line. The defaults differ: 8.1 adds `blob:` to
+`style-src`, which a file copied from 7.x would take away again.
+[`test/fixtures/opencloud/csp.yaml`](test/fixtures/opencloud/csp.yaml) is the
+8.1.0 default plus that line. `'wasm-unsafe-eval'` allows WebAssembly
 compilation only. It is not `'unsafe-eval'`: `eval()` and `new Function()` stay
 blocked.
 
@@ -260,7 +269,10 @@ holds the manifests; every `REPLACE_ME` in them is refused at startup.
      7.5 hands CS3 clients the storage provider's own address, by default
      `http://localhost:9158/data`, instead of the public data gateway. The
      service keeps that path and replaces the scheme and host. OpenCloud's own
-     routing is unchanged.
+     routing is unchanged. Setting it before 7.5 does no harm: older releases
+     hand out the public data gateway with a transfer token, and the service
+     uses such URLs as they are. So a deployment on 7.3 or 7.4 can configure
+     it now and upgrade across 7.5 without touching the service.
    - Both are plaintext and check the service account's token on every
      request. Keep them on the cluster network.
 2. **OpenCloud: the CSP override** (above).

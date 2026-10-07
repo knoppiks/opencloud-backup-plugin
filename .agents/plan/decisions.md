@@ -1226,6 +1226,28 @@ layout, which was a scaffolding choice rather than a locked decision.
   the CSP mechanism for the compose add-on (Phase 12); busybox (Phase 11);
   R10's option; Phase 5b — v1 or backlog.
 
+### Amendments from moving to OpenCloud 8.x (Phase 9, #64)
+
+- **Production 7.2.x is outside the window (owner decision, 2026-10-07).**
+  #25 asks for the current Production line. On 7.2.x (reva 2.46.x) a service
+  account cannot create a project Space: the service account's permissions
+  are a fixed set that ignores grants on the node, so the gateway's initial
+  manager share for the creator is denied ("insufficient permissions to
+  create that kind of share") and the Space is rolled back.
+  `backupd provision-state-space` cannot work there, and the service
+  account's grant on its own state Space would be ignored too. Upstream fixed
+  it in reva e87f7a03 ("merge service account permissions with node grants",
+  reva 2.47.0 = OpenCloud 7.3.0) and did not backport it to stable-2.46.
+  Measured: PR #66's `production` E2E leg failed in `provision-state-space`
+  while its Go integration suite passed. Working around it would need an
+  admin to create the Space and hand it over, which is the procedure 8c
+  replaced because it leaves a non-removable admin grant (decisions.md, 8c
+  amendment). So the window is **Rolling 7.3.0 to 8.1.0** until the next
+  Production line (due 2026-10-26, built on a reva with the fix) joins it.
+  `versions.yaml` has no `production` leg until then; #25 is otherwise
+  unchanged. An upstream backport request to stable-2.46 would bring 7.2.x
+  back.
+
 ---
 
 ## Trust & key model

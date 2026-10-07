@@ -40,6 +40,7 @@ export type {
   JobState,
   KeyStatus,
   Notification,
+  OpenCloudVersion,
   PresetKind,
   RecoveryEnvelope,
   RestoreAccepted,
