@@ -40,7 +40,7 @@ export function takeout(spaceId: string, outDir: string): CliResult {
       runContext().prefix,
       '-space',
       spaceId,
-      '-insecure',
+      '-plain-http',
       '-out',
       outDir
     ],

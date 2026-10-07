@@ -117,7 +117,8 @@ func TestProvisionStateSpace_StdoutIsExactlyTheID(t *testing.T) {
 
 func TestRun_ACommandFailureLogsToStderrOnly(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"no-such-command"}, nil, &stdout, &stderr); code != 1 {
+	// A command that parses and then fails: no gateway configured.
+	if code := run([]string{"provision-state-space"}, nil, &stdout, &stderr); code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
 	if stdout.Len() != 0 {

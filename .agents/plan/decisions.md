@@ -1364,6 +1364,24 @@ and opened by every test run. Frozen fixtures are append-only.
   on) one issue labelled `fuzz` when it finds a failing input, like the
   OpenCloud canary.
 
+### Amendments from Phase 10.5 (command line, #78)
+
+None reopens a locked decision. `takeout` and `decrypt` keep their input
+surface (no key flag, credentials from the environment only); the tests that
+audit it are unchanged.
+
+- **One exit-status convention for all three programs:** 0 success and
+  help, 1 failure, 2 wrong usage. **Proposed, owner to confirm:** "usage"
+  is whatever is decidable from the command line alone, including a missing
+  required flag, a stray positional argument (ignored before) and a rotation
+  without `-service-stopped`; anything read from the environment is a
+  failure.
+- **`backupd` reads a command's flags before its configuration**, so help,
+  version and wrong usage need no environment.
+- **Proposed, owner to confirm:** `takeout -insecure`, renamed
+  `-plain-http`, is removed in the first MINOR after the one that ships the
+  rename (compatibility-policy.md §2's minimum).
+
 ---
 
 ## Trust & key model

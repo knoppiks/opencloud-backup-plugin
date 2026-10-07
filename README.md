@@ -462,15 +462,16 @@ export S3_ACCESS_KEY_ID=...        # credentials for the backup store
 export S3_SECRET_ACCESS_KEY=...
 
 # -prefix is the deployment prefix configured on the target.
-# -insecure is needed for a plain-HTTP endpoint, which a self-hosted Garage
-# usually is; drop it if the store is behind TLS.
+# -plain-http is needed for an endpoint without TLS, which a self-hosted Garage
+# usually is; drop it if the store is behind TLS. (It was called -insecure
+# before; that name still works for now and warns.)
 takeout \
   -endpoint buddy.example:3900 \
   -bucket   backups \
   -prefix   oc/ \
   -space    <space-id> \
   -out      ./takeout-alice \
-  -insecure
+  -plain-http
 ```
 
 The result is a self-contained folder: the encrypted repository, the user's
@@ -576,6 +577,20 @@ The command refuses to run while any backup still holds a lease. It is safe to
 re-run: an interrupted rotation is finished by running it again. When it
 succeeds, remove the old key from the deployment — it opens nothing any more.
 Users are unaffected and need do nothing.
+
+### Versions, help and exit status
+
+All three programs say which build they are (`backupd version`,
+`takeout -version`, `decrypt -version`) and explain themselves with `-h`;
+`backupd help` lists the operator commands and `backupd help <command>` shows
+one command's flags. Help, version and a wrong command line need no
+configuration. The exit status means the same in all three:
+
+| Status | Meaning |
+|---|---|
+| 0 | Done, or help or the version was asked for. |
+| 1 | The program ran and failed: a wrong Recovery Key, a damaged Take-Out, an unreachable store, a configuration error in the environment. |
+| 2 | The command line was wrong: an unknown command or flag, a missing required flag, a stray argument. Nothing was attempted. |
 
 ### Keep this in mind
 

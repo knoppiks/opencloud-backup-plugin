@@ -252,6 +252,47 @@ old code. Where it differs from the table:
 - `decrypt` and `takeout` take `io.Reader`/`io.Writer`, so their list,
   extract and decrypt paths become unit-testable; coverage target ≥ 80 %.
 
+**Outcome (10.5, #78).** All five done. Where it differs from the plan:
+
+- **Version plumbing in `internal/buildinfo`**, the package 11.2 names:
+  `Version`, `Commit`, `Date` set with `-ldflags -X`, falling back to what
+  the toolchain recorded (`go install …@vX` module version, `vcs.revision`,
+  `vcs.time`, `vcs.modified`), `dev` otherwise. `-version` prints
+  `<program> <version> (<commit>, <go>, <os/arch>)`. Nothing stamps it yet
+  (11.2); a test builds `decrypt` with `-X` and runs it, so the path is
+  proven, and it reads the package path from the type so 10.7's rename
+  cannot leave it stale. `backupd` also logs `starting backupd` with the
+  version before its configuration line (11.2 lists that line too; it was
+  one statement).
+- **Exit status in `internal/cli`**: 0 success and help, 1 failure, 2 wrong
+  usage, the same for all three; documented in each `-h` and in README
+  ("Versions, help and exit status"). One `cli.Parse` for every flag set:
+  help goes to **stdout** (it is the output asked for), parse errors and
+  usage to stderr. *Proposed, owner to confirm:* what counts as usage (2) is
+  anything decidable from the command line alone: unknown flag or command,
+  a missing required flag (`-in`, `-out`, `-bucket`, `-space`), a **stray
+  positional argument** (silently ignored by `takeout` and `decrypt`
+  before), and `rotate-*` without `-service-stopped`. Everything from the
+  environment (missing S3 credentials, an invalid configuration) is a
+  failure (1).
+- **`backupd`**: `help`/`-h`/`--help` list the commands, `help <command>`
+  shows its flags; `version`/`-version`/`--version`. A command's flags are
+  now read **before** the configuration, so help, version and usage errors
+  work with an empty or broken environment; an unknown command no longer
+  needs a valid configuration to be refused. Usage errors are plain text on
+  stderr, command failures stay JSON log lines.
+- **`-plain-http`**; `-insecure` still sets it and prints a deprecation
+  warning on stderr naming the replacement. *Proposed, owner to confirm:*
+  remove it in the first MINOR after the one that ships this (policy §2's
+  "at least one MINOR"). README and the E2E helper use the new name.
+- **Coverage** (unit, `go test -cover`): `cmd/decrypt` 92.8 %, `cmd/takeout`
+  97.8 %. `decrypt`'s tests drive the whole program over the frozen
+  Take-Out (verify, list, restore newest and a chosen snapshot, wrong key,
+  mistyped key, unknown snapshot, bad `-envelope`); `takeout`'s copy a
+  bucket laid out from the same fixture through an injected target and
+  `Verify` the result. The Recovery Key reader takes any `io.Reader` and
+  uses the no-echo prompt only when it is a terminal.
+
 ## 10.6 Slim `decrypt`
 
 Break `pkg/takeout/decrypt`'s dependency on the S3 side: the read-only kopia
@@ -311,6 +352,9 @@ asserted by a dependency-graph test like the existing one for `takeout`.
       (10.3, #74: one per binary, `internal/config`.)
 - [x] Fuzz targets run in CI; frozen Take-Out and TW-blob fixtures opened by
       tests; gitleaks clean. (10.4, #76)
+- [x] Every binary reports its version; exit status 0/1/2 documented;
+      `-plain-http` with `-insecure` deprecated; `decrypt` and `takeout`
+      unit coverage ≥ 80 %. (10.5, #78)
 - [ ] `decrypt` dependency test passes (no S3/AWS/Azure).
 - [ ] Module renamed; only `pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`
       public; `go install …/cmd/decrypt` works; AGENTS.md and phase-1 updated.
