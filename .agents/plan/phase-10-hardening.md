@@ -193,6 +193,54 @@ old code. Where it differs from the table:
   upgrade that cannot read an old repository.
 - Same for the TW credential blob versions (frozen sealed blob + key).
 
+**Outcome (10.4, #76).** All three done. Where it differs from the plan:
+
+- **Seven fuzz targets**: `FuzzEnvelope` (Inspect, `CheckRecoveryEnvelope`
+  and open with fixed keys taken from the vectors, plus an RK seed with tiny
+  Argon2id costs so mutations reach the AEAD; inputs asking for more than
+  256 KiB / 2 passes are inspected but not opened), `FuzzDecodeRecoveryKey`,
+  `FuzzRecoveryKeyRoundTrip`, `FuzzReadManifest` (on an unexported
+  `parseManifest`, so no file is written per input), `FuzzEscapeSegment` and
+  `FuzzUnescapeSegment`, `FuzzParseDataServerOrigin` (also applies the
+  origin and checks only scheme and host change). Besides "no panic" each
+  states its parser's promises: errors are the package's coarse sentinels, a
+  Recovery Key error carries nothing of the input, a parsed envelope header
+  re-serialises to the same bytes, an accepted manifest names nothing outside
+  its directory.
+- **Two findings, fixed:** `state.UnescapeSegment` took `%+1`, `% 1` and
+  `%0X0` as escapes (it used `fmt.Sscanf`), so two keys could name one
+  record; it now takes exactly two hex digits. `ReadManifest` accepted a
+  blob id of `.` (and would have taken `../x`, which `Verify` reads as a
+  file); it now refuses blob ids that are not flat names, and a manifest
+  version below 1. The crashers are committed under `testdata/fuzz/`.
+- **`make fuzz`** finds the targets by name (`FUZZTIME`, default 10 s each);
+  CI runs it on every PR (job `fuzz (short)`), `fuzz.yml` nightly at 5 min
+  each, uploading failing inputs and opening one `fuzz`-labelled issue.
+- **Frozen Take-Out** `pkg/takeout/testdata/takeout-v1/` (21 KB of
+  repository) plus `takeout-v1.json` (Recovery Key display form, Space id,
+  two snapshots newest first with every file's size, SHA-256 and mtime, and
+  the Go/kopia/format versions that wrote it). Two snapshots so listing and
+  choosing an older one are pinned too; an empty file and a non-ASCII path
+  are in it. The test (`pkg/takeout/decrypt/frozen_test.go`) copies it to a
+  temporary directory first, runs `Verify`, decodes the key, lists and
+  restores both snapshots. The generator is a test behind `-freeze <name>`
+  that refuses to overwrite. `frozenTakeOuts` is append-only and a test
+  fails when a listed fixture is missing or a fixture is not listed; another
+  fails when no fixture has the current manifest *and* envelope version.
+- **Frozen credentials** `pkg/targets/testdata/sealed-credentials-v1.json`:
+  throwaway TW key and both payload shapes written so far (backup pair only,
+  backup + maintenance), opened by a test; same append-only list, generator
+  and "current version covered" test.
+- **gitleaks:** both fixture paths allowlisted with the reason; no other
+  allowlisting.
+- *Proposed, owner to confirm:* a new fixture is required per manifest or
+  envelope **version**, not per kopia release: the existing one is what
+  proves a kopia upgrade still reads old repositories. *Also proposed:* the
+  manifest tightening above (no `takeout` ever wrote a version below 1 or a
+  blob id with a separator), and the nightly fuzz run opening an issue.
+- **For 10.7:** moving `pkg/targets` to `internal/` moves its fixture; the
+  `.gitleaks.toml` path and the doc references above follow it.
+
 ## 10.5 CLI
 
 - `version` subcommand / `-version` flag on all three binaries (value injected
@@ -261,8 +309,8 @@ asserted by a dependency-graph test like the existing one for `takeout`.
       `noleak` tests cover the new lines. (10.2, #72)
 - [x] One config struct; environment reference generated from it.
       (10.3, #74: one per binary, `internal/config`.)
-- [ ] Fuzz targets run in CI; frozen Take-Out and TW-blob fixtures opened by
-      tests; gitleaks clean.
+- [x] Fuzz targets run in CI; frozen Take-Out and TW-blob fixtures opened by
+      tests; gitleaks clean. (10.4, #76)
 - [ ] `decrypt` dependency test passes (no S3/AWS/Azure).
 - [ ] Module renamed; only `pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`
       public; `go install …/cmd/decrypt` works; AGENTS.md and phase-1 updated.

@@ -1342,6 +1342,28 @@ None reopens a locked decision. All configuration is read in one place
   is required whenever `CS3_GATEWAY_ADDR` is set, for the service and every
   operator command alike. These refuse configurations rc.2 accepted.
 
+### Amendments from Phase 10.4 (fuzzing, frozen fixtures, #76)
+
+None reopens a locked decision. The compatibility promises of
+`compatibility-policy.md` §2 are now checked by tests: a Take-Out and sealed
+target credentials written by the code of 2026-10-07 are committed, each with
+the throwaway key generated for it (allowlisted by path in `.gitleaks.toml`),
+and opened by every test run. Frozen fixtures are append-only.
+
+- **Proposed, owner to confirm:** a new frozen Take-Out (and sealed
+  credential file) is required for every new manifest or envelope version,
+  not for every kopia release; the existing fixture is what proves a kopia
+  upgrade still reads an old repository.
+- **Proposed, owner to confirm:** the Take-Out manifest reader refuses a
+  version below 1 and a blob id that is not a flat file name (`.`, `..`, or
+  anything with a separator), both as a damaged Take-Out. No `takeout` ever
+  wrote either; `Verify` would have read such an id as a path. The state
+  key decoder takes exactly two hex digits per escape (it used to take a
+  sign, a space or `0X`); its own writer only ever produced that.
+- **Proposed, owner to confirm:** the nightly fuzz run opens (or comments
+  on) one issue labelled `fuzz` when it finds a failing input, like the
+  OpenCloud canary.
+
 ---
 
 ## Trust & key model

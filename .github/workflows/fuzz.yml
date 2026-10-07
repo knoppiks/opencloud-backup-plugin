@@ -1,0 +1,97 @@
+name: Fuzz (nightly)
+
+# The long fuzz runs (phase-10-hardening.md §10.4). CI fuzzes every target for
+# seconds on each pull request; this gives each one minutes, once a night, so
+# the fuzzer gets past the inputs a short run reaches. It does not gate
+# anything. When it finds a failing input it uploads it and opens one issue
+# (or comments on the one already open), because a nightly red run is easy to
+# miss.
+
+on:
+  schedule:
+  - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: Time per fuzz target (Go duration).
+        type: string
+        default: 5m
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  # Keep in sync with ci.yml.
+  GO_VERSION: "1.26.0"
+
+jobs:
+  fuzz:
+    name: fuzz (long)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: make fuzz
+      env:
+        FUZZTIME: ${{ inputs.fuzztime || '5m' }}
+      run: make fuzz FUZZTIME="$FUZZTIME"
+
+    # Commit what lands here under the same path: it becomes a regression case
+    # of the plain `go test` run.
+    - name: upload failing inputs
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: fuzz-crashers
+        path: "**/testdata/fuzz/**"
+        if-no-files-found: ignore
+
+  report:
+    name: report
+    needs: fuzz
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+    - name: open or update the issue
+      run: |
+        title="Nightly Fuzzing Finds a Failing Input"
+        gh label create fuzz --color D93F0B \
+          --description "Nightly fuzzing found an input a parser fails on" --force
+
+        existing=$(gh issue list --label fuzz --state open --search "in:title \"${title}\"" \
+          --json number,title --jq "map(select(.title == \"${title}\")) | first | .number // empty")
+        if [ -n "$existing" ]; then
+          gh issue comment "$existing" --body "Still failing: ${RUN_URL}"
+          exit 0
+        fi
+
+        body="## Current behaviour
+
+        The nightly fuzz run found an input on which one of the fuzzed parsers breaks its own rules (or crashes). The failing input is attached to the run as the \`fuzz-crashers\` artifact.
+
+        Run: ${RUN_URL}
+
+        ## Expected behaviour
+
+        Every fuzzed parser handles every input: it either accepts it with the guarantees its fuzz target states, or refuses it with its usual error.
+
+        ## Why
+
+        These parsers read the formats a family's backups depend on for years (key envelopes, Recovery Keys, Take-Outs) or input from outside the service. A crash or a wrong answer there is found by an attacker or at the worst possible moment otherwise."
+        gh issue create --title "$title" --label fuzz --body "$body"
