@@ -258,6 +258,7 @@ func TestRunBackup_MapsRunnerErrors(t *testing.T) {
 		{backup.ErrNotConfigured, http.StatusConflict, "not_configured"},
 		{backup.ErrTargetUnavailable, http.StatusConflict, "target_unavailable"},
 		{backup.ErrRunInProgress, http.StatusConflict, "run_in_progress"},
+		{jobs.ErrShuttingDown, http.StatusServiceUnavailable, "shutting_down"},
 		{backup.ErrSpaceNotFound, http.StatusNotFound, "not_found"},
 		{errors.New("s3: dial tcp garage.internal:3900: refused"), http.StatusInternalServerError, "internal_error"},
 	}

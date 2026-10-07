@@ -25,6 +25,8 @@ package targets
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -274,3 +276,12 @@ type Authorizer interface {
 type ErrNotFound struct{ ID string }
 
 func (e ErrNotFound) Error() string { return "targets: no target with id " + e.ID }
+
+// ErrUnreadableTargets is returned when stored target records cannot be
+// decoded. It names the state keys, which are identifiers, never content.
+type ErrUnreadableTargets struct{ Keys []string }
+
+func (e ErrUnreadableTargets) Error() string {
+	return fmt.Sprintf("targets: %d target record(s) could not be read: %s",
+		len(e.Keys), strings.Join(e.Keys, ", "))
+}

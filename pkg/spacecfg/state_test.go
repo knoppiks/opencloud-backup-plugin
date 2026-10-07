@@ -214,3 +214,28 @@ func TestStateStore_SurvivesRestart(t *testing.T) {
 		t.Fatalf("retention after restart: %v", got.EffectiveRetentionWindow())
 	}
 }
+
+// failingReads fails every document read with a transient error, while
+// listing still works: a backend that blinks between the two calls.
+type failingReads struct {
+	state.Store
+}
+
+func (failingReads) Get(context.Context, string) ([]byte, error) {
+	return nil, errors.New("backend unavailable")
+}
+
+// A configuration that exists but could not be read must not shrink the list:
+// the scheduler would skip that Space without a trace (review-2026-10.md F2).
+func TestStateStore_ListFailsRatherThanShrinkOnATransientReadError(t *testing.T) {
+	ctx := t.Context()
+	backing := state.NewMemoryStore()
+	if _, err := NewStateStore(backing, nil).Put(ctx, Config{SpaceID: "s1", TargetID: "t1", Enabled: true}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	configs, unreadable, err := NewStateStore(failingReads{backing}, nil).List(ctx)
+	if err == nil {
+		t.Fatalf("List = %+v, unreadable %v; want an error, not a shorter list", configs, unreadable)
+	}
+}

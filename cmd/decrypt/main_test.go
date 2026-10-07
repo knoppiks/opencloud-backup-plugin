@@ -134,6 +134,7 @@ func TestExplainSpeaksPlainly(t *testing.T) {
 		takeoutdecrypt.ErrBadEnvelopeFile:      "-envelope",
 		takeoutdecrypt.ErrEnvelopeFileMismatch: "same space",
 		takeout.ErrCorrupt:                     "damaged",
+		takeout.ErrNewerTakeOut:                "newer 'decrypt'",
 		snapshot.ErrSnapshotNotFound:           "-list",
 	}
 	for in, want := range cases {

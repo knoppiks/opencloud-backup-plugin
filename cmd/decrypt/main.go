@@ -197,6 +197,9 @@ func explain(err error) error {
 	case errors.Is(err, takeoutdecrypt.ErrUnsupportedEnvelope):
 		return errors.New("this take-out was written by a newer version of the backup service.\n" +
 			"       use a newer 'decrypt' build to open it")
+	case errors.Is(err, takeout.ErrNewerTakeOut):
+		return errors.New("this take-out was written in a newer format than this tool reads.\n" +
+			"       use a newer 'decrypt' build to open it")
 	case errors.Is(err, takeout.ErrCorrupt):
 		return fmt.Errorf("this take-out is damaged: %w\n"+
 			"       ask the administrator for a fresh copy", err)

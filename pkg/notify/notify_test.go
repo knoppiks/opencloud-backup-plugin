@@ -237,7 +237,7 @@ func TestSMTPSink_MailsOperatorEventsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSMTPSink: %v", err)
 	}
-	sink.send = func(_ string, _ smtp.Auth, _ string, to []string, msg []byte) error {
+	sink.send = func(_ context.Context, _ string, _ smtp.Auth, _ string, to []string, msg []byte) error {
 		sent = append(sent, to...)
 		body = msg
 		return nil
@@ -319,7 +319,7 @@ func TestSMTPSinkErrorSaysNothingAboutCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSMTPSink: %v", err)
 	}
-	sink.send = func(string, smtp.Auth, string, []string, []byte) error {
+	sink.send = func(context.Context, string, smtp.Auth, string, []string, []byte) error {
 		return errors.New("535 auth failed for user backup with password hunter2")
 	}
 

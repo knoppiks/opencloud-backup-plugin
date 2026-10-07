@@ -23,8 +23,8 @@ type S3Config struct {
 	Endpoint string
 	Region   string
 	Bucket   string
-	// AccessKeyID / SecretAccessKey are the target's S3 credentials. When both
-	// are empty the ambient AWS configuration (env, shared config) is used.
+	// AccessKeyID / SecretAccessKey are the target's S3 credentials. Both are
+	// required: there is no fallback to ambient AWS credentials (see NewS3).
 	AccessKeyID     string
 	SecretAccessKey string
 	// UsePathStyle forces path-style addressing (required for Garage).
@@ -48,23 +48,28 @@ var _ Store = (*S3Store)(nil)
 // against Garage, which returns no SDK-verifiable composite checksum
 // (phase-0-findings.md Spike 1, gotcha 4), so both checksum knobs are pinned to
 // WhenRequired.
+//
+// Credentials are static and explicit. Without them the SDK would walk its
+// default chain — environment, shared files, and finally the cloud metadata
+// service, which an admin's laptop or a home server answers by retrying against
+// 169.254.169.254 (review-2026-10.md F5). Missing credentials are refused here,
+// before any request is made.
 func NewS3(ctx context.Context, cfg S3Config) (*S3Store, error) {
 	if cfg.Bucket == "" {
 		return nil, fmt.Errorf("objstore: bucket is required")
 	}
+	if err := RequireCredentials(cfg.AccessKeyID, cfg.SecretAccessKey); err != nil {
+		return nil, err
+	}
 
-	opts := []func(*awsconfig.LoadOptions) error{
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion(cfg.Region),
 		awsconfig.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
 		awsconfig.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
-	}
-	if cfg.AccessKeyID != "" || cfg.SecretAccessKey != "" {
-		opts = append(opts, awsconfig.WithCredentialsProvider(
+		awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
-		))
-	}
-
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+		),
+	)
 	if err != nil {
 		// The error may quote configuration file paths but never credentials.
 		return nil, fmt.Errorf("objstore: load s3 configuration: %w", err)
@@ -77,6 +82,20 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3Store, error) {
 		o.UsePathStyle = cfg.UsePathStyle
 	})
 	return &S3Store{client: client, bucket: cfg.Bucket}, nil
+}
+
+// ErrMissingCredentials means an S3 access was attempted without both halves of
+// a static credential.
+var ErrMissingCredentials = errors.New("objstore: S3 access key id and secret access key are both required")
+
+// RequireCredentials refuses an incomplete static credential. Every S3 client
+// in this module goes through it, so none of them can fall back to ambient
+// credentials. The error never echoes either value.
+func RequireCredentials(accessKeyID, secretAccessKey string) error {
+	if strings.TrimSpace(accessKeyID) == "" || strings.TrimSpace(secretAccessKey) == "" {
+		return ErrMissingCredentials
+	}
+	return nil
 }
 
 // EndpointURL normalises a bare host:port into a URL, leaving an explicit
