@@ -64,7 +64,7 @@ a follow-up edit alone: once committed, it is in history.
   `randomBytes`), or build fixed ones from parts (e.g. `groups.join('-')`).
 - **Scan before staging is done.** Run `make secret-scan`, or without a local
   gitleaks, the CI-pinned version:
-  `go run github.com/zricethezav/gitleaks/v8@v<GITLEAKS_VERSION from ci.yml> git . --redact --no-banner`
+  `go run github.com/zricethezav/gitleaks/v8@v<GITLEAKS_VERSION from ci.yml> git . --log-opts="HEAD" --redact --no-banner`
   plus `… dir . --redact --no-banner` for uncommitted changes.
 - **Genuine test material** (golden vectors, fixture credentials) is
   allowlisted by path in `.gitleaks.toml`, with a reason. Add to it only for

@@ -128,8 +128,8 @@ k8s-validate: ## Validate K8s manifests offline (kubeconform).
 	kubeconform -strict -summary deploy/
 
 .PHONY: secret-scan
-secret-scan: ## Scan the full git history for committed secrets (gitleaks).
-	gitleaks git . --redact --no-banner
+secret-scan: ## Scan HEAD's full git history for committed secrets (gitleaks).
+	gitleaks git . --log-opts="HEAD" --redact --no-banner
 
 .PHONY: dev-up
 dev-up: ## Start dev Garage, then the test OpenCloud fixture (and seed it).

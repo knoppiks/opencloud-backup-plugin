@@ -267,5 +267,10 @@ jobs:
           | tar -xz gitleaks
         sudo mv gitleaks /usr/local/bin/
 
+    # Scope the scan to HEAD's ancestry. gitleaks defaults to `git log --all`,
+    # and fetch-depth: 0 fetches every branch, so without this a PR would be
+    # judged by other open branches' commits against this tree's allowlist.
+    # -v prints each finding (file, line, commit, rule, fingerprint) so a
+    # failure is actionable from the log; --redact keeps the secret out of it.
     - name: scan history
-      run: gitleaks git . --redact --no-banner
+      run: gitleaks git . --log-opts="HEAD" --redact --no-banner -v
