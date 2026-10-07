@@ -27,7 +27,7 @@ func TestStoreContract(t *testing.T) {
 			store := newImpl(clock)
 
 			// An unconfigured Space reports "not configured", not an error.
-			status, err := store.Status("space$a!a")
+			status, err := store.Status(context.Background(), "space$a!a")
 			if err != nil {
 				t.Fatalf("Status: %v", err)
 			}
@@ -36,39 +36,39 @@ func TestStoreContract(t *testing.T) {
 			}
 
 			var nf ErrNotFound
-			if _, err := store.GetSRW("space$a!a"); !errors.As(err, &nf) {
+			if _, err := store.GetSRW(context.Background(), "space$a!a"); !errors.As(err, &nf) {
 				t.Fatalf("GetSRW absent: %v", err)
 			}
-			if _, err := store.GetRK("space$a!a"); !errors.As(err, &nf) {
+			if _, err := store.GetRK(context.Background(), "space$a!a"); !errors.As(err, &nf) {
 				t.Fatalf("GetRK absent: %v", err)
 			}
 
 			// The wrong envelope kind must never be filed under the wrong slot.
-			if err := store.PutSRW("space$a!a", WrappedDK{Kind: WrapRK, Blob: []byte("x")}); !errors.Is(err, ErrBadEnvelope) {
+			if err := store.PutSRW(context.Background(), "space$a!a", WrappedDK{Kind: WrapRK, Blob: []byte("x")}); !errors.Is(err, ErrBadEnvelope) {
 				t.Fatalf("PutSRW with an RK envelope = %v", err)
 			}
-			if err := store.PutRK("space$a!a", WrappedDK{Kind: WrapSRW, Blob: []byte("x")}); !errors.Is(err, ErrBadEnvelope) {
+			if err := store.PutRK(context.Background(), "space$a!a", WrappedDK{Kind: WrapSRW, Blob: []byte("x")}); !errors.Is(err, ErrBadEnvelope) {
 				t.Fatalf("PutRK with an SRW envelope = %v", err)
 			}
 
 			srw := WrappedDK{Version: EnvelopeVersion, Kind: WrapSRW, Blob: []byte("srw-blob"), CreatedAt: keyEpoch}
-			if err := store.PutSRW("space$a!a", srw); err != nil {
+			if err := store.PutSRW(context.Background(), "space$a!a", srw); err != nil {
 				t.Fatalf("PutSRW: %v", err)
 			}
 			clock.Advance(time.Minute)
 			rk := WrappedDK{Version: EnvelopeVersion, Kind: WrapRK, Blob: []byte("rk-blob"), CreatedAt: keyEpoch}
-			if err := store.PutRK("space$a!a", rk); err != nil {
+			if err := store.PutRK(context.Background(), "space$a!a", rk); err != nil {
 				t.Fatalf("PutRK: %v", err)
 			}
 
-			gotSRW, err := store.GetSRW("space$a!a")
+			gotSRW, err := store.GetSRW(context.Background(), "space$a!a")
 			if err != nil {
 				t.Fatalf("GetSRW: %v", err)
 			}
 			if !bytes.Equal(gotSRW.Blob, []byte("srw-blob")) || gotSRW.Kind != WrapSRW {
 				t.Fatalf("SRW envelope = %+v", gotSRW)
 			}
-			gotRK, err := store.GetRK("space$a!a")
+			gotRK, err := store.GetRK(context.Background(), "space$a!a")
 			if err != nil {
 				t.Fatalf("GetRK: %v", err)
 			}
@@ -78,7 +78,7 @@ func TestStoreContract(t *testing.T) {
 
 			// Mutating a returned envelope must not reach into the store.
 			gotRK.Blob[0] = 'X'
-			again, err := store.GetRK("space$a!a")
+			again, err := store.GetRK(context.Background(), "space$a!a")
 			if err != nil {
 				t.Fatalf("GetRK: %v", err)
 			}
@@ -86,7 +86,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatalf("stored envelope was mutated through a returned copy: %q", again.Blob)
 			}
 
-			status, err = store.Status("space$a!a")
+			status, err = store.Status(context.Background(), "space$a!a")
 			if err != nil {
 				t.Fatalf("Status: %v", err)
 			}
@@ -105,10 +105,10 @@ func TestStoreContract(t *testing.T) {
 
 			// Spaces is what a key rotation iterates: a Space missing from it
 			// keeps an envelope nothing can open once the old key is retired.
-			if err := store.PutSRW("space$b!b", srw); err != nil {
+			if err := store.PutSRW(context.Background(), "space$b!b", srw); err != nil {
 				t.Fatalf("PutSRW: %v", err)
 			}
-			spaces, err := store.Spaces()
+			spaces, err := store.Spaces(context.Background())
 			if err != nil {
 				t.Fatalf("Spaces: %v", err)
 			}
@@ -128,11 +128,11 @@ func TestStateStore_EnvelopesAreAppendOnly(t *testing.T) {
 	store := NewStateStore(backing, clock)
 
 	first := WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk-one")}
-	if err := store.PutRK("s1", first); err != nil {
+	if err := store.PutRK(context.Background(), "s1", first); err != nil {
 		t.Fatalf("PutRK: %v", err)
 	}
 	clock.Advance(time.Hour)
-	if err := store.PutRK("s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk-two")}); err != nil {
+	if err := store.PutRK(context.Background(), "s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk-two")}); err != nil {
 		t.Fatalf("PutRK again: %v", err)
 	}
 
@@ -144,7 +144,7 @@ func TestStateStore_EnvelopesAreAppendOnly(t *testing.T) {
 		t.Fatalf("stored documents = %v, want two versions", keys)
 	}
 
-	got, err := store.GetRK("s1")
+	got, err := store.GetRK(context.Background(), "s1")
 	if err != nil {
 		t.Fatalf("GetRK: %v", err)
 	}
@@ -170,29 +170,29 @@ func TestStateStore_FailedWriteLeavesThePreviousVersionReadable(t *testing.T) {
 	clock := testutil.NewFakeClock(keyEpoch)
 	store := NewStateStore(backing, clock)
 
-	if err := store.PutRK("s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk-one")}); err != nil {
+	if err := store.PutRK(context.Background(), "s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk-one")}); err != nil {
 		t.Fatalf("PutRK: %v", err)
 	}
-	if err := store.PutSRW("s1", WrappedDK{Version: 1, Kind: WrapSRW, Blob: []byte("srw-one")}); err != nil {
+	if err := store.PutSRW(context.Background(), "s1", WrappedDK{Version: 1, Kind: WrapSRW, Blob: []byte("srw-one")}); err != nil {
 		t.Fatalf("PutSRW: %v", err)
 	}
 
 	// The service crashes while rotating: the new RK version never lands.
 	clock.Advance(time.Hour)
 	backing.failWrites = true
-	if err := store.PutRK("s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk-two")}); err == nil {
+	if err := store.PutRK(context.Background(), "s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk-two")}); err == nil {
 		t.Fatal("PutRK: want the injected failure")
 	}
 	backing.failWrites = false
 
-	got, err := store.GetRK("s1")
+	got, err := store.GetRK(context.Background(), "s1")
 	if err != nil {
 		t.Fatalf("GetRK after a failed write: %v", err)
 	}
 	if !bytes.Equal(got.Blob, []byte("rk-one")) {
 		t.Fatalf("GetRK = %q, want the version that was there before", got.Blob)
 	}
-	status, err := store.Status("s1")
+	status, err := store.Status(context.Background(), "s1")
 	if err != nil || !status.Configured {
 		t.Fatalf("status after a failed write = %+v (%v)", status, err)
 	}
@@ -217,11 +217,11 @@ func TestStateStore_ReadsPreVersionedRecords(t *testing.T) {
 	}
 
 	store := NewStateStore(backing, clock)
-	rk, err := store.GetRK("s1")
+	rk, err := store.GetRK(context.Background(), "s1")
 	if err != nil || !bytes.Equal(rk.Blob, []byte("old-rk")) {
 		t.Fatalf("GetRK = %q (%v), want the pre-versioned envelope", rk.Blob, err)
 	}
-	status, err := store.Status("s1")
+	status, err := store.Status(context.Background(), "s1")
 	if err != nil || !status.Configured {
 		t.Fatalf("status = %+v (%v)", status, err)
 	}
@@ -229,21 +229,21 @@ func TestStateStore_ReadsPreVersionedRecords(t *testing.T) {
 	// Rotating the RK supersedes only the RK; the SRW still comes from the old
 	// record, and the old record itself is untouched.
 	clock.Advance(time.Hour)
-	if err := store.PutRK("s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("new-rk")}); err != nil {
+	if err := store.PutRK(context.Background(), "s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("new-rk")}); err != nil {
 		t.Fatalf("PutRK: %v", err)
 	}
-	rk, err = store.GetRK("s1")
+	rk, err = store.GetRK(context.Background(), "s1")
 	if err != nil || !bytes.Equal(rk.Blob, []byte("new-rk")) {
 		t.Fatalf("GetRK = %q (%v), want the new version", rk.Blob, err)
 	}
-	srw, err := store.GetSRW("s1")
+	srw, err := store.GetSRW(context.Background(), "s1")
 	if err != nil || !bytes.Equal(srw.Blob, []byte("old-srw")) {
 		t.Fatalf("GetSRW = %q (%v), want the pre-versioned envelope", srw.Blob, err)
 	}
 	if _, err := legacy.Get(t.Context(), "s1"); err != nil {
 		t.Fatalf("the pre-versioned record was disturbed: %v", err)
 	}
-	status, err = store.Status("s1")
+	status, err = store.Status(context.Background(), "s1")
 	if err != nil || !status.Configured {
 		t.Fatalf("status after rotation = %+v (%v)", status, err)
 	}
@@ -253,7 +253,7 @@ func TestStateStore_ReadsPreVersionedRecords(t *testing.T) {
 	if err := legacy.Create(t.Context(), SpaceKeys{SpaceID: "s2"}, "s2"); err != nil {
 		t.Fatalf("seed legacy record: %v", err)
 	}
-	spaces, err := store.Spaces()
+	spaces, err := store.Spaces(context.Background())
 	if err != nil {
 		t.Fatalf("Spaces: %v", err)
 	}
@@ -289,23 +289,110 @@ func TestStateStore_SurvivesRestart(t *testing.T) {
 	clock := testutil.NewFakeClock(keyEpoch)
 
 	before := NewStateStore(backing, clock)
-	if err := before.PutSRW("s1", WrappedDK{Version: 1, Kind: WrapSRW, Blob: []byte("srw")}); err != nil {
+	if err := before.PutSRW(context.Background(), "s1", WrappedDK{Version: 1, Kind: WrapSRW, Blob: []byte("srw")}); err != nil {
 		t.Fatalf("PutSRW: %v", err)
 	}
-	if err := before.PutRK("s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk")}); err != nil {
+	if err := before.PutRK(context.Background(), "s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk")}); err != nil {
 		t.Fatalf("PutRK: %v", err)
 	}
 
 	after := NewStateStore(backing, clock)
-	got, err := after.GetSRW("s1")
+	got, err := after.GetSRW(context.Background(), "s1")
 	if err != nil {
 		t.Fatalf("GetSRW after restart: %v", err)
 	}
 	if !bytes.Equal(got.Blob, []byte("srw")) {
 		t.Fatalf("SRW envelope after restart: %q", got.Blob)
 	}
-	status, err := after.Status("s1")
+	status, err := after.Status(context.Background(), "s1")
 	if err != nil || !status.Configured {
 		t.Fatalf("status after restart = %+v (%v)", status, err)
 	}
+}
+
+// A failed state operation keeps its cause, so the operator's log says why a
+// key read failed (review-2026-10.md F3). The cause is the state store's, which
+// names keys and transports, never document contents.
+func TestStateStore_FailuresKeepTheirCause(t *testing.T) {
+	cause := errors.New("state: gateway unavailable")
+	store := NewStateStore(failingStateStore{err: cause}, nil)
+	ctx := context.Background()
+
+	_, getErr := store.GetSRW(ctx, "s1")
+	_, statusErr := store.Status(ctx, "s1")
+	_, spacesErr := store.Spaces(ctx)
+	putErr := store.PutRK(ctx, "s1", WrappedDK{Version: 1, Kind: WrapRK, Blob: []byte("rk")})
+
+	for name, err := range map[string]error{
+		"GetSRW": getErr, "Status": statusErr, "Spaces": spacesErr, "PutRK": putErr,
+	} {
+		if !errors.Is(err, cause) {
+			t.Errorf("%s: error %v does not wrap the state failure", name, err)
+		}
+	}
+}
+
+// Every operation runs on the caller's context: a cancelled request or a
+// stopping run does not keep a state read going for storeTimeout (G5).
+func TestStateStore_HonoursTheCallersContext(t *testing.T) {
+	store := NewStateStore(blockingStateStore{}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := store.GetRK(ctx, "s1")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("GetRK on a cancelled context = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("GetRK ignored the caller's cancellation")
+	}
+}
+
+// The memory store honours cancellation too, so both implementations behave
+// the same to a caller.
+func TestMemoryStore_HonoursTheCallersContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewMemoryStore().Status(ctx, "s1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Status on a cancelled context = %v, want context.Canceled", err)
+	}
+}
+
+// failingStateStore fails every operation with err.
+type failingStateStore struct{ err error }
+
+func (f failingStateStore) Get(context.Context, string) ([]byte, error)    { return nil, f.err }
+func (f failingStateStore) Create(context.Context, string, []byte) error   { return f.err }
+func (f failingStateStore) Replace(context.Context, string, []byte) error  { return f.err }
+func (f failingStateStore) Delete(context.Context, string) error           { return f.err }
+func (f failingStateStore) List(context.Context, string) ([]string, error) { return nil, f.err }
+
+// blockingStateStore blocks every operation until its context ends.
+type blockingStateStore struct{}
+
+func (blockingStateStore) Get(ctx context.Context, _ string) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (blockingStateStore) Create(ctx context.Context, _ string, _ []byte) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (blockingStateStore) Replace(ctx context.Context, _ string, _ []byte) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (blockingStateStore) Delete(ctx context.Context, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (blockingStateStore) List(ctx context.Context, _ string) ([]string, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }

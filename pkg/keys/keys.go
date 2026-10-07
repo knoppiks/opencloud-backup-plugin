@@ -14,7 +14,10 @@
 // (decisions.md #5).
 package keys
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // EnvelopeVersion is the current key-envelope format version. It is part of a
 // long-term compatibility promise (decisions.md): bump only additively and keep
@@ -87,24 +90,25 @@ type SpaceKeys struct {
 }
 
 // Store persists and retrieves wrapped Data Keys per Space. It never stores or
-// returns plaintext key material.
+// returns plaintext key material. Every method honours ctx: a cancelled request
+// or a stopping run stops the store operation it started.
 type Store interface {
 	// GetSRW returns the SRW-wrapped DK for a space, or ErrNotFound.
-	GetSRW(spaceID string) (WrappedDK, error)
+	GetSRW(ctx context.Context, spaceID string) (WrappedDK, error)
 	// PutSRW stores the SRW-wrapped DK for a space.
-	PutSRW(spaceID string, w WrappedDK) error
+	PutSRW(ctx context.Context, spaceID string, w WrappedDK) error
 	// GetRK returns the RK-wrapped DK for a space (for Take-Out export), or
 	// ErrNotFound.
-	GetRK(spaceID string) (WrappedDK, error)
+	GetRK(ctx context.Context, spaceID string) (WrappedDK, error)
 	// PutRK stores the RK-wrapped DK for a space.
-	PutRK(spaceID string, w WrappedDK) error
+	PutRK(ctx context.Context, spaceID string, w WrappedDK) error
 	// Status reports whether a space is configured and with which envelope
 	// versions. It returns no key material.
-	Status(spaceID string) (Status, error)
+	Status(ctx context.Context, spaceID string) (Status, error)
 	// Spaces returns the ids of every space holding an envelope, in order. It
 	// exists for the operations that must visit all of them — rotating the SRW
 	// key, above all — and returns ids only, never envelopes.
-	Spaces() ([]string, error)
+	Spaces(ctx context.Context) ([]string, error)
 }
 
 // Status is the key-material-free summary of a space's backup key setup. It is

@@ -228,17 +228,17 @@ func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, min cs3.Rol
 	}
 	a, ok := accessFrom(r.Context())
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "internal_error", "authorization unavailable")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "authorization unavailable", nil)
 		return Identity{}, "", false
 	}
 
 	all, err := a.listSpaces(r.Context())
 	if errors.Is(err, ErrNotConfigured) {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "space backend not configured")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "space backend not configured", err)
 		return Identity{}, "", false
 	}
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "upstream_error", "could not verify space membership")
+		serverError(w, r, http.StatusBadGateway, "upstream_error", "could not verify space membership", err)
 		return Identity{}, "", false
 	}
 
@@ -248,7 +248,7 @@ func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, min cs3.Rol
 		}
 		allowed, err := a.permits(r.Context(), sp, min)
 		if err != nil {
-			writeAccessError(w, err)
+			writeAccessError(w, r, err)
 			return Identity{}, "", false
 		}
 		if allowed {
@@ -263,12 +263,12 @@ func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, min cs3.Rol
 // writeAccessError maps an authorization-check failure onto a response without
 // leaking upstream detail. A missing group resolver is a deployment fault (503),
 // a failed lookup an upstream one (502).
-func writeAccessError(w http.ResponseWriter, err error) {
+func writeAccessError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, errGroupsUnavailable) {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "group membership cannot be verified")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "group membership cannot be verified", err)
 		return
 	}
-	writeError(w, http.StatusBadGateway, "upstream_error", "could not verify space membership")
+	serverError(w, r, http.StatusBadGateway, "upstream_error", "could not verify space membership", err)
 }
 
 // forbiddenMessage names the role a refused caller would have needed. It never

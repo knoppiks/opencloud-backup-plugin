@@ -27,9 +27,8 @@ package keys
 // single document holding both envelopes. They are still read when a Space has
 // no versioned envelope yet, and they are never rewritten or deleted.
 //
-// Store's methods predate this implementation and carry no context (they are
-// called from request handlers and the worker alike), so each operation runs on
-// its own bounded context rather than an unbounded background one.
+// Each operation runs on the caller's context, bounded by storeTimeout so a
+// caller without a deadline of its own still cannot wait forever.
 
 import (
 	"context"
@@ -49,6 +48,17 @@ const (
 	// kindRK / kindSRW are the per-kind key segments under a Space.
 	kindRK  = "rk"
 	kindSRW = "srw"
+)
+
+// What a state failure is reported as. The state store's own error is wrapped
+// beneath, so the operator's log says why (review-2026-10.md F3): it names a
+// document key and a transport failure, never a document's contents — the
+// state store does not quote what it read, and a malformed document is
+// reported by key alone (state.ErrMalformed).
+var (
+	errReadRecord  = errors.New("keys: could not read the key record")
+	errListRecords = errors.New("keys: could not list the key records")
+	errStoreRecord = errors.New("keys: could not store the key record")
 )
 
 // storeTimeout bounds a single state operation.
@@ -76,34 +86,34 @@ func NewStateStore(st state.Store, clock Clock) *StateStore {
 }
 
 // PutSRW stores the SRW-wrapped DK for a space.
-func (s *StateStore) PutSRW(spaceID string, w WrappedDK) error {
+func (s *StateStore) PutSRW(ctx context.Context, spaceID string, w WrappedDK) error {
 	if w.Kind != WrapSRW {
 		return ErrBadEnvelope
 	}
-	return s.append(spaceID, kindSRW, w)
+	return s.append(ctx, spaceID, kindSRW, w)
 }
 
 // GetSRW returns the SRW-wrapped DK for a space.
-func (s *StateStore) GetSRW(spaceID string) (WrappedDK, error) {
-	return s.newest(spaceID, kindSRW, WrapSRW)
+func (s *StateStore) GetSRW(ctx context.Context, spaceID string) (WrappedDK, error) {
+	return s.newest(ctx, spaceID, kindSRW, WrapSRW)
 }
 
 // PutRK stores the RK-wrapped DK for a space.
-func (s *StateStore) PutRK(spaceID string, w WrappedDK) error {
+func (s *StateStore) PutRK(ctx context.Context, spaceID string, w WrappedDK) error {
 	if w.Kind != WrapRK {
 		return ErrBadEnvelope
 	}
-	return s.append(spaceID, kindRK, w)
+	return s.append(ctx, spaceID, kindRK, w)
 }
 
 // GetRK returns the RK-wrapped DK for a space.
-func (s *StateStore) GetRK(spaceID string) (WrappedDK, error) {
-	return s.newest(spaceID, kindRK, WrapRK)
+func (s *StateStore) GetRK(ctx context.Context, spaceID string) (WrappedDK, error) {
+	return s.newest(ctx, spaceID, kindRK, WrapRK)
 }
 
 // Status reports setup state for a space without revealing key material.
-func (s *StateStore) Status(spaceID string) (Status, error) {
-	ctx, cancel := s.context()
+func (s *StateStore) Status(ctx context.Context, spaceID string) (Status, error) {
+	ctx, cancel := bounded(ctx)
 	defer cancel()
 
 	rec, err := s.read(ctx, spaceID)
@@ -121,8 +131,8 @@ func (s *StateStore) Status(spaceID string) (Status, error) {
 
 // Spaces returns the ids of every space holding an envelope, in order. It reads
 // no documents: the ids are in the keys.
-func (s *StateStore) Spaces() ([]string, error) {
-	ctx, cancel := s.context()
+func (s *StateStore) Spaces(ctx context.Context) ([]string, error) {
+	ctx, cancel := bounded(ctx)
 	defer cancel()
 
 	// The versioned and pre-versioned layouts are separate collections here
@@ -131,19 +141,18 @@ func (s *StateStore) Spaces() ([]string, error) {
 	// rotation.
 	versioned, err := s.envelopes.IDs(ctx)
 	if err != nil {
-		// Never surface the underlying detail: it describes stored envelopes.
-		return nil, errors.New("keys: could not list the key records")
+		return nil, fmt.Errorf("%w: %w", errListRecords, err)
 	}
 	legacy, err := s.legacy.IDs(ctx)
 	if err != nil {
-		return nil, errors.New("keys: could not list the key records")
+		return nil, fmt.Errorf("%w: %w", errListRecords, err)
 	}
 	return mergeIDs(versioned, legacy), nil
 }
 
 // newest returns a Space's current envelope of one kind.
-func (s *StateStore) newest(spaceID, kind string, want WrapKind) (WrappedDK, error) {
-	ctx, cancel := s.context()
+func (s *StateStore) newest(ctx context.Context, spaceID, kind string, want WrapKind) (WrappedDK, error) {
+	ctx, cancel := bounded(ctx)
 	defer cancel()
 
 	w, err := s.envelope(ctx, spaceID, kind)
@@ -164,8 +173,7 @@ func (s *StateStore) envelope(ctx context.Context, spaceID, kind string) (Wrappe
 		return w, nil
 	case state.IsNotFound(err):
 	default:
-		// Never surface the underlying detail: it describes stored envelopes.
-		return WrappedDK{}, errors.New("keys: could not read the key record")
+		return WrappedDK{}, fmt.Errorf("%w: %w", errReadRecord, err)
 	}
 
 	legacy, err := s.legacyRecord(ctx, spaceID)
@@ -185,7 +193,7 @@ func (s *StateStore) read(ctx context.Context, spaceID string) (SpaceKeys, error
 	srw, srwSpan, srwErr := s.envelopes.Load(ctx, spaceID, kindSRW)
 	for _, err := range []error{rkErr, srwErr} {
 		if err != nil && !state.IsNotFound(err) {
-			return SpaceKeys{}, errors.New("keys: could not read the key record")
+			return SpaceKeys{}, fmt.Errorf("%w: %w", errReadRecord, err)
 		}
 	}
 	rec := SpaceKeys{
@@ -231,29 +239,33 @@ func (s *StateStore) legacyRecord(ctx context.Context, spaceID string) (SpaceKey
 		if state.IsNotFound(err) {
 			return SpaceKeys{}, ErrNotFound{SpaceID: spaceID}
 		}
-		return SpaceKeys{}, errors.New("keys: could not read the key record")
+		return SpaceKeys{}, fmt.Errorf("%w: %w", errReadRecord, err)
 	}
 	return rec, nil
 }
 
 // append writes a new envelope version. It never replaces one: see the layout
 // note at the top of this file.
-func (s *StateStore) append(spaceID, kind string, w WrappedDK) error {
+func (s *StateStore) append(ctx context.Context, spaceID, kind string, w WrappedDK) error {
 	if spaceID == "" {
 		return fmt.Errorf("keys: space id required")
 	}
 
-	ctx, cancel := s.context()
+	ctx, cancel := bounded(ctx)
 	defer cancel()
 
 	if err := s.envelopes.Append(ctx, s.clock.Now().UTC(), cloneWrapped(w), spaceID, kind); err != nil {
-		return errors.New("keys: could not store the key record")
+		return fmt.Errorf("%w: %w", errStoreRecord, err)
 	}
 	return nil
 }
 
-func (s *StateStore) context() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), storeTimeout)
+// bounded gives one store operation its deadline: the caller's, or
+// storeTimeout, whichever comes first. The caller's cancellation always
+// applies — a request that is gone or a run that is stopping does not keep a
+// state read going (review-2026-10.md G5).
+func bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, storeTimeout)
 }
 
 // mergeIDs unions two sorted id lists, keeping them sorted and distinct.

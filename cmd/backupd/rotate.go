@@ -74,8 +74,8 @@ var srwRotation = rotation{
 	oldEnv: "SRW_KEY_OLD",
 	newEnv: "SRW_KEY",
 	what:   "server key envelopes",
-	run: func(_ context.Context, st state.Store, oldKey, newKey []byte) (rotate.Result, error) {
-		return rotate.SRW(keys.NewStateStore(st, nil), oldKey, newKey)
+	run: func(ctx context.Context, st state.Store, oldKey, newKey []byte) (rotate.Result, error) {
+		return rotate.SRW(ctx, keys.NewStateStore(st, nil), oldKey, newKey)
 	},
 }
 

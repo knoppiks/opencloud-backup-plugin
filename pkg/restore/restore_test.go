@@ -358,7 +358,7 @@ func seedKeys(t *testing.T, store *keys.MemoryStore, wrapper *keys.SRWWrapper) [
 	if err != nil {
 		t.Fatalf("WrapSRW: %v", err)
 	}
-	if err := store.PutSRW(testSpaceID, wrapped); err != nil {
+	if err := store.PutSRW(context.Background(), testSpaceID, wrapped); err != nil {
 		t.Fatalf("PutSRW: %v", err)
 	}
 	return dk

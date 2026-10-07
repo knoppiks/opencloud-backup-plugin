@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -29,6 +30,12 @@ import (
 // options (testability rule); the zero Server is not usable — use NewServer.
 type Server struct {
 	mux *http.ServeMux
+	// handler is mux behind the request observer (observe.go).
+	handler http.Handler
+
+	// logger receives one line per request, with the cause of every 5xx
+	// (observe.go). Defaults to discarding.
+	logger *slog.Logger
 
 	validator     TokenValidator
 	adminResolver AdminResolver
@@ -87,6 +94,10 @@ type Server struct {
 
 // Option configures a Server.
 type Option func(*Server)
+
+// WithLogger sets the logger request lines and the causes of 5xx answers go
+// to. Without it they are discarded.
+func WithLogger(l *slog.Logger) Option { return func(s *Server) { s.logger = l } }
 
 // WithTokenValidator sets the OIDC token validator used by Authenticate.
 func WithTokenValidator(v TokenValidator) Option { return func(s *Server) { s.validator = v } }
@@ -187,12 +198,17 @@ func NewServer(opts ...Option) *Server {
 	if s.clock == nil {
 		s.clock = time.Now
 	}
+	if s.logger == nil {
+		s.logger = slog.New(slog.DiscardHandler)
+	}
 	s.routes()
+	s.handler = s.observe(s.mux)
 	return s
 }
 
-// Handler exposes the router for mounting or testing.
-func (s *Server) Handler() http.Handler { return s.mux }
+// Handler exposes the router, behind request ids, panic recovery and the
+// request log, for mounting or testing.
+func (s *Server) Handler() http.Handler { return s.handler }
 
 func (s *Server) routes() {
 	// Unauthenticated probes.
@@ -280,6 +296,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // 503. It never leaks dependency error details to the caller.
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	if err := s.ready(r.Context()); err != nil {
+		noteCause(r, "unavailable", err)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
 		return
 	}
@@ -331,12 +348,12 @@ func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
 
 	all, err := a.listSpaces(r.Context())
 	if errors.Is(err, ErrNotConfigured) {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "space backend not configured")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "space backend not configured", err)
 		return
 	}
 	if err != nil {
 		// Never leak CS3 detail (phase-2 deliverable 3, exit criterion 2).
-		writeError(w, http.StatusBadGateway, "upstream_error", "could not list spaces")
+		serverError(w, r, http.StatusBadGateway, "upstream_error", "could not list spaces", err)
 		return
 	}
 
@@ -344,7 +361,7 @@ func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
 	for _, sp := range all {
 		role, err := a.role(r.Context(), sp)
 		if err != nil {
-			writeAccessError(w, err)
+			writeAccessError(w, r, err)
 			return
 		}
 		if role < cs3.RoleViewer {
@@ -373,7 +390,7 @@ func (s *Server) handleListTargets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.authorizer == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "target backend not configured")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "target backend not configured", nil)
 		return
 	}
 
@@ -388,13 +405,13 @@ func (s *Server) handleListTargets(w http.ResponseWriter, r *http.Request) {
 	// only all-users / per-user grants apply.
 	spaceIDs, err := a.memberSpaceIDs(r.Context())
 	if err != nil {
-		writeAccessError(w, err)
+		writeAccessError(w, r, err)
 		return
 	}
 
 	views, err := s.authorizer.VisibleTargets(r.Context(), id.UserID, spaceIDs)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "upstream_error", "could not list targets")
+		serverError(w, r, http.StatusBadGateway, "upstream_error", "could not list targets", err)
 		return
 	}
 

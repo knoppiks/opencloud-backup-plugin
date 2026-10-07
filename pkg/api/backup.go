@@ -98,7 +98,7 @@ func (s *Server) handleGetBackupConfig(w http.ResponseWriter, r *http.Request) {
 	_ = id
 
 	if s.spaceConfigs == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup configuration not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup configuration not available", nil)
 		return
 	}
 
@@ -109,7 +109,7 @@ func (s *Server) handleGetBackupConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "backup is not configured for this space")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read backup configuration")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read backup configuration", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toConfigResponse(cfg))
@@ -123,7 +123,7 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.spaceConfigs == nil || s.authorizer == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup configuration not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup configuration not available", nil)
 		return
 	}
 
@@ -150,7 +150,7 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 	if existing, err := s.spaceConfigs.Get(r.Context(), spaceID); err == nil {
 		schedule = existing.Schedule
 	} else if !isConfigNotFound(err) {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read backup configuration")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read backup configuration", err)
 		return
 	}
 
@@ -162,7 +162,7 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 		Enabled:         req.Enabled,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store backup configuration")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store backup configuration", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toConfigResponse(cfg))
@@ -195,7 +195,7 @@ func (s *Server) handlePatchBackupConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if s.spaceConfigs == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup configuration not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup configuration not available", nil)
 		return
 	}
 
@@ -220,13 +220,13 @@ func (s *Server) handlePatchBackupConfig(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusNotFound, "not_found", "backup is not configured for this space")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read backup configuration")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read backup configuration", err)
 		return
 	}
 
 	if patch.TargetID != nil {
 		if s.authorizer == nil {
-			writeError(w, http.StatusServiceUnavailable, "unavailable", "backup configuration not available")
+			serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup configuration not available", nil)
 			return
 		}
 		if !s.mayBindTarget(w, r, id.UserID, spaceID, *patch.TargetID) {
@@ -243,7 +243,7 @@ func (s *Server) handlePatchBackupConfig(w http.ResponseWriter, r *http.Request)
 
 	stored, err := s.spaceConfigs.Put(r.Context(), cfg)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store backup configuration")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store backup configuration", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toConfigResponse(stored))
@@ -287,13 +287,13 @@ func (s *Server) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.runner == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "backup worker not configured")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "backup worker not configured", nil)
 		return
 	}
 
 	jobID, err := s.runner.StartBackup(r.Context(), spaceID)
 	if err != nil {
-		writeRunError(w, err)
+		writeRunError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, runResponse{
@@ -313,7 +313,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.jobStore == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "run history not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "run history not available", nil)
 		return
 	}
 
@@ -324,7 +324,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 
 	list, err := s.jobStore.ListRecent(r.Context(), spaceID, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read run history", err)
 		return
 	}
 	out := make([]jobResponse, 0, len(list))
@@ -348,7 +348,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.jobStore == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "run history not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "run history not available", nil)
 		return
 	}
 
@@ -365,7 +365,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "no such run")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read run history")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read run history", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toJobResponse(j))
@@ -409,7 +409,7 @@ func toJobResponse(j jobs.Job) jobResponse {
 
 // writeRunError maps the runner's sentinel errors onto status codes without
 // exposing internal detail.
-func writeRunError(w http.ResponseWriter, err error) {
+func writeRunError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, backup.ErrSpaceNotFound):
 		// The caller is a verified member, so this means the worker credential
@@ -423,9 +423,9 @@ func writeRunError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "run_in_progress", "a backup run is already in progress")
 	case errors.Is(err, jobs.ErrShuttingDown):
 		// Retryable: the next instance takes the request.
-		writeError(w, http.StatusServiceUnavailable, "shutting_down", "the service is restarting; try again shortly")
+		serverError(w, r, http.StatusServiceUnavailable, "shutting_down", "the service is restarting; try again shortly", err)
 	default:
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not start the backup run")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not start the backup run", err)
 	}
 }
 

@@ -175,12 +175,12 @@ type grantsResponse struct {
 
 // handleAdminListTargets returns every target, admin projection.
 func (s *Server) handleAdminListTargets(w http.ResponseWriter, r *http.Request) {
-	if !s.adminTargetsAvailable(w) {
+	if !s.adminTargetsAvailable(w, r) {
 		return
 	}
 	all, err := s.targetStore.ListTargets(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not list targets")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not list targets", err)
 		return
 	}
 	// Sorted here rather than trusted from the store: the two implementations
@@ -202,7 +202,7 @@ func (s *Server) handleAdminListTargets(w http.ResponseWriter, r *http.Request) 
 
 // handleAdminGetTarget returns one target.
 func (s *Server) handleAdminGetTarget(w http.ResponseWriter, r *http.Request) {
-	if !s.adminTargetsAvailable(w) {
+	if !s.adminTargetsAvailable(w, r) {
 		return
 	}
 	t, ok := s.loadTarget(w, r)
@@ -215,7 +215,7 @@ func (s *Server) handleAdminGetTarget(w http.ResponseWriter, r *http.Request) {
 // handleAdminCreateTarget creates a target from admin-entered configuration and
 // credentials, sealing the credentials before anything is stored.
 func (s *Server) handleAdminCreateTarget(w http.ResponseWriter, r *http.Request) {
-	if !s.adminTargetsAvailable(w) || !s.adminSealerAvailable(w) {
+	if !s.adminTargetsAvailable(w, r) || !s.adminSealerAvailable(w, r) {
 		return
 	}
 	req, ok := decodeAdminTargetRequest(w, r)
@@ -227,14 +227,14 @@ func (s *Server) handleAdminCreateTarget(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	wrapped, version, ok := s.sealRequestCredentials(w, req)
+	wrapped, version, ok := s.sealRequestCredentials(w, r, req)
 	if !ok {
 		return
 	}
 
 	id, err := newTargetID()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not create target")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not create target", err)
 		return
 	}
 	now := s.clock()
@@ -254,7 +254,7 @@ func (s *Server) handleAdminCreateTarget(w http.ResponseWriter, r *http.Request)
 		UpdatedAt:             now,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store target")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store target", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toAdminTargetDTO(created))
@@ -263,7 +263,7 @@ func (s *Server) handleAdminCreateTarget(w http.ResponseWriter, r *http.Request)
 // handleAdminUpdateTarget replaces a target's configuration. Credentials left
 // out of the body are preserved; credentials supplied replace the whole set.
 func (s *Server) handleAdminUpdateTarget(w http.ResponseWriter, r *http.Request) {
-	if !s.adminTargetsAvailable(w) {
+	if !s.adminTargetsAvailable(w, r) {
 		return
 	}
 	existing, ok := s.loadTarget(w, r)
@@ -296,10 +296,10 @@ func (s *Server) handleAdminUpdateTarget(w http.ResponseWriter, r *http.Request)
 		MaintenanceConfigured: existing.MaintenanceConfigured,
 	}
 	if req.Credentials != nil {
-		if !s.adminSealerAvailable(w) {
+		if !s.adminSealerAvailable(w, r) {
 			return
 		}
-		wrapped, version, sealed := s.sealRequestCredentials(w, req)
+		wrapped, version, sealed := s.sealRequestCredentials(w, r, req)
 		if !sealed {
 			return
 		}
@@ -314,7 +314,7 @@ func (s *Server) handleAdminUpdateTarget(w http.ResponseWriter, r *http.Request)
 			writeTargetNotFound(w)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store target")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store target", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toAdminTargetDTO(stored))
@@ -326,7 +326,7 @@ func (s *Server) handleAdminUpdateTarget(w http.ResponseWriter, r *http.Request)
 // The refusal names a count and never a Space: an admin may know how much work
 // deleting this would cause, and may not learn whose (decisions.md #15).
 func (s *Server) handleAdminDeleteTarget(w http.ResponseWriter, r *http.Request) {
-	if !s.adminTargetsAvailable(w) {
+	if !s.adminTargetsAvailable(w, r) {
 		return
 	}
 	id := r.PathValue("id")
@@ -340,8 +340,8 @@ func (s *Server) handleAdminDeleteTarget(w http.ResponseWriter, r *http.Request)
 		// A grant that cannot be evaluated is refused rather than guessed
 		// (decisions.md #20), and so is a deletion whose consequences cannot
 		// be established.
-		writeError(w, http.StatusServiceUnavailable, "unavailable",
-			"could not determine whether this target is still in use")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable",
+			"could not determine whether this target is still in use", err)
 		return
 	}
 	if inUse > 0 {
@@ -355,7 +355,7 @@ func (s *Server) handleAdminDeleteTarget(w http.ResponseWriter, r *http.Request)
 			writeTargetNotFound(w)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not delete target")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not delete target", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -388,7 +388,7 @@ func (s *Server) countSpacesUsingTarget(ctx context.Context, targetID string) (i
 
 // handleAdminListGrants returns a target's audience.
 func (s *Server) handleAdminListGrants(w http.ResponseWriter, r *http.Request) {
-	if !s.adminTargetsAvailable(w) {
+	if !s.adminTargetsAvailable(w, r) {
 		return
 	}
 	t, ok := s.loadTarget(w, r)
@@ -397,7 +397,7 @@ func (s *Server) handleAdminListGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.targetStore.ListGrants(r.Context(), t.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read grants")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read grants", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toGrantsResponse(list))
@@ -410,7 +410,7 @@ func (s *Server) handleAdminListGrants(w http.ResponseWriter, r *http.Request) {
 // nobody chose. An empty list is a legitimate instruction — it revokes the
 // target from everyone without deleting it.
 func (s *Server) handleAdminReplaceGrants(w http.ResponseWriter, r *http.Request) {
-	if !s.adminTargetsAvailable(w) {
+	if !s.adminTargetsAvailable(w, r) {
 		return
 	}
 	t, ok := s.loadTarget(w, r)
@@ -449,13 +449,13 @@ func (s *Server) handleAdminReplaceGrants(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := s.targetStore.ReplaceGrants(r.Context(), t.ID, list); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store grants")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store grants", err)
 		return
 	}
 
 	stored, err := s.targetStore.ListGrants(r.Context(), t.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read grants")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read grants", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toGrantsResponse(stored))
@@ -495,7 +495,7 @@ type checkResultDTO struct {
 // re-entering its secret — which is what write-only credentials mean.
 func (s *Server) handleAdminCheckTarget(w http.ResponseWriter, r *http.Request) {
 	if s.targetChecker == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "target checks are not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "target checks are not available", nil)
 		return
 	}
 	req, ok := decodeAdminTargetRequest(w, r)
@@ -590,13 +590,13 @@ func decodeAdminTargetRequest(w http.ResponseWriter, r *http.Request) (adminTarg
 
 // sealRequestCredentials wraps the submitted pairs with the TW key. The error
 // path is deliberately mute about what failed: the input was a secret.
-func (s *Server) sealRequestCredentials(w http.ResponseWriter, req adminTargetRequest) ([]byte, int, bool) {
+func (s *Server) sealRequestCredentials(w http.ResponseWriter, r *http.Request, req adminTargetRequest) ([]byte, int, bool) {
 	wrapped, version, err := s.credSealer.Seal(targets.CredentialSet{
 		Backup:      req.Credentials.plain(),
 		Maintenance: req.MaintenanceCredentials.plain(),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not store credentials")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not store credentials", err)
 		return nil, 0, false
 	}
 	return wrapped, version, true
@@ -615,16 +615,16 @@ func (s *Server) loadTarget(w http.ResponseWriter, r *http.Request) (targets.Tar
 			writeTargetNotFound(w)
 			return targets.Target{}, false
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not read target")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not read target", err)
 		return targets.Target{}, false
 	}
 	return t, true
 }
 
-func (s *Server) adminTargetsAvailable(w http.ResponseWriter) bool {
+func (s *Server) adminTargetsAvailable(w http.ResponseWriter, r *http.Request) bool {
 	if s.targetStore == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable",
-			"target administration is not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable",
+			"target administration is not available", nil)
 		return false
 	}
 	return true
@@ -634,10 +634,10 @@ func (s *Server) adminTargetsAvailable(w http.ResponseWriter) bool {
 // TW key a target cannot be given credentials, but its configuration and its
 // audience are still readable and editable — and an operator whose TW_KEY is
 // missing needs the admin UI to work in order to see that.
-func (s *Server) adminSealerAvailable(w http.ResponseWriter) bool {
+func (s *Server) adminSealerAvailable(w http.ResponseWriter, r *http.Request) bool {
 	if s.credSealer == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable",
-			"target credentials cannot be stored: no target-wrap key is configured")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable",
+			"target credentials cannot be stored: no target-wrap key is configured", nil)
 		return false
 	}
 	return true

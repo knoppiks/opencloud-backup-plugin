@@ -368,7 +368,7 @@ func (r *Runner) openRepo(
 		return snapshot.Repo{}, spacecfg.Config{}, resolvedTarget{}, err
 	}
 
-	dk, err := r.unwrapDataKey(spaceID)
+	dk, err := r.unwrapDataKey(ctx, spaceID)
 	if err != nil {
 		return snapshot.Repo{}, spacecfg.Config{}, resolvedTarget{}, err
 	}
@@ -487,9 +487,9 @@ func (r *Runner) publishEnvelope(
 	spaceID string,
 	target resolvedTarget,
 	role string,
-	read func(string) (keys.WrappedDK, error),
+	read func(context.Context, string) (keys.WrappedDK, error),
 ) {
-	wrapped, err := read(spaceID)
+	wrapped, err := read(ctx, spaceID)
 	if err != nil {
 		var notFound keys.ErrNotFound
 		if errors.As(err, &notFound) {
@@ -513,8 +513,8 @@ func (r *Runner) publishEnvelope(
 
 // unwrapDataKey recovers the Space's Data Key from its SRW envelope. This is the
 // unattended worker's path (decisions.md #1); the plaintext RK is never involved.
-func (r *Runner) unwrapDataKey(spaceID string) ([]byte, error) {
-	wrapped, err := r.deps.Keys.GetSRW(spaceID)
+func (r *Runner) unwrapDataKey(ctx context.Context, spaceID string) ([]byte, error) {
+	wrapped, err := r.deps.Keys.GetSRW(ctx, spaceID)
 	if err != nil {
 		var notFound keys.ErrNotFound
 		if errors.As(err, &notFound) {

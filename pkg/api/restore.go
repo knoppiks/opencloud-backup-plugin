@@ -62,13 +62,13 @@ func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.restorer == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "restore is not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "restore is not available", nil)
 		return
 	}
 
 	infos, err := s.restorer.ListSnapshots(r.Context(), spaceID)
 	if err != nil {
-		writeRestoreError(w, err)
+		writeRestoreError(w, r, err)
 		return
 	}
 
@@ -91,7 +91,7 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.restorer == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "restore is not available")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "restore is not available", nil)
 		return
 	}
 
@@ -108,7 +108,7 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 
 	jobID, err := s.restorer.StartRestore(r.Context(), spaceID, snapshot.SnapshotID(req.SnapshotID))
 	if err != nil {
-		writeRestoreError(w, err)
+		writeRestoreError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, restoreResponse{
@@ -121,7 +121,7 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 
 // writeRestoreError maps the runner's sentinel errors onto status codes without
 // exposing internal detail.
-func writeRestoreError(w http.ResponseWriter, err error) {
+func writeRestoreError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, restore.ErrSpaceNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "space not found")
@@ -135,8 +135,8 @@ func writeRestoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "run_in_progress", "a run is already in progress")
 	case errors.Is(err, jobs.ErrShuttingDown):
 		// Retryable: the next instance takes the request.
-		writeError(w, http.StatusServiceUnavailable, "shutting_down", "the service is restarting; try again shortly")
+		serverError(w, r, http.StatusServiceUnavailable, "shutting_down", "the service is restarting; try again shortly", err)
 	default:
-		writeError(w, http.StatusInternalServerError, "internal_error", "could not start the restore")
+		serverError(w, r, http.StatusInternalServerError, "internal_error", "could not start the restore", err)
 	}
 }
