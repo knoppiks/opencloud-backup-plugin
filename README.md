@@ -101,7 +101,15 @@ upgrading a deployment that runs backups.
 **Upgrading OpenCloud to 8.x** needs a search reindex on the OpenCloud side
 (see OpenCloud's 8.0.0 release notes). That is unrelated to this service:
 backups and restores do not use search. Configure `CS3_DATA_SERVER_URL` before
-crossing 7.5 (step 1 below); it is harmless on older releases.
+crossing 7.5 (step 1 below); it is harmless on older releases. If you keep
+a CSP override file, rebase it on 8.x's default when you upgrade (see the CSP
+section below): a file copied from 7.x takes away the `blob:` styles 8.1 adds.
+
+**OpenCloud's Production line 7.2.x is not supported.** On it, the service
+account cannot create the Space the service keeps its state in (OpenCloud
+fixed that in 7.3.0 and did not backport it), so setup stops at
+`backupd provision-state-space`. Run a Rolling release from 7.3.0 on, or
+wait for the next Production line.
 
 The image is published as `ghcr.io/knoppiks/opencloud-backupd` for every
 release tag, or built from the `Dockerfile` in this repository (`make image`). It

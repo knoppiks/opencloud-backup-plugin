@@ -1247,6 +1247,42 @@ layout, which was a scaffolding choice rather than a locked decision.
   `versions.yaml` has no `production` leg until then; #25 is otherwise
   unchanged. An upstream backport request to stable-2.46 would bring 7.2.x
   back.
+- **Supported range: Rolling 7.3.0 to 8.1.0.** CI legs `oldest-rolling`
+  (7.3.0) and `newest-rolling` (8.1.0), pinned by digest; the full OpenCloud
+  suite and the browser E2E pass on both (PR #66). Per-item measurements:
+  phase-9 doc, 9.3 outcome.
+- **What did not change from 7.3.0 to 8.1.0:** the admin app-role id
+  (`71881883-…`) and the `appRoleAssignments` / `memberOf` shape; the Space
+  grants `Opaque` map and the permission sets `role.go` maps to roles; the
+  state Space's overwrite semantics; graph `/me` as the source of the user
+  id; read-straight-after-upload (the "too early" retry stays; whether 8.1
+  still answers 425 was not observed). OpenCloud 8.1.0 vendors the same
+  `go-cs3apis` pseudo-version as 7.3.0 and as this module, so no bump.
+- **What changed, and what the plugin did about it (PR #66):**
+  - *Data path below 7.5.* 7.3.0 and 7.4.0 hand out the public data gateway
+    with a transfer token; 7.5.0 and 8.x the data server's own address
+    without one (`expose_data_server` hard-coded on). `CS3_DATA_SERVER_URL`
+    now rewrites only tokenless URLs, so one configuration serves the whole
+    window and an upgrade across 7.5. It keys on the gateway's response,
+    not on a version number.
+  - *Default CSP.* 8.1.0 adds `blob:` to `style-src`. Neither 7.x nor 8.1
+    allows `'wasm-unsafe-eval'`. The fixture's CSP is now 8.1's default plus
+    that one line, on every leg; operators are told to start from their own
+    version's default.
+  - *Web SDK.* `extension-sdk`, `web-pkg`, `web-client` at 8.1.0. **One
+    bundle serves both majors**: the same build passes E2E on a 7.3.0 and an
+    8.1.0 host, so the policy needs no "bundle per OpenCloud major" clause.
+  - *Version detection.* `backupd` reads `/status.php` `productversion` (no
+    credential, same shape 7.2–8.1), warns outside the embedded window,
+    never refuses (#25).
+- **Canary proven (#67):** a hand-started dry run resolved
+  `opencloud-rolling:latest` to 8.1.0, passed, and opened its test issue
+  (#68).
+- **Policy items still open, proposals applied as working rules (proposed,
+  owner to confirm, #67):** dropping a version that left the window is MINOR
+  (policy §2); the previous Production line keeps a 90-day grace (policy
+  §3). Neither has bound anything yet: the plugin is 0.x and the only drop
+  (7.2.x) came before any release.
 
 ---
 

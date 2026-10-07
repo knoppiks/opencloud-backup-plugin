@@ -54,6 +54,9 @@ From 1.0.0:
 left the support window is MINOR. The window is announced, so the operator
 already knows; burning a MAJOR every six months on it would make MAJOR
 meaningless. The alternative is to treat every drop as MAJOR.
+**Status (2026-10-07, #67): proposed, owner to confirm** — MINOR is applied
+as the working rule until then. It binds nothing yet: the plugin is 0.x, and
+the only drop so far (7.2.x) happened before any release.
 
 ### Things that never break, at any version bump
 
@@ -96,13 +99,20 @@ enthusiasts — including the owner's own deployment — run, and it is where
 breakage arrives first. LTS is out of scope: it is a customer offering, and
 the families this targets do not have it.
 
-### The window today (2026-10-06)
+### The window today (2026-10-07)
+
+**Rolling 7.3.0 to 8.1.0.** Measurements per version: phase-9 doc, 9.3
+outcome; what changed: decisions.md, "Moving to OpenCloud 8.x".
 
 | Channel | Versions | Status |
 |---|---|---|
-| Production | 7.2.x (7.2.4) | **excluded**: a service account cannot create the state Space there (decisions.md, "Moving to OpenCloud 8.x"); returns with the next Production line |
-| Rolling | 7.3.0, 7.4.0, 7.5.0 | 7.5.0 tested in CI; 7.3.0 tested by hand earlier; 7.4.0 never |
-| Rolling | 8.0.0, 8.0.1, 8.1.0 | **to be adopted** in Phase 9 |
+| Production | 7.2.x (7.2.4) | **excluded** (owner decision): a service account cannot create the state Space there (decisions.md, "Moving to OpenCloud 8.x"); returns with the next Production line |
+| Rolling | 7.3.0 | **CI leg `oldest-rolling`**, blocking |
+| Rolling | 7.4.0, 7.5.0, 8.0.0, 8.0.1 | in the window, bracketed by the outer legs; 7.5.0 was a CI leg while newest, 7.4.0 and 8.0.x never ran |
+| Rolling | 8.1.0 | **CI leg `newest-rolling`**, blocking; the canary (`latest`) resolved to the same digest on 2026-10-07 |
+
+There is no Production leg until the next Production line ships; the
+matrix below shows the policy's shape, `versions.yaml` the legs in force.
 
 ### When the window moves
 
@@ -116,6 +126,11 @@ Production line ships:
    stays supported until the first plugin MINOR released **90 days** after the
    new Production — families upgrade slowly, and a backup plugin that stops
    supporting the OpenCloud version a household runs is a backup that stops.
+   **Status (2026-10-07, #67): proposed, owner to confirm** — the 90-day
+   grace is the working rule. At the 2026-10-26 switch it has nothing to
+   cover: 7.2.x is excluded already, and the grace as proposed covers the
+   previous Production line only, so the Rolling releases older than the
+   new line (7.3.0 up to it) leave the window at once under step 2.
 
 ### What "supported" means, concretely
 
