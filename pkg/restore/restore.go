@@ -390,7 +390,7 @@ func (r *Runner) openRepo(ctx context.Context, spaceID string) (snapshot.Repo, e
 		return snapshot.Repo{}, err
 	}
 
-	dk, err := r.unwrapDataKey(spaceID)
+	dk, err := r.unwrapDataKey(ctx, spaceID)
 	if err != nil {
 		return snapshot.Repo{}, err
 	}
@@ -456,8 +456,8 @@ func (r *Runner) resolveTarget(ctx context.Context, targetID string) (snapshot.L
 // unwrapDataKey recovers the Space's Data Key from its SRW envelope. Path B
 // runs server-side on the user's behalf, so it uses the same server wrap the
 // scheduler does; the user's Recovery Key is never involved (decisions.md #1).
-func (r *Runner) unwrapDataKey(spaceID string) ([]byte, error) {
-	wrapped, err := r.deps.Keys.GetSRW(spaceID)
+func (r *Runner) unwrapDataKey(ctx context.Context, spaceID string) ([]byte, error) {
+	wrapped, err := r.deps.Keys.GetSRW(ctx, spaceID)
 	if err != nil {
 		var notFound keys.ErrNotFound
 		if errors.As(err, &notFound) {

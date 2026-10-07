@@ -1305,6 +1305,26 @@ cloud metadata service, server side (kopia) or in `takeout`; credentials are
 static and explicit (review-2026-10.md F5, consistent with #14). Logs go to
 stderr; stdout is command output only.
 
+### Amendments from Phase 10.2 (diagnosability, #72)
+
+None reopens a locked decision. The R8 amendment (the service log names
+Spaces; notifications do not) covers the new request lines: they carry the
+request path, which holds Space and job ids.
+
+- **Every 5xx names its cause in the operator's log, on the request's one
+  line, with a request id the client also gets** (`X-Request-Id`). The client
+  still gets only the safe message. The line never holds the query string,
+  any header, or a request or response body, which is where tokens, the Data
+  Key at setup and target credentials travel; tests drive those routes and
+  check the log.
+- **Proposed, owner to confirm:** the request id is always minted by the
+  service, never taken from the client. Levels: 503 WARN, other 5xx and
+  panics ERROR, passing health probes DEBUG, everything else INFO.
+- **Proposed, owner to confirm:** an SMTP server's reply is logged by its
+  numeric code only, never its text, because a reply to AUTH can quote the
+  credentials. Locally produced causes (connect, TLS, timeout, the step that
+  failed) are logged in full.
+
 ---
 
 ## Trust & key model

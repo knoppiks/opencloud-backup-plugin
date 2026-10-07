@@ -590,6 +590,21 @@ Users are unaffected and need do nothing.
 - Keep a copy of the `decrypt` binary somewhere that is not the server you are
   trying to recover.
 
+### When something answers with an error
+
+`backupd` logs JSON to stderr, one line per API request (`"msg":"http request"`;
+health probes only at debug level). Every response carries an `X-Request-Id`
+header. When the API answers 5xx, the line for that request is raised to WARN
+(503) or ERROR and names the cause (`err`), which the browser is never shown.
+So with the id from the failed response (the browser's network tab):
+
+```sh
+kubectl logs deploy/opencloud-backupd | grep '"request_id":"<id>"'
+```
+
+The log never holds query strings, request bodies, tokens, keys or
+credentials.
+
 ## Developing the web extension
 
 The UI is an OpenCloud Web extension in [`web/`](web/). It runs *inside* the

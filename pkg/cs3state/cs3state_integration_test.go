@@ -204,15 +204,15 @@ func TestIntegration_CS3State(t *testing.T) {
 		clock := testutil.NewFakeClock(time.Date(2026, 5, 6, 0, 0, 0, 0, time.UTC))
 		store := keys.NewStateStore(store, clock)
 
-		if err := store.PutRK(spaceID, keys.WrappedDK{Version: 1, Kind: keys.WrapRK, Blob: []byte("rk-one")}); err != nil {
+		if err := store.PutRK(context.Background(), spaceID, keys.WrappedDK{Version: 1, Kind: keys.WrapRK, Blob: []byte("rk-one")}); err != nil {
 			t.Fatalf("PutRK: %v", err)
 		}
 		clock.Advance(time.Hour)
-		if err := store.PutRK(spaceID, keys.WrappedDK{Version: 1, Kind: keys.WrapRK, Blob: []byte("rk-two")}); err != nil {
+		if err := store.PutRK(context.Background(), spaceID, keys.WrappedDK{Version: 1, Kind: keys.WrapRK, Blob: []byte("rk-two")}); err != nil {
 			t.Fatalf("PutRK again: %v", err)
 		}
 
-		got, err := store.GetRK(spaceID)
+		got, err := store.GetRK(context.Background(), spaceID)
 		if err != nil {
 			t.Fatalf("GetRK: %v", err)
 		}
