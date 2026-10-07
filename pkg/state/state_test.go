@@ -48,6 +48,22 @@ func TestEscapeSegmentRoundTrips(t *testing.T) {
 	}
 }
 
+// Found by FuzzUnescapeSegment: the escape parser took a sign, a space or a
+// "0X" prefix as part of the two hex digits.
+func TestUnescapeSegmentRefusesMalformedEscapes(t *testing.T) {
+	t.Parallel()
+
+	for _, in := range []string{"%+1", "% 1", "%0X0", "%-1", "%G0", "%4", "%"} {
+		if out, err := state.UnescapeSegment(in); err == nil {
+			t.Errorf("UnescapeSegment(%q) = %q, want an error", in, out)
+		}
+	}
+	// Lower-case hex is not what EscapeSegment writes, but it is well formed.
+	if out, err := state.UnescapeSegment("%2e%2E"); err != nil || out != ".." {
+		t.Fatalf("UnescapeSegment(%%2e%%2E) = %q, %v", out, err)
+	}
+}
+
 func TestKeyJoinsEscapedSegments(t *testing.T) {
 	t.Parallel()
 

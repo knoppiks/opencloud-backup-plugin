@@ -49,6 +49,23 @@ decrypt-release: ## Cross-build the offline decrypt CLI for every supported OS.
 test: ## Run unit tests with the race detector.
 	$(GO) test -race ./...
 
+# Fuzz targets are found by name, so a new one joins `make fuzz` (and CI) by
+# being written. `go test -fuzz` takes one target in one package per run.
+FUZZTIME ?= 10s
+FUZZ_TARGETS = grep -rHE --include='*_test.go' '^func Fuzz[A-Za-z0-9_]*\(' pkg internal cmd | \
+	sed -E 's\#^(.*)/[^/]*:func (Fuzz[A-Za-z0-9_]*)\(.*\#./\1 \2\#' | sort -u
+
+.PHONY: fuzz
+fuzz: ## Run every fuzz target for FUZZTIME each (default 10s; crashers land in testdata/fuzz/).
+	@$(FUZZ_TARGETS) | { n=0; while read -r pkg target; do \
+		n=$$((n+1)); echo "fuzz $$pkg $$target ($(FUZZTIME))"; \
+		$(GO) test -run '^$$' -fuzz "^$$target\$$" -fuzztime $(FUZZTIME) "$$pkg" || exit 1; \
+	done; test $$n -gt 0 || { echo "no fuzz targets found" >&2; exit 1; }; }
+
+.PHONY: fuzz-list
+fuzz-list: ## List the fuzz targets `make fuzz` runs.
+	@$(FUZZ_TARGETS)
+
 .PHONY: test-integration
 test-integration: ## Run integration tests (Garage fixture; needs Docker).
 	$(GO) test -tags integration ./...

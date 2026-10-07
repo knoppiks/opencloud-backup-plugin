@@ -26,6 +26,7 @@ package state
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,11 +147,14 @@ func UnescapeSegment(s string) (string, error) {
 		if i+2 >= len(s) {
 			return "", fmt.Errorf("state: truncated escape in %q", s)
 		}
-		var v int
-		if _, err := fmt.Sscanf(s[i+1:i+3], "%02X", &v); err != nil {
+		// Exactly two hex digits. fmt.Sscanf("%02X") used to be the parser
+		// here and also took a sign, a space or a "0X" prefix ("%+1", "% 1",
+		// "%0X0"), so two different keys could name the same record.
+		var v [1]byte
+		if _, err := hex.Decode(v[:], []byte(s[i+1:i+3])); err != nil {
 			return "", fmt.Errorf("state: bad escape in %q", s)
 		}
-		b.WriteByte(byte(v))
+		b.WriteByte(v[0])
 		i += 2
 	}
 	return b.String(), nil

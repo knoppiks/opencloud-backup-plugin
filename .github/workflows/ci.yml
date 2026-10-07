@@ -60,6 +60,33 @@ jobs:
     - name: go test (race)
       run: go test -race ./...
 
+  # The parsers of the formats read forever, and of outside input, for a few
+  # seconds each (phase-10-hardening.md §10.4). The seed corpora already run
+  # in `go test`; this explores beyond them. fuzz.yml runs longer nightly.
+  fuzz:
+    name: fuzz (short)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: make fuzz
+      run: make fuzz FUZZTIME=10s
+
+    # A failing input is written to testdata/fuzz/<Target>/; committing it
+    # makes it a regression case of the plain test run.
+    - name: upload failing inputs
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: fuzz-crashers
+        path: "**/testdata/fuzz/**"
+        if-no-files-found: ignore
+
   web:
     name: web extension (lint / typecheck / test / build)
     runs-on: ubuntu-latest
@@ -175,7 +202,7 @@ jobs:
     - name: cross-build decrypt
       run: make decrypt-release
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: decrypt-cli
         path: dist/decrypt-*

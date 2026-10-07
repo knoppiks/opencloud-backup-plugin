@@ -29,3 +29,15 @@ paths = [
   '''^pkg/keys/testdata/vectors\.json$''',
   '''^web/testdata/browser-vectors\.json$''',
 ]
+
+# Frozen fixtures that pin the formats read forever (compatibility-policy.md
+# §2; phase-10-hardening.md §10.4). Each was written once by the code of its
+# day and is never regenerated, so its key cannot be produced at test time:
+# the Take-Out's Recovery Key and the sealed credentials' Target Wrap key were
+# generated for the fixture alone and protect nothing but its made-up content.
+[[allowlists]]
+description = "Frozen Take-Out and sealed-credential fixtures (throwaway keys generated for them)"
+paths = [
+  '''^pkg/takeout/testdata/''',
+  '''^pkg/targets/testdata/sealed-credentials-v\d+\.json$''',
+]

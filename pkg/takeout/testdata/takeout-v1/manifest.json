@@ -1,0 +1,75 @@
+{
+  "format": "opencloud-backup-takeout",
+  "version": 1,
+  "space_id": "storage-1$space-1",
+  "created_at": "2026-10-07T08:31:53.781197932Z",
+  "source": {
+    "prefix": "oc/",
+    "repo_prefix": "oc/spaces/storage-1$space-1/",
+    "envelope_key": "oc/keys/storage-1$space-1/recovery.ocbke"
+  },
+  "repo_dir": "repo",
+  "envelope_file": "recovery.ocbke",
+  "envelope": {
+    "version": 1,
+    "kind": "rk",
+    "kdf": "argon2id",
+    "argon_time": 3,
+    "argon_memory_kib": 65536,
+    "argon_lanes": 4
+  },
+  "blob_count": 10,
+  "total_bytes": 21061,
+  "blobs": [
+    {
+      "id": "kopia.blobcfg",
+      "size": 30,
+      "sha256": "0465d3e55f0fe0abb896e60e04fb7516745a188b94f61a7c22799a0d29a2fa1e"
+    },
+    {
+      "id": "kopia.repository",
+      "size": 1087,
+      "sha256": "46478a9df5cf0d582c9da36febc71da1be43c5aa841ecf90b1e3e10b90b332a6"
+    },
+    {
+      "id": "xn0_e63c4f14819fb7bac267f8d03a41f23d-s9cf329861dbc4343145-c1",
+      "size": 413,
+      "sha256": "0241194e812be78df18e4125d78ac1ac8818bf45f8bdb059fe96f99f125e35f9"
+    },
+    {
+      "id": "xn0_eecbece5e302687d962c85112dd8af9c-s73850ed6eaa64491145-c1",
+      "size": 311,
+      "sha256": "efb6add482326a6c5c11d7d389713f90a52120677c71dac46e2fb1f5a65c025a"
+    },
+    {
+      "id": "qa01b79550924c7e6e6d6b01ef4091c74-s73850ed6eaa64491145",
+      "size": 4339,
+      "sha256": "67920369af886cf76e362fab477a6295dd7cd7034686718beb8298eeb9f5845f"
+    },
+    {
+      "id": "q37c28597a51f4028d62042bff61f9053-s9cf329861dbc4343145",
+      "size": 4407,
+      "sha256": "2d48e2f7fe572c63511cde5146c18560e90adfce36d324e49ac100773e789444"
+    },
+    {
+      "id": "pe275b1c09d733fc5d5e86d79c3077542-s9cf329861dbc4343145",
+      "size": 4364,
+      "sha256": "eafdce026c97335f98c72a603051b3d11cc0d853b065b3932226934b1e5404c2"
+    },
+    {
+      "id": "p0cbb93020deb116f8287741ae4438394-s73850ed6eaa64491145",
+      "size": 4331,
+      "sha256": "de03508dd8f649503eb337a2015afe64f5e481c9b2db09bb2c90a8b509ad44b4"
+    },
+    {
+      "id": "_log_20261007103153_038c_1791361913_1791361913_1_d5aadda987f09cb666fd4d8dc970cc7e",
+      "size": 849,
+      "sha256": "19bdd33ef7fdc66b68114ab2dbf68837b3e2b7de433f1e43e78fbe4a45ef95d5"
+    },
+    {
+      "id": "_log_20261007103153_13c0_1791361913_1791361913_1_4751c40672ac29f9c22a7c7c6bdc47b1",
+      "size": 930,
+      "sha256": "5f98094f96effb65e2d07280c953ad6b0fae6321450000ef5f6c7b324851158e"
+    }
+  ]
+}
