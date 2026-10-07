@@ -25,8 +25,10 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/snapshot/s3repo"
 	"opencloud-backup-plugin/pkg/takeout"
 	takeoutdecrypt "opencloud-backup-plugin/pkg/takeout/decrypt"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 )
 
 // garageObjects opens a plain object-store client against the fixture, as the
@@ -81,8 +83,8 @@ func TestIntegration_PathA_TakeOutAndDecryptWithOpenCloudDown(t *testing.T) {
 
 	// --- admin take-out (ciphertext only, no key input) --------------------
 	takeoutDir := filepath.Join(t.TempDir(), "takeout")
-	manifest, err := takeout.Extract(ctx, takeout.ExtractOptions{
-		Repos:    snapshot.S3Opener{},
+	manifest, err := remote.Extract(ctx, remote.ExtractOptions{
+		Repos:    s3repo.Opener{},
 		Objects:  objects,
 		Location: p.repo.Location,
 		SpaceID:  testSpaceID,
@@ -160,8 +162,8 @@ func TestIntegration_PathA_WrongRecoveryKeyLeavesNothing(t *testing.T) {
 	stopOpenCloud(p)
 
 	takeoutDir := filepath.Join(t.TempDir(), "takeout")
-	if _, err := takeout.Extract(ctx, takeout.ExtractOptions{
-		Repos:    snapshot.S3Opener{},
+	if _, err := remote.Extract(ctx, remote.ExtractOptions{
+		Repos:    s3repo.Opener{},
 		Objects:  garageObjects(ctx, t, p),
 		Location: p.repo.Location,
 		SpaceID:  testSpaceID,
@@ -201,8 +203,8 @@ func TestIntegration_PathA_RefusesTakeOutWithoutEnvelope(t *testing.T) {
 	// space id: its repository exists only in this test's imagination, so use
 	// the real repo prefix but a store that cannot see the envelope.
 	empty := objstore.DirStore{Root: t.TempDir()}
-	_, err := takeout.Extract(ctx, takeout.ExtractOptions{
-		Repos:    snapshot.S3Opener{},
+	_, err := remote.Extract(ctx, remote.ExtractOptions{
+		Repos:    s3repo.Opener{},
 		Objects:  empty,
 		Location: p.repo.Location,
 		SpaceID:  testSpaceID,

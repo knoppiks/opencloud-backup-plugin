@@ -18,6 +18,7 @@ import (
 	"opencloud-backup-plugin/internal/cli"
 	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/snapshot/s3repo"
 	"opencloud-backup-plugin/pkg/takeout"
 )
 
@@ -213,7 +214,7 @@ func TestS3TargetIsBuiltOffline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("s3Target: %v", err)
 	}
-	if _, ok := repos.(snapshot.S3Opener); !ok || objects == nil {
+	if _, ok := repos.(s3repo.Opener); !ok || objects == nil {
 		t.Fatalf("s3Target = %T, %T", repos, objects)
 	}
 

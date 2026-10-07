@@ -18,6 +18,7 @@ import (
 	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/takeout"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 )
 
 const (
@@ -58,7 +59,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatalf("WrapWithRK: %v", err)
 	}
-	if err := takeout.PublishTo(ctx, store, testPrefix, testSpaceID, wrapped.Blob); err != nil {
+	if err := remote.PublishTo(ctx, store, testPrefix, testSpaceID, wrapped.Blob); err != nil {
 		t.Fatalf("PublishTo: %v", err)
 	}
 
@@ -100,7 +101,7 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) extract(t *testing.T) string {
 	t.Helper()
 	outDir := filepath.Join(t.TempDir(), "takeout")
-	if _, err := takeout.Extract(context.Background(), takeout.ExtractOptions{
+	if _, err := remote.Extract(context.Background(), remote.ExtractOptions{
 		Repos:    snapshot.FilesystemOpener{Root: f.bucket},
 		Objects:  objstore.DirStore{Root: f.bucket},
 		Location: snapshot.Location{Prefix: testPrefix},
@@ -282,7 +283,7 @@ func TestDecryptWithoutAnEnvelope(t *testing.T) {
 	}
 
 	outDir := filepath.Join(t.TempDir(), "takeout")
-	if _, err := takeout.Extract(context.Background(), takeout.ExtractOptions{
+	if _, err := remote.Extract(context.Background(), remote.ExtractOptions{
 		Repos:                snapshot.FilesystemOpener{Root: f.bucket},
 		Objects:              objstore.DirStore{Root: f.bucket},
 		Location:             snapshot.Location{Prefix: testPrefix},
@@ -382,7 +383,7 @@ func TestDecryptWithEnvelopeFileForEnvelopelessTakeOut(t *testing.T) {
 		t.Fatalf("remove envelope: %v", err)
 	}
 	outDir := filepath.Join(t.TempDir(), "takeout")
-	if _, err := takeout.Extract(context.Background(), takeout.ExtractOptions{
+	if _, err := remote.Extract(context.Background(), remote.ExtractOptions{
 		Repos:                snapshot.FilesystemOpener{Root: f.bucket},
 		Objects:              objstore.DirStore{Root: f.bucket},
 		Location:             snapshot.Location{Prefix: testPrefix},

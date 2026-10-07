@@ -1,4 +1,4 @@
-package takeout
+package remote
 
 // Publishing the Space's key envelopes to the target.
 //

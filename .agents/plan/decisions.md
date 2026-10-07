@@ -1382,6 +1382,23 @@ audit it are unchanged.
   `-plain-http`, is removed in the first MINOR after the one that ships the
   rename (compatibility-policy.md §2's minimum).
 
+### Amendments from Phase 10.6 (slim decrypt, #80)
+
+None reopens a locked decision. The admin/user split of Path A is unchanged:
+`takeout` still cannot link the decrypt path; `decrypt` can now no longer
+link the S3 side either, and a test says so.
+
+- **Proposed, owner to confirm:** `decrypt` keeps the Azure SDK and
+  Prometheus modules. kopia's core (`repo/blob`, `repo` via its metrics)
+  imports them for every storage, the local filesystem included; removing
+  them means patching or forking kopia, and replacing its reader is ruled
+  out (AGENTS.md: no hand-rolled crypto or dedup). kopia's storage drivers,
+  the AWS SDK and minio are gone and forbidden by test.
+- **Proposed, owner to confirm:** the target-facing code lives in
+  `pkg/snapshot/s3repo` (the S3 storage opener) and `pkg/takeout/remote`
+  (extract, envelope publishing); `pkg/takeout` is the format only. Both
+  new packages go to `internal/` with 10.7; #26's public set is unchanged.
+
 ---
 
 ## Trust & key model

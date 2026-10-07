@@ -28,7 +28,9 @@ import (
 	envconfig "opencloud-backup-plugin/internal/config"
 	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/snapshot/s3repo"
 	"opencloud-backup-plugin/pkg/takeout"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 )
 
 // config is the CLI's full input surface. Every field addresses the *target*;
@@ -218,7 +220,7 @@ func s3Target(ctx context.Context, cfg config) (snapshot.StorageOpener, objstore
 	if err != nil {
 		return nil, nil, err
 	}
-	return snapshot.S3Opener{}, objects, nil
+	return s3repo.Opener{}, objects, nil
 }
 
 func extract(ctx context.Context, cfg config, open openTarget, stdout, stderr io.Writer) error {
@@ -233,7 +235,7 @@ func extract(ctx context.Context, cfg config, open openTarget, stdout, stderr io
 		return err
 	}
 
-	manifest, err := takeout.Extract(ctx, takeout.ExtractOptions{
+	manifest, err := remote.Extract(ctx, remote.ExtractOptions{
 		Repos:                repos,
 		Objects:              objects,
 		Location:             cfg.location(),

@@ -45,6 +45,7 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/restore"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/snapshot/s3repo"
 	"opencloud-backup-plugin/pkg/spacecfg"
 	"opencloud-backup-plugin/pkg/targets"
 )
@@ -98,7 +99,7 @@ func TestIntegration_PathB_OpenCloudRoundTrip(t *testing.T) {
 
 	// --- back the Space up to a real target -------------------------------
 	garage := testutil.StartGarage(ctx, t)
-	engine, err := snapshot.NewEngine(snapshot.S3Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
+	engine, err := snapshot.NewEngine(s3repo.Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestIntegration_PathB_OpenCloudLeavesLiveDataAlone(t *testing.T) {
 	seedSpace(ctx, t, client, space, sourceDir)
 
 	garage := testutil.StartGarage(ctx, t)
-	engine, err := snapshot.NewEngine(snapshot.S3Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
+	engine, err := snapshot.NewEngine(s3repo.Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
