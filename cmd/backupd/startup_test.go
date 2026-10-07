@@ -1,16 +1,19 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 
+	"opencloud-backup-plugin/internal/config"
 	"opencloud-backup-plugin/pkg/snapshot"
 )
 
@@ -26,16 +29,13 @@ func TestResolveWorkDir_RefusesDiskUnlessAllowed(t *testing.T) {
 	}
 	dir := diskBackedDir(t)
 
-	t.Setenv(workDirVar, dir)
-	t.Setenv(workDirAllowDiskVar, "")
-	if _, err := resolveWorkDir(quietLogger()); err == nil {
+	if _, err := resolveWorkDir(config.Backup{WorkDir: dir}, quietLogger()); err == nil {
 		t.Fatal("a disk-backed work directory must be refused by default")
 	} else if !strings.Contains(err.Error(), workDirAllowDiskVar) {
 		t.Fatalf("err = %v, want it to name the override", err)
 	}
 
-	t.Setenv(workDirAllowDiskVar, "true")
-	got, err := resolveWorkDir(quietLogger())
+	got, err := resolveWorkDir(config.Backup{WorkDir: dir, WorkDirAllowDisk: true}, quietLogger())
 	if err != nil {
 		t.Fatalf("resolveWorkDir with the override set: %v", err)
 	}
@@ -78,9 +78,7 @@ func TestResolveWorkDir_AcceptsAMemoryBackedDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	t.Setenv(workDirVar, dir)
-	t.Setenv(workDirAllowDiskVar, "")
-	if _, err := resolveWorkDir(quietLogger()); err != nil {
+	if _, err := resolveWorkDir(config.Backup{WorkDir: dir}, quietLogger()); err != nil {
 		t.Fatalf("a memory-backed work directory must be accepted: %v", err)
 	}
 }
@@ -93,9 +91,7 @@ func TestResolveWorkDir_SweepsLeftovers(t *testing.T) {
 		t.Fatalf("seed leftover: %v", err)
 	}
 
-	t.Setenv(workDirVar, dir)
-	t.Setenv(workDirAllowDiskVar, "true")
-	if _, err := resolveWorkDir(quietLogger()); err != nil {
+	if _, err := resolveWorkDir(config.Backup{WorkDir: dir, WorkDirAllowDisk: true}, quietLogger()); err != nil {
 		t.Fatalf("resolveWorkDir: %v", err)
 	}
 	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
@@ -107,100 +103,9 @@ func TestResolveWorkDir_RejectsAMissingDirectory(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the filesystem check only answers on Linux")
 	}
-	t.Setenv(workDirVar, filepath.Join(t.TempDir(), "not-created"))
-	t.Setenv(workDirAllowDiskVar, "true")
-	if _, err := resolveWorkDir(quietLogger()); err == nil {
+	cfg := config.Backup{WorkDir: filepath.Join(t.TempDir(), "not-created"), WorkDirAllowDisk: true}
+	if _, err := resolveWorkDir(cfg, quietLogger()); err == nil {
 		t.Fatal("a work directory that does not exist must be refused")
-	}
-}
-
-func TestMemoryStateRequested(t *testing.T) {
-	for value, want := range map[string]bool{
-		"":         false,
-		"memory":   true,
-		"  Memory": true,
-		"cs3":      false,
-		"mem":      false,
-	} {
-		t.Setenv(stateBackendVar, value)
-		if got := memoryStateRequested(); got != want {
-			t.Fatalf("%s=%q -> %v, want %v", stateBackendVar, value, got, want)
-		}
-	}
-}
-
-// Half a TLS configuration is a deployment that thinks it is encrypted.
-func TestTLSFiles(t *testing.T) {
-	t.Setenv(tlsCertVar, "")
-	t.Setenv(tlsKeyVar, "")
-	cert, key, err := tlsFiles()
-	if err != nil || cert != "" || key != "" {
-		t.Fatalf("unset = (%q, %q, %v), want plain HTTP", cert, key, err)
-	}
-
-	t.Setenv(tlsCertVar, "/etc/tls/tls.crt")
-	if _, _, err := tlsFiles(); err == nil {
-		t.Fatal("a certificate without a key must be refused")
-	}
-
-	t.Setenv(tlsKeyVar, "/etc/tls/tls.key")
-	cert, key, err = tlsFiles()
-	if err != nil {
-		t.Fatalf("tlsFiles: %v", err)
-	}
-	if cert != "/etc/tls/tls.crt" || key != "/etc/tls/tls.key" {
-		t.Fatalf("tlsFiles = (%q, %q)", cert, key)
-	}
-}
-
-// The base path is a path, not an origin. The browser client refuses an
-// absolute URL on its side for the same reason: the extension and this service
-// must share an origin, because nothing here implements CORS.
-func TestResolveBasePath(t *testing.T) {
-	cases := map[string]struct {
-		set     string
-		want    string
-		wantErr string
-	}{
-		"unset":                {set: "", want: ""},
-		"prefix":               {set: "/backup", want: "/backup"},
-		"trailing slash":       {set: "/backup/", want: "/backup"},
-		"nested":               {set: "/apps/backup", want: "/apps/backup"},
-		"whitespace":           {set: "  /backup  ", want: "/backup"},
-		"root means unset":     {set: "/", want: ""},
-		"double root is unset": {set: "//", want: ""},
-
-		"absolute URL":       {set: "https://backup.example.org/api", wantErr: "not a URL"},
-		"scheme relative":    {set: "//backup.example.org/api", wantErr: "clean path"},
-		"no leading slash":   {set: "backup", wantErr: "must start with a slash"},
-		"query":              {set: "/backup?x=1", wantErr: "not a URL"},
-		"fragment":           {set: "/backup#x", wantErr: "not a URL"},
-		"empty segment":      {set: "/backup//api", wantErr: "clean path"},
-		"relative segment":   {set: "/backup/../etc", wantErr: "clean path"},
-		"shadows healthz":    {set: "/healthz", wantErr: "health probes"},
-		"shadows readyz":     {set: "/readyz", wantErr: "health probes"},
-		"shadows with slash": {set: "/readyz/", wantErr: "health probes"},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv(basePathVar, tc.set)
-			got, err := resolveBasePath()
-			if tc.wantErr != "" {
-				if err == nil {
-					t.Fatalf("resolveBasePath(%q) = %q, want an error", tc.set, got)
-				}
-				if !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("err = %v, want it to mention %q", err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("resolveBasePath(%q): %v", tc.set, err)
-			}
-			if got != tc.want {
-				t.Fatalf("resolveBasePath(%q) = %q, want %q", tc.set, got, tc.want)
-			}
-		})
 	}
 }
 
@@ -275,53 +180,6 @@ func TestChainRunsEveryCleanupInOrder(t *testing.T) {
 	}
 }
 
-// A manifest deployed unedited must not come up and then reject every request.
-func TestCheckPlaceholders(t *testing.T) {
-	cases := map[string]struct {
-		environ []string
-		want    []string
-	}{
-		"edited": {
-			environ: []string{"OIDC_AUDIENCE=web", "STATE_SPACE_ID=storage$space", "PATH=/usr/bin"},
-		},
-		"unedited audience and state space": {
-			environ: []string{
-				"STATE_SPACE_ID=REPLACE_ME_WITH_THE_STATE_SPACE_ID",
-				"OIDC_AUDIENCE=REPLACE_ME_WITH_THE_OIDC_CLIENT_ID",
-			},
-			want: []string{"OIDC_AUDIENCE", "STATE_SPACE_ID"},
-		},
-		"unedited wrapping key": {
-			environ: []string{"SRW_KEY=REPLACE_ME_GENERATE_OUT_OF_BAND"},
-			want:    []string{"SRW_KEY"},
-		},
-		// Somebody else's placeholder is somebody else's problem: refusing to
-		// start over a variable this service never reads would be a surprise
-		// with no fix inside this deployment.
-		"foreign placeholder": {
-			environ: []string{"SOME_OTHER_CHART_TOKEN=REPLACE_ME"},
-		},
-	}
-
-	for name, tc := range cases {
-		got := unreplacedPlaceholders(tc.environ)
-		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-			t.Errorf("%s: unreplacedPlaceholders = %v, want %v", name, got, tc.want)
-		}
-
-		err := checkPlaceholders(tc.environ)
-		if (err != nil) != (len(tc.want) > 0) {
-			t.Errorf("%s: checkPlaceholders = %v", name, err)
-			continue
-		}
-		for _, want := range tc.want {
-			if err != nil && !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: error %q does not name %s", name, err, want)
-			}
-		}
-	}
-}
-
 // The shipped manifests must be caught by the check that exists for them.
 func TestShippedManifestPlaceholdersAreRefused(t *testing.T) {
 	for _, path := range []string{"../../deploy/deployment-backupd.yaml", "../../deploy/secret-wrap-keys.yaml"} {
@@ -329,9 +187,55 @@ func TestShippedManifestPlaceholdersAreRefused(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
-		if !strings.Contains(string(body), placeholderMarker) {
+		if !strings.Contains(string(body), config.PlaceholderMarker) {
 			t.Errorf("%s no longer marks the values a deployer must fill in with %s; "+
-				"the startup check has nothing to catch", path, placeholderMarker)
+				"the startup check has nothing to catch", path, config.PlaceholderMarker)
+		}
+	}
+
+	manifest, err := os.ReadFile("../../deploy/deployment-backupd.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	placeholders := regexp.MustCompile(`- name: ([A-Z0-9_]+)\s+value: "([^"]*`+config.PlaceholderMarker+`[^"]*)"`).
+		FindAllStringSubmatch(string(manifest), -1)
+	if len(placeholders) == 0 {
+		t.Fatal("the manifest has no placeholder in a plain env value any more; this test checks nothing")
+	}
+	for _, m := range placeholders {
+		if _, err := config.LoadBackupd([]string{m[1] + "=" + m[2]}); !errors.Is(err, config.ErrPlaceholder) {
+			t.Errorf("%s=%s from the manifest is not refused: %v", m[1], m[2], err)
+		}
+	}
+}
+
+// Every variable the shipped manifests set, or offer in a comment, is one the
+// service reads: a manifest that sets a misspelt or retired name configures
+// nothing, silently.
+func TestShippedManifestsNameOnlyKnownVariables(t *testing.T) {
+	known := map[string]bool{
+		// Read by the Go runtime, not by the service's configuration.
+		"TZ": true, "SSL_CERT_DIR": true, "SSL_CERT_FILE": true,
+	}
+	for _, name := range config.BackupdNames() {
+		known[name] = true
+	}
+	for path, pattern := range map[string]string{
+		"../../deploy/deployment-backupd.yaml":         `(?m)- name: ([A-Z][A-Z0-9_]+)\s*$`,
+		"../../deploy/configmap-bootstrap-target.yaml": `(?m)^  ([A-Z][A-Z0-9_]+):`,
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		matches := regexp.MustCompile(pattern).FindAllStringSubmatch(string(body), -1)
+		if len(matches) == 0 {
+			t.Fatalf("%s: no variables found; this test checks nothing", path)
+		}
+		for _, m := range matches {
+			if !known[m[1]] {
+				t.Errorf("%s names %s, which the service does not read", path, m[1])
+			}
 		}
 	}
 }
@@ -365,29 +269,24 @@ func TestImageEntrypointTakesNoArguments(t *testing.T) {
 }
 
 func TestCS3ClientOptions_DataServerURL(t *testing.T) {
-	t.Setenv("CS3_DATA_SERVER_URL", "")
-	opts, err := cs3ClientOptions()
+	opts, err := cs3ClientOptions("")
 	if err != nil || len(opts) != 1 {
 		t.Fatalf("unset: %d options, %v; want the HTTP client only", len(opts), err)
 	}
 
-	t.Setenv("CS3_DATA_SERVER_URL", "http://opencloud.files.svc.cluster.local:9158")
-	opts, err = cs3ClientOptions()
+	opts, err = cs3ClientOptions("http://opencloud.files.svc.cluster.local:9158")
 	if err != nil || len(opts) != 2 {
 		t.Fatalf("set: %d options, %v; want the HTTP client and the origin", len(opts), err)
 	}
 
 	// A path would be silently ignored, so it is refused rather than accepted.
-	t.Setenv("CS3_DATA_SERVER_URL", "http://opencloud:9158/data")
-	if _, err := cs3ClientOptions(); err == nil || !strings.Contains(err.Error(), "CS3_DATA_SERVER_URL") {
+	if _, err := cs3ClientOptions("http://opencloud:9158/data"); err == nil || !strings.Contains(err.Error(), "CS3_DATA_SERVER_URL") {
 		t.Fatalf("with a path: err = %v, want a refusal naming the variable", err)
 	}
 }
 
 func TestDialCS3_RefusesABadDataServerURL(t *testing.T) {
-	t.Setenv("CS3_GATEWAY_ADDR", "127.0.0.1:1")
-	t.Setenv("CS3_DATA_SERVER_URL", "not a url")
-	client, closeFn, err := dialCS3()
+	client, closeFn, err := dialCS3(config.CS3{GatewayAddr: "127.0.0.1:1", DataServerURL: "not a url"})
 	defer closeFn()
 	if err == nil || client != nil {
 		t.Fatalf("dialCS3 = %v, %v; want a refusal", client, err)

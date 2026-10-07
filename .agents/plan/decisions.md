@@ -1325,6 +1325,23 @@ request path, which holds Space and job ids.
   credentials. Locally produced causes (connect, TLS, timeout, the step that
   failed) are logged in full.
 
+### Amendments from Phase 10.3 (configuration, #74)
+
+None reopens a locked decision. All configuration is read in one place
+(`internal/config`), and the environment reference is generated from it.
+
+- **Secrets are redacted by type.** Whatever a deployment takes from a
+  Kubernetes Secret (wrapping keys, the service account's id and secret,
+  SMTP password, S3 access key ids and secrets) is a `config.Secret`, which
+  cannot be formatted or logged as its value. The startup configuration line
+  shows such a variable only as set or unset. This extends "never log key
+  material" to every credential, by construction rather than by a list.
+- **Proposed, owner to confirm:** booleans accept exactly `true` and
+  `false`; `STATE_BACKEND` accepts only `memory`; both refuse anything else
+  at startup instead of reading it as "off"/"durable". The service account
+  is required whenever `CS3_GATEWAY_ADDR` is set, for the service and every
+  operator command alike. These refuse configurations rc.2 accepted.
+
 ---
 
 ## Trust & key model

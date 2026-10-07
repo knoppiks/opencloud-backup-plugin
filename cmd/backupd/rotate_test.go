@@ -15,7 +15,7 @@ import (
 func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 func TestRunCommandRejectsUnknownCommands(t *testing.T) {
-	err := runCommand(context.Background(), "rotate-everything", nil, discardLogger(), io.Discard)
+	err := runCommand(context.Background(), testConfig(t), "rotate-everything", nil, discardLogger(), io.Discard)
 	if err == nil {
 		t.Fatal("an unknown command was accepted")
 	}
@@ -32,12 +32,11 @@ func TestRotateRefusesWithoutTheServiceStoppedFlag(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			// Deliberately configured: the flag must be checked first, so this
 			// fails on the flag and not on missing keys.
-			t.Setenv("SRW_KEY_OLD", encodedKey(t))
-			t.Setenv("SRW_KEY", encodedKey(t))
-			t.Setenv("TW_KEY_OLD", encodedKey(t))
-			t.Setenv("TW_KEY", encodedKey(t))
+			cfg := testConfig(t,
+				"SRW_KEY_OLD="+encodedKey(t), "SRW_KEY="+encodedKey(t),
+				"TW_KEY_OLD="+encodedKey(t), "TW_KEY="+encodedKey(t))
 
-			err := runCommand(context.Background(), command, nil, discardLogger(), io.Discard)
+			err := runCommand(context.Background(), cfg, command, nil, discardLogger(), io.Discard)
 			if err == nil {
 				t.Fatal("rotation ran without -service-stopped")
 			}
@@ -56,10 +55,9 @@ func TestRotateRequiresBothKeys(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("SRW_KEY_OLD", c.old)
-			t.Setenv("SRW_KEY", c.new)
+			cfg := testConfig(t, "SRW_KEY_OLD="+c.old, "SRW_KEY="+c.new)
 
-			err := runCommand(context.Background(), "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
+			err := runCommand(context.Background(), cfg, "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
 			if err == nil {
 				t.Fatal("rotation ran without both keys")
 			}
@@ -73,12 +71,11 @@ func TestRotateRequiresBothKeys(t *testing.T) {
 // Without a state Space there is nothing durable to rotate; falling back to
 // in-memory state here would report a cheerful success having done nothing.
 func TestRotateRequiresDurableState(t *testing.T) {
-	t.Setenv("SRW_KEY_OLD", encodedKey(t))
-	t.Setenv("SRW_KEY", encodedKey(t))
-	t.Setenv("CS3_GATEWAY_ADDR", "127.0.0.1:0")
-	t.Setenv("STATE_SPACE_ID", "")
+	cfg := testConfig(t,
+		"SRW_KEY_OLD="+encodedKey(t), "SRW_KEY="+encodedKey(t),
+		"CS3_GATEWAY_ADDR=127.0.0.1:0", "OC_SERVICE_ACCOUNT_ID=svc", "OC_SERVICE_ACCOUNT_SECRET=s")
 
-	err := runCommand(context.Background(), "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
+	err := runCommand(context.Background(), cfg, "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
 	if err == nil {
 		t.Fatal("rotation ran against in-memory state")
 	}
@@ -88,11 +85,9 @@ func TestRotateRequiresDurableState(t *testing.T) {
 }
 
 func TestRotateRequiresACS3Gateway(t *testing.T) {
-	t.Setenv("SRW_KEY_OLD", encodedKey(t))
-	t.Setenv("SRW_KEY", encodedKey(t))
-	t.Setenv("CS3_GATEWAY_ADDR", "")
+	cfg := testConfig(t, "SRW_KEY_OLD="+encodedKey(t), "SRW_KEY="+encodedKey(t))
 
-	err := runCommand(context.Background(), "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
+	err := runCommand(context.Background(), cfg, "rotate-srw", []string{"-service-stopped"}, discardLogger(), io.Discard)
 	if err == nil {
 		t.Fatal("rotation ran without a gateway")
 	}
