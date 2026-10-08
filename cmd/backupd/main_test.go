@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/base64"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,4 +197,50 @@ func TestBuildOpenCloudMonitor(t *testing.T) {
 	if st := m.Status(); st.Known || st.Window.String() == "" {
 		t.Errorf("fresh monitor status = %+v", st)
 	}
+}
+
+// net/http's own errors reach the structured log, not a bare line on stderr.
+func TestHTTPServerErrorsGoToTheStructuredLog(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		logs bytes.Buffer
+	)
+	logger := slog.New(slog.NewJSONHandler(lockedWriter{&mu, &logs}, nil))
+
+	srv := httptest.NewUnstartedServer(http.NotFoundHandler())
+	srv.Config.ErrorLog = httpErrorLog(logger)
+	srv.StartTLS()
+	defer srv.Close()
+
+	// Plain HTTP to a TLS listener: net/http logs a handshake error.
+	resp, err := http.Get("http://" + srv.Listener.Addr().String())
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		got := logs.String()
+		mu.Unlock()
+		if strings.Contains(got, "TLS handshake error") {
+			if !strings.Contains(got, `"level":"WARN"`) {
+				t.Fatalf("http server error not logged at WARN: %s", got)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the TLS handshake error never reached the structured log")
+}
+
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  *bytes.Buffer
+}
+
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

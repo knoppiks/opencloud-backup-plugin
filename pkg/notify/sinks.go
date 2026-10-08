@@ -20,9 +20,12 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/smtp"
+	"net/textproto"
+	"os"
 	"strings"
 	"time"
 )
@@ -116,12 +119,75 @@ func (s *SMTPSink) Deliver(ctx context.Context, e Event) error {
 		auth = smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)
 	}
 	if err := s.send(ctx, addr, auth, s.cfg.From, []string{s.cfg.OperatorTo}, msg); err != nil {
-		// The transport error can quote credentials on some servers; report the
-		// shape of the failure only.
-		return fmt.Errorf("notify: could not send mail")
+		return fmt.Errorf("notify: could not send mail: %s", describeSMTPFailure(err))
 	}
 	return nil
 }
+
+// describeSMTPFailure says what went wrong with a mail delivery in words safe
+// for the service log (review-2026-10.md F3).
+//
+// What the *server* said is never repeated: a reply to AUTH can quote what the
+// client sent, which is the password in base64, so a server reply is reported
+// by its numeric code alone. Everything else here is produced locally — the
+// step that failed, a connection error naming the address, a TLS verification
+// error, a timeout — and says nothing about the credentials. An error of a
+// kind not listed is reported as unexpected, without its text.
+func describeSMTPFailure(err error) string {
+	step := ""
+	var stepErr smtpStepError
+	if errors.As(err, &stepErr) {
+		step = stepErr.step + ": "
+		err = stepErr.err
+	}
+
+	var reply *textproto.Error
+	var opErr *net.OpError
+	var certErr *tls.CertificateVerificationError
+	var recordErr tls.RecordHeaderError
+	switch {
+	case errors.As(err, &reply):
+		return fmt.Sprintf("%sserver replied %d", step, reply.Code)
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
+		return step + "timed out"
+	case errors.Is(err, context.Canceled):
+		return step + "cancelled"
+	case errors.As(err, &certErr), errors.As(err, &recordErr), errors.As(err, &opErr),
+		errors.Is(err, errNoSMTPAuth), errors.Is(err, io.EOF):
+		return step + err.Error()
+	case isLocalSMTPAuthRefusal(err):
+		return step + "refused to send credentials: " + err.Error()
+	default:
+		return step + "unexpected failure"
+	}
+}
+
+// isLocalSMTPAuthRefusal recognises net/smtp's own refusals to authenticate
+// (smtp.PlainAuth over an unencrypted connection, or to another host). They
+// are produced locally and quote nothing, but are not exported to match on.
+func isLocalSMTPAuthRefusal(err error) bool {
+	msg := err.Error()
+	return msg == "unencrypted connection" || msg == "wrong host name"
+}
+
+// smtpStepError names the step of the SMTP conversation that failed.
+type smtpStepError struct {
+	step string
+	err  error
+}
+
+func (e smtpStepError) Error() string { return e.step + ": " + e.err.Error() }
+func (e smtpStepError) Unwrap() error { return e.err }
+
+// atStep tags err with the conversation step it came from.
+func atStep(step string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return smtpStepError{step: step, err: err}
+}
+
+var errNoSMTPAuth = errors.New("smtp server does not support AUTH")
 
 // sendMail is net/smtp.SendMail with a deadline. SendMail itself has none: it
 // dials without a timeout and waits on every reply for as long as the server
@@ -142,12 +208,12 @@ func (s *SMTPSink) sendMail(
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return err
+		return atStep("connect", err)
 	}
 	deadline, _ := ctx.Deadline()
 	if err := conn.SetDeadline(deadline); err != nil {
 		_ = conn.Close()
-		return err
+		return atStep("connect", err)
 	}
 	// A cancellation before the deadline closes the connection too.
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
@@ -156,46 +222,62 @@ func (s *SMTPSink) sendMail(
 	c, err := smtp.NewClient(conn, s.cfg.Host)
 	if err != nil {
 		_ = conn.Close()
-		return err
+		return endedBy(ctx, atStep("greeting", err))
 	}
 	defer func() { _ = c.Close() }()
-	return converse(c, s.cfg.Host, a, from, to, msg)
+	return endedBy(ctx, converse(c, s.cfg.Host, a, from, to, msg))
 }
 
-// converse runs one SMTP transaction on an open client.
+// endedBy reports a failure caused by ctx ending as that, at the step it
+// interrupted. Ending ctx closes the connection, and the read in flight then
+// fails with "use of closed network connection", which hides the reason.
+func endedBy(ctx context.Context, err error) error {
+	cause := ctx.Err()
+	if err == nil || cause == nil {
+		return err
+	}
+	var stepErr smtpStepError
+	if errors.As(err, &stepErr) {
+		return smtpStepError{step: stepErr.step, err: cause}
+	}
+	return cause
+}
+
+// converse runs one SMTP transaction on an open client. Each failure names the
+// step it happened in (describeSMTPFailure).
 func converse(c *smtp.Client, host string, a smtp.Auth, from string, to []string, msg []byte) error {
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		if err := c.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
-			return err
+			return atStep("starttls", err)
 		}
 	}
 	if a != nil {
 		if ok, _ := c.Extension("AUTH"); !ok {
-			return errors.New("notify: smtp server does not support AUTH")
+			return atStep("auth", errNoSMTPAuth)
 		}
 		if err := c.Auth(a); err != nil {
-			return err
+			return atStep("auth", err)
 		}
 	}
 	if err := c.Mail(from); err != nil {
-		return err
+		return atStep("mail from", err)
 	}
 	for _, rcpt := range to {
 		if err := c.Rcpt(rcpt); err != nil {
-			return err
+			return atStep("rcpt to", err)
 		}
 	}
 	w, err := c.Data()
 	if err != nil {
-		return err
+		return atStep("data", err)
 	}
 	if _, err := w.Write(msg); err != nil {
-		return err
+		return atStep("data", err)
 	}
 	if err := w.Close(); err != nil {
-		return err
+		return atStep("data", err)
 	}
-	return c.Quit()
+	return atStep("quit", c.Quit())
 }
 
 // subjectFor gives an event a short, non-revealing subject line.

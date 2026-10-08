@@ -275,7 +275,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	s.deps.Logger.Info("scheduler started",
 		"interval", s.opts.Interval,
-		"maxConcurrent", s.opts.MaxConcurrent,
+		"max_concurrent", s.opts.MaxConcurrent,
 		"jitter", s.opts.Jitter,
 		"timezone", s.opts.Location.String(),
 	)

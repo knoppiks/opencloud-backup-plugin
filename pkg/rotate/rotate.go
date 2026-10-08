@@ -58,30 +58,30 @@ var ErrKeyMismatch = errors.New("rotate: record opens with neither the old nor t
 // EnvelopeStore is the part of keys.Store a server-key rotation needs.
 type EnvelopeStore interface {
 	// Spaces returns every space holding an envelope.
-	Spaces() ([]string, error)
+	Spaces(ctx context.Context) ([]string, error)
 	// GetSRW returns a space's server envelope.
-	GetSRW(spaceID string) (keys.WrappedDK, error)
+	GetSRW(ctx context.Context, spaceID string) (keys.WrappedDK, error)
 	// PutSRW stores a space's server envelope.
-	PutSRW(spaceID string, w keys.WrappedDK) error
+	PutSRW(ctx context.Context, spaceID string, w keys.WrappedDK) error
 }
 
 // SRW re-wraps every Space's Data Key from oldKey to newKey.
 //
 // A Space with no server envelope is skipped, not failed: a half-finished key
 // ceremony must not block the rotation of every other Space.
-func SRW(store EnvelopeStore, oldKey, newKey []byte) (Result, error) {
+func SRW(ctx context.Context, store EnvelopeStore, oldKey, newKey []byte) (Result, error) {
 	if err := checkKeyPair(oldKey, newKey, keys.SRWKeySize); err != nil {
 		return Result{}, err
 	}
 
-	spaces, err := store.Spaces()
+	spaces, err := store.Spaces(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("rotate: list spaces: %w", err)
 	}
 
 	var out Result
 	for _, spaceID := range spaces {
-		current, err := store.GetSRW(spaceID)
+		current, err := store.GetSRW(ctx, spaceID)
 		if err != nil {
 			var notFound keys.ErrNotFound
 			if errors.As(err, &notFound) {
@@ -102,7 +102,7 @@ func SRW(store EnvelopeStore, oldKey, newKey []byte) (Result, error) {
 			}
 			return out, fmt.Errorf("%w: space %s", ErrKeyMismatch, spaceID)
 		}
-		if err := store.PutSRW(spaceID, rotated); err != nil {
+		if err := store.PutSRW(ctx, spaceID, rotated); err != nil {
 			return out, fmt.Errorf("rotate: store the server envelope of space %s: %w", spaceID, err)
 		}
 		out.Rotated++

@@ -6,6 +6,7 @@ package keys
 // type.
 
 import (
+	"context"
 	"sort"
 	"sync"
 )
@@ -45,7 +46,10 @@ func (m *MemoryStore) record(spaceID string) *SpaceKeys {
 }
 
 // PutSRW stores the SRW-wrapped DK for a space.
-func (m *MemoryStore) PutSRW(spaceID string, w WrappedDK) error {
+func (m *MemoryStore) PutSRW(ctx context.Context, spaceID string, w WrappedDK) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if w.Kind != WrapSRW {
 		return ErrBadEnvelope
 	}
@@ -58,7 +62,10 @@ func (m *MemoryStore) PutSRW(spaceID string, w WrappedDK) error {
 }
 
 // GetSRW returns the SRW-wrapped DK for a space.
-func (m *MemoryStore) GetSRW(spaceID string) (WrappedDK, error) {
+func (m *MemoryStore) GetSRW(ctx context.Context, spaceID string) (WrappedDK, error) {
+	if err := ctx.Err(); err != nil {
+		return WrappedDK{}, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	rec, ok := m.byID[spaceID]
@@ -69,7 +76,10 @@ func (m *MemoryStore) GetSRW(spaceID string) (WrappedDK, error) {
 }
 
 // PutRK stores the RK-wrapped DK for a space.
-func (m *MemoryStore) PutRK(spaceID string, w WrappedDK) error {
+func (m *MemoryStore) PutRK(ctx context.Context, spaceID string, w WrappedDK) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if w.Kind != WrapRK {
 		return ErrBadEnvelope
 	}
@@ -82,7 +92,10 @@ func (m *MemoryStore) PutRK(spaceID string, w WrappedDK) error {
 }
 
 // GetRK returns the RK-wrapped DK for a space.
-func (m *MemoryStore) GetRK(spaceID string) (WrappedDK, error) {
+func (m *MemoryStore) GetRK(ctx context.Context, spaceID string) (WrappedDK, error) {
+	if err := ctx.Err(); err != nil {
+		return WrappedDK{}, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	rec, ok := m.byID[spaceID]
@@ -93,7 +106,10 @@ func (m *MemoryStore) GetRK(spaceID string) (WrappedDK, error) {
 }
 
 // Status reports setup state for a space without revealing key material.
-func (m *MemoryStore) Status(spaceID string) (Status, error) {
+func (m *MemoryStore) Status(ctx context.Context, spaceID string) (Status, error) {
+	if err := ctx.Err(); err != nil {
+		return Status{}, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	rec, ok := m.byID[spaceID]
@@ -104,7 +120,10 @@ func (m *MemoryStore) Status(spaceID string) (Status, error) {
 }
 
 // Spaces returns the ids of every space holding an envelope, in order.
-func (m *MemoryStore) Spaces() ([]string, error) {
+func (m *MemoryStore) Spaces(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

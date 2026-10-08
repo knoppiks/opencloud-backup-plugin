@@ -77,6 +77,43 @@ old code. Where it differs from the table:
 - `keys.Store` takes a `context.Context` (G5).
 - Consistent snake_case log keys (lint-enforced in 10.8).
 
+**Outcome (10.2, #72).** All five done. Where it differs from the plan:
+
+- **One line per request, not an access line plus an error line.** The
+  observer (`pkg/api/observe.go`) writes the access line when the request
+  ends; a handler answering 5xx goes through `serverError`, which keeps the
+  cause on the request, and the access line is raised to WARN/ERROR and
+  carries `code` and `err`. A panic is folded in the same way (panic + stack
+  on the line), so `api.RecoverPanics` is gone and "exactly one line per 5xx"
+  holds by construction. A source-scan test
+  (`TestServerErrorsGoThroughServerError`) fails if any 5xx is answered
+  without a cause; "not configured" 503s log their message as the cause.
+- **Levels, *proposed, owner to confirm*:** 503 is WARN ("not now": a
+  dependency not wired or not up yet, shutting down); every other 5xx and
+  every panic is ERROR; the health probes log at DEBUG while they pass, since
+  the kubelet calls them every few seconds; everything else INFO.
+- **Request id (owner decision, 2026-10-08):** an incoming `X-Request-Id`
+  of 1–128 characters from `[A-Za-z0-9._:-]` is kept, from any caller, so an
+  ingress's or the browser's id reaches this log; otherwise `backupd` mints
+  16 hex characters from `crypto/rand`. Returned as `X-Request-Id` only; it
+  is not in the JSON error body and the web UI does not show it (owner: not
+  now). The extension sending its own id is a separate PR.
+- **Logged path** comes from the request line, so a `BACKUPD_BASE_PATH`
+  prefix stripped before the router is still in the log; never the query.
+- **Causes kept elsewhere, as F3 listed:** `keys.StateStore` wraps the state
+  error under its sentinel instead of replacing it (the state store names
+  keys and transports, never document contents). The SMTP sink names the
+  step that failed and the local cause (connect, TLS, timeout); a *server
+  reply* is reported by its numeric code only, because a reply to AUTH can
+  quote the credentials.
+- **G5:** every `keys.Store` method takes a `context.Context`; the state
+  store still bounds each operation by its 30 s `storeTimeout`, now below
+  the caller's deadline instead of beside it. `rotate.SRW` takes one too.
+- **Log keys:** the three camelCase keys left (`basePath`, `adminAppRoleId`,
+  `maxConcurrent`) are snake_case; errors stay under `err`, Spaces under
+  `space`, as everywhere else.
+- `http.Server.ErrorLog` is `slog.NewLogLogger` at WARN.
+
 ## 10.3 Configuration
 
 - One `config` package (under `internal/`), one struct, parsed and validated
@@ -169,10 +206,10 @@ asserted by a dependency-graph test like the existing one for `takeout`.
 
 ## Exit criteria
 
-- [ ] F1–F7 fixed, each with a test that fails on the old code.
-      (F1, F2, F4–F7 done in 10.1; F3 is 10.2.)
-- [ ] Every 5xx leaves exactly one server-side log line with a request id;
-      `noleak` tests cover the new lines.
+- [x] F1–F7 fixed, each with a test that fails on the old code.
+      (F1, F2, F4–F7 done in 10.1 (#70); F3 in 10.2 (#72).)
+- [x] Every 5xx leaves exactly one server-side log line with a request id;
+      `noleak` tests cover the new lines. (10.2, #72)
 - [ ] One config struct; environment reference generated from it.
 - [ ] Fuzz targets run in CI; frozen Take-Out and TW-blob fixtures opened by
       tests; gitleaks clean.

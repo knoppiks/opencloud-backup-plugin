@@ -227,8 +227,8 @@ func (s *Server) Authenticate(next http.Handler) http.Handler {
 		}
 		id, err := s.validator.Validate(r.Context(), raw)
 		if errors.Is(err, ErrKeySetUnavailable) {
-			writeError(w, http.StatusServiceUnavailable, "unavailable",
-				"the identity provider cannot be reached; try again shortly")
+			serverError(w, r, http.StatusServiceUnavailable, "unavailable",
+				"the identity provider cannot be reached; try again shortly", err)
 			return
 		}
 		if err != nil {
@@ -251,13 +251,16 @@ func (s *Server) resolveUserID(w http.ResponseWriter, r *http.Request, id *Ident
 		return true
 	}
 	if s.userResolver == nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "user identity cannot be resolved")
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable", "user identity cannot be resolved", nil)
 		return false
 	}
 	userID, err := s.userResolver.UserID(r.Context(), *id)
-	if err != nil || userID == "" {
-		writeError(w, http.StatusServiceUnavailable, "unavailable",
-			"OpenCloud cannot be reached to identify the caller; try again shortly")
+	if err == nil && userID == "" {
+		err = errNoUserID
+	}
+	if err != nil {
+		serverError(w, r, http.StatusServiceUnavailable, "unavailable",
+			"OpenCloud cannot be reached to identify the caller; try again shortly", err)
 		return false
 	}
 	id.UserID = userID

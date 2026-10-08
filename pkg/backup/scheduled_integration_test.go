@@ -155,10 +155,10 @@ func startProcess(
 		if err != nil {
 			t.Fatalf("WrapSRW: %v", err)
 		}
-		if err := f.keys.PutSRW(testSpaceID, wrapped); err != nil {
+		if err := f.keys.PutSRW(context.Background(), testSpaceID, wrapped); err != nil {
 			t.Fatalf("PutSRW: %v", err)
 		}
-	} else if _, err := f.keys.GetSRW(testSpaceID); err != nil {
+	} else if _, err := f.keys.GetSRW(context.Background(), testSpaceID); err != nil {
 		t.Fatalf("the stored key envelope did not survive the restart: %v", err)
 	}
 
