@@ -159,7 +159,9 @@ func (v *Versions[T]) Load(ctx context.Context, id ...string) (T, Span, error) {
 // A record that cannot be decoded is left out of the values and reported by key
 // in unreadable. Both halves matter: one corrupt document must not make the
 // whole collection unreadable, and a record that silently disappears from a
-// listing is a Space that silently stops being backed up.
+// listing is a Space that silently stops being backed up. For the same reason a
+// read that fails for any reason other than "not found" or "malformed" fails
+// the whole listing rather than dropping the record (skipUnreadable).
 func (v *Versions[T]) Latest(ctx context.Context) (values []T, unreadable []string, err error) {
 	keys, err := v.docs.store.List(ctx, v.docs.prefix)
 	if err != nil {
@@ -191,11 +193,8 @@ func (v *Versions[T]) Latest(ctx context.Context) (values []T, unreadable []stri
 		key := newestByID[id]
 		value, err := v.docs.GetKey(ctx, key)
 		if err != nil {
-			// A record removed or corrupted underneath the listing must not
-			// make the whole collection unreadable — but a corrupt one is
-			// reported, because it is invisible everywhere else.
-			if IsMalformed(err) {
-				unreadable = append(unreadable, key)
+			if unreadable, err = skipUnreadable(key, err, unreadable); err != nil {
+				return nil, nil, err
 			}
 			continue
 		}
@@ -228,8 +227,8 @@ func (v *Versions[T]) appendLegacy(
 		}
 		value, err := v.legacy.GetKey(ctx, key)
 		if err != nil {
-			if IsMalformed(err) {
-				unreadable = append(unreadable, key)
+			if unreadable, err = skipUnreadable(key, err, unreadable); err != nil {
+				return nil, nil, err
 			}
 			continue
 		}

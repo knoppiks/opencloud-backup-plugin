@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"opencloud-backup-plugin/pkg/cs3"
+	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/restore"
 	"opencloud-backup-plugin/pkg/snapshot"
 )
@@ -225,6 +226,7 @@ func TestRestore_RunnerErrorsMapToStatusCodes(t *testing.T) {
 		{restore.ErrNotConfigured, http.StatusConflict, "not_configured"},
 		{restore.ErrTargetUnavailable, http.StatusConflict, "target_unavailable"},
 		{restore.ErrRunInProgress, http.StatusConflict, "run_in_progress"},
+		{jobs.ErrShuttingDown, http.StatusServiceUnavailable, "shutting_down"},
 		{errUnexpected, http.StatusInternalServerError, "internal_error"},
 	}
 	for _, tc := range cases {

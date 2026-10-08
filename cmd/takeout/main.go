@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"opencloud-backup-plugin/pkg/objstore"
@@ -107,6 +108,13 @@ func validate(cfg config) error {
 		return errors.New("-space is required")
 	case cfg.outDir == "":
 		return errors.New("-out is required")
+	// Named here because the alternative is worse than an error: without
+	// static credentials the S3 SDK goes looking for ambient ones, ending at
+	// the cloud metadata service (review-2026-10.md F5).
+	case strings.TrimSpace(cfg.accessKey) == "":
+		return errors.New("S3_ACCESS_KEY_ID is not set: export the target's access key id")
+	case strings.TrimSpace(cfg.secretKey) == "":
+		return errors.New("S3_SECRET_ACCESS_KEY is not set: export the target's secret access key")
 	}
 	return nil
 }

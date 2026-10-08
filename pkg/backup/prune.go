@@ -68,7 +68,9 @@ func (r *Runner) RunPrune(ctx context.Context, spaceID string) (PruneResult, err
 // finishPrune performs the prune, records the outcome, and gives the run lock
 // back. It owns the lock from the moment begin returned it.
 func (r *Runner) finishPrune(ctx context.Context, pending run) (PruneResult, error) {
-	stats, err := r.pruneSpace(ctx, pending.space)
+	stats, err := jobs.Recover(func() (snapshot.PruneStats, error) {
+		return r.pruneSpace(ctx, pending.space)
+	})
 	if err != nil {
 		r.fail(ctx, pending, err)
 		return PruneResult{}, err

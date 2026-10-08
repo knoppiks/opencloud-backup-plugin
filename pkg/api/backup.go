@@ -421,6 +421,9 @@ func writeRunError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "target_unavailable", "the backup target is unavailable")
 	case errors.Is(err, backup.ErrRunInProgress):
 		writeError(w, http.StatusConflict, "run_in_progress", "a backup run is already in progress")
+	case errors.Is(err, jobs.ErrShuttingDown):
+		// Retryable: the next instance takes the request.
+		writeError(w, http.StatusServiceUnavailable, "shutting_down", "the service is restarting; try again shortly")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not start the backup run")
 	}

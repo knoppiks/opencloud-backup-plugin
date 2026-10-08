@@ -60,6 +60,9 @@ var (
 	ErrNoEnvelope = errors.New("takeout: no recovery key envelope found for this space")
 	// ErrCorrupt means the Take-Out failed its integrity check.
 	ErrCorrupt = errors.New("takeout: take-out is damaged")
+	// ErrNewerTakeOut means the manifest declares a format version this build
+	// does not know. The Take-Out is not damaged; a newer decrypt reads it.
+	ErrNewerTakeOut = errors.New("takeout: take-out format is newer than this tool")
 )
 
 // SourceRef records where a Take-Out came from. It is provenance only and holds
@@ -133,12 +136,37 @@ func ReadManifest(dir string) (Manifest, error) {
 		return Manifest{}, ErrNoTakeOut
 	}
 	if m.Version > ManifestVersion {
-		return Manifest{}, fmt.Errorf("takeout: take-out format version %d is newer than this tool", m.Version)
+		return Manifest{}, fmt.Errorf("%w (version %d, this tool reads up to %d)",
+			ErrNewerTakeOut, m.Version, ManifestVersion)
 	}
 	if m.SpaceID == "" {
 		return Manifest{}, fmt.Errorf("%w: manifest names no space", ErrCorrupt)
 	}
+	if err := checkLocalPaths(m); err != nil {
+		return Manifest{}, err
+	}
 	return m, nil
+}
+
+// checkLocalPaths refuses manifest paths that leave the Take-Out directory.
+//
+// A Take-Out travels from an administrator to a family member, often on a USB
+// stick, and the manifest is just a file in it. A crafted "../" or absolute
+// path would point decrypt at files outside the directory it was given
+// (review-2026-10.md F4). Every path the manifest names must stay inside.
+func checkLocalPaths(m Manifest) error {
+	for _, p := range []struct{ field, value string }{
+		{"repo_dir", m.RepoDir},
+		{"envelope_file", m.EnvelopeRef},
+	} {
+		if p.value == "" {
+			continue // the fixed default name applies
+		}
+		if !filepath.IsLocal(filepath.FromSlash(p.value)) {
+			return fmt.Errorf("%w: manifest field %s points outside the take-out", ErrCorrupt, p.field)
+		}
+	}
+	return nil
 }
 
 // RepoPath returns the directory holding the copied repository.
