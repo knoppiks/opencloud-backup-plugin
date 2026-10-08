@@ -5,7 +5,7 @@ import { openCloudNotice } from './compat'
 const $gettext = (msgid: string, params: Record<string, string> = {}) =>
   msgid.replace(/%\{(\w+)\}/g, (_, k: string) => params[k] ?? '')
 
-const supported = 'Rolling 7.3.0 to 8.1.0'
+const supported = '7.3.0 to 8.1.0'
 
 function version(overrides: Partial<OpenCloudVersion>): OpenCloudVersion {
   return {

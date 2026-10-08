@@ -11,11 +11,14 @@ func digestOf(c string) string { return "sha256:" + strings.Repeat(c, 64) }
 
 func validPins() Pins {
 	return Pins{
-		Default: "newest-rolling",
+		// The policy's shape at a future date: majors 7 and 8, a
+		// Production line cut from 8.2 and patched past it.
+		Default: "newest",
 		Legs: []Leg{
-			{Name: "production", Channel: ChannelProduction, Image: "example/oc", Tag: "7.2.4", Digest: digestOf("a")},
-			{Name: "oldest-rolling", Channel: ChannelRolling, Image: "example/oc-rolling", Tag: "7.3.0", Digest: digestOf("b")},
-			{Name: "newest-rolling", Channel: ChannelRolling, Image: "example/oc-rolling", Tag: "8.1.0", Digest: digestOf("c")},
+			{Name: "production", Channel: ChannelProduction, Image: "example/oc", Tag: "8.2.3", Digest: digestOf("a")},
+			{Name: "oldest", Channel: ChannelRolling, Image: "example/oc-rolling", Tag: "7.3.0", Digest: digestOf("b")},
+			{Name: "previous-major", Channel: ChannelRolling, Image: "example/oc-rolling", Tag: "7.5.0", Digest: digestOf("e")},
+			{Name: "newest", Channel: ChannelRolling, Image: "example/oc-rolling", Tag: "8.2.0", Digest: digestOf("c")},
 		},
 		Canary: Leg{Name: "canary", Channel: ChannelRolling, Image: "example/oc-rolling", Tag: "latest"},
 	}
@@ -48,6 +51,11 @@ func TestValidate(t *testing.T) {
 		{"short digest", func(p *Pins) { p.Legs[0].Digest = "sha256:abc" }, "digest"},
 		{"floating tag", func(p *Pins) { p.Legs[0].Tag = "latest" }, "tag"},
 		{"production only", func(p *Pins) { p.Legs = p.Legs[:1]; p.Default = "production" }, "no rolling"},
+		{"three majors", func(p *Pins) { p.Legs[1].Tag = "6.2.0" }, "span majors 6 to 8"},
+		{"three majors, newest last", func(p *Pins) { p.Legs[3].Tag = "9.0.0" }, "span majors 7 to 9"},
+		{"production older than both majors", func(p *Pins) {
+			p.Legs[0].Tag = "6.2.1"
+		}, ""},
 		{"canary without tag", func(p *Pins) { p.Canary.Tag = "" }, "canary"},
 		{"canary named like a leg", func(p *Pins) { p.Canary.Name = "production" }, "collides"},
 	}
@@ -76,7 +84,7 @@ func TestParseRejectsMalformedYAML(t *testing.T) {
 
 func TestRef(t *testing.T) {
 	p := validPins()
-	if got, want := p.Legs[0].Ref(), "example/oc:7.2.4@"+digestOf("a"); got != want {
+	if got, want := p.Legs[0].Ref(), "example/oc:8.2.3@"+digestOf("a"); got != want {
 		t.Errorf("pinned Ref() = %q, want %q", got, want)
 	}
 	if got, want := p.Canary.Ref(), "example/oc-rolling:latest"; got != want {
@@ -138,24 +146,24 @@ func TestSupportedSentence(t *testing.T) {
 		want   string
 	}{
 		{
-			"production and a rolling range",
+			"range plus a production line",
 			func(*Pins) {},
-			"**Supported OpenCloud versions: Production 7.2.x and Rolling 7.3.0 to 8.1.0.**",
+			"**Supported OpenCloud versions: 7.3.0 to 8.2.0, plus every 8.2.x patch release.**",
 		},
 		{
 			"legs out of order",
-			func(p *Pins) { p.Legs[1].Tag, p.Legs[2].Tag = p.Legs[2].Tag, p.Legs[1].Tag },
-			"**Supported OpenCloud versions: Production 7.2.x and Rolling 7.3.0 to 8.1.0.**",
+			func(p *Pins) { p.Legs[1], p.Legs[3] = p.Legs[3], p.Legs[1] },
+			"**Supported OpenCloud versions: 7.3.0 to 8.2.0, plus every 8.2.x patch release.**",
 		},
 		{
-			"rolling only",
+			"no production leg",
 			func(p *Pins) { p.Legs = p.Legs[1:] },
-			"**Supported OpenCloud versions: Rolling 7.3.0 to 8.1.0.**",
+			"**Supported OpenCloud versions: 7.3.0 to 8.2.0.**",
 		},
 		{
-			"one rolling leg",
-			func(p *Pins) { p.Legs = p.Legs[2:] },
-			"**Supported OpenCloud versions: Rolling 8.1.0.**",
+			"one leg",
+			func(p *Pins) { p.Legs = p.Legs[3:] },
+			"**Supported OpenCloud versions: 8.2.0.**",
 		},
 	}
 	for _, tt := range tests {

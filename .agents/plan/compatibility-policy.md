@@ -52,8 +52,11 @@ From 1.0.0:
 
 **DECISION NEEDED (proposal above):** dropping an OpenCloud version that has
 left the support window is MINOR. The window is announced, so the operator
-already knows; burning a MAJOR every six months on it would make MAJOR
-meaningless. The alternative is to treat every drop as MAJOR.
+already knows; burning a MAJOR every few months on it (§3: a major leaves
+whenever OpenCloud ships a new one) would make MAJOR meaningless. The alternative is to treat every drop as MAJOR.
+**Status (2026-10-07, #67): proposed, owner to confirm** — MINOR is applied
+as the working rule until then. It binds nothing yet: the plugin is 0.x, and
+the only drop so far (7.2.x) happened before any release.
 
 ### Things that never break, at any version bump
 
@@ -82,58 +85,111 @@ No MAJOR bump licenses dropping them:
 
 ## 3. OpenCloud support window
 
-OpenCloud ships three channels (docs.opencloud.eu, "Release Lifecycle"):
-**Rolling** every ~3 weeks, **Production** every ~6 months, **LTS** for
-paying customers.
+### How OpenCloud releases
 
-**Supported = the current Production line (all its patch releases) plus
-every Rolling release published since that Production release was cut.**
-(decisions.md #25)
+All releases come from one codebase (`opencloud-eu/opencloud`, release list
+2025-02 to 2026-10):
 
-Rationale: Production is what OpenCloud tells production users to run, and a
-household that follows that advice must not be excluded. Rolling is what
-enthusiasts — including the owner's own deployment — run, and it is where
-breakage arrives first. LTS is out of scope: it is a customer offering, and
-the families this targets do not have it.
+- **Rolling** is `main`: a new MINOR or MAJOR every ~3 weeks, never patched.
+  The MAJOR goes up whenever something breaking lands, which so far has been
+  about operating the server (search index, config, migrations), every 2–3
+  months (1.0 in February 2025, 8.0 in September 2026).
+- **Production** is a Rolling release OpenCloud kept patching on a side
+  branch (`stable-2.0`, `stable-4.0`, `stable-7.2`). A new line is cut from
+  `main` every 4–9 months; the previous line's patches stop at about the same
+  time. Production users jump from one line straight to the next.
+- **LTS** is a customer offering, out of scope: the families this targets do
+  not have it.
 
-### The window today (2026-10-06)
+So the MAJOR number says nothing about the channel, and little about what
+breaks *this* plugin: the one break so far (7.5.0's data URLs) came in a
+MINOR.
 
-| Channel | Versions | Status |
+### The rule (decisions.md #25, as amended by "Moving to OpenCloud 8.x")
+
+**Supported = every release of OpenCloud's newest two majors, from the
+oldest leg up to the newest, plus every patch release of the current
+Production line.** The channel a release came out on does not matter inside
+the range.
+
+**Tested** (CI legs, all blocking, `pkg/ocversion/versions.yaml`):
+
+| Leg | Pins | Why |
 |---|---|---|
-| Production | 7.2.x (7.2.4) | **excluded**: a service account cannot create the state Space there (decisions.md, "Moving to OpenCloud 8.x"); returns with the next Production line |
-| Rolling | 7.3.0, 7.4.0, 7.5.0 | 7.5.0 tested in CI; 7.3.0 tested by hand earlier; 7.4.0 never |
-| Rolling | 8.0.0, 8.0.1, 8.1.0 | **to be adopted** in Phase 9 |
+| `oldest` | the first release of the previous major (floor: 7.3.0) | breaking changes land in minors too; the oldest version claimed is always run |
+| `previous-major` | the newest minor of the previous major | what most households a major behind run |
+| `newest` | the newest release | where the owner runs and breakage arrives first |
+| `production` | the newest patch of the current Production line | its patches come from a side branch and can differ from `main` |
+| canary | `opencloud-rolling:latest` by tag, nightly | **non-blocking**, opens an issue |
 
-### When the window moves
+A leg that would pin the same release as another is left out. Releases
+between the legs are not run on every PR; each was run when it was newest,
+and the legs bracket them.
 
-The next Production release is announced for **2026-10-26**. When a new
-Production line ships:
+**When the window moves:**
 
-1. It joins the window immediately (it is a Rolling release already tested).
-2. The previous Production line and the Rolling releases older than the new
-   Production leave the window.
-3. **DECISION NEEDED:** a grace period. Proposal: the previous Production line
-   stays supported until the first plugin MINOR released **90 days** after the
-   new Production — families upgrade slowly, and a backup plugin that stops
-   supporting the OpenCloud version a household runs is a backup that stops.
+1. *A new release:* `newest` moves to it once CI is green. A new MINOR of the
+   previous major moves `previous-major`.
+2. *A new major:* the oldest major leaves. `oldest` moves to the first
+   release of the major before the new one, `previous-major` to that major's
+   newest minor. `Parse` refuses Rolling legs spanning three majors, so this
+   cannot be forgotten.
+3. *A new Production line:* `production` moves to it. The previous line is
+   no longer current; it stays supported only as far as the two-majors range
+   covers it.
+4. *A floor:* a release the plugin cannot work on is excluded with a reason,
+   and the range starts above it. Today's floor is 7.3.0: on 7.2.x a service
+   account cannot create the state Space (decisions.md, "Moving to OpenCloud
+   8.x").
+
+The previous grace-period proposal (keep the previous Production line 90
+days) is **superseded** by this rule: a release leaves only when the second
+major after its own ships, with OpenCloud's cadence roughly 4–6 months after
+its own major appeared, and a current Production line never leaves.
+**Status (2026-10-08, owner): rule decided; dropping the grace period is
+proposed, owner to confirm.**
+
+Rationale: the old rule ("the current Production line plus every Rolling
+release since it was cut") restarted the window at every Production cut, so
+on the day a new line shipped every release before it — including the one
+households had run the day before — left at once. A version range with a
+two-majors horizon moves one step at a time.
+
+### The window today (2026-10-08)
+
+**7.3.0 to 8.1.0.** Measurements per version: phase-9 doc, 9.3 outcome;
+what changed: decisions.md, "Moving to OpenCloud 8.x".
+
+| Versions | Status |
+|---|---|
+| 7.2.x and older | **excluded** (owner decision): below the 7.3.0 floor |
+| 7.3.0 | **CI leg `oldest`** |
+| 7.4.0 | in the window, bracketed, never run |
+| 7.5.0 | **CI leg `previous-major`** (newest 7.x) |
+| 8.0.0, 8.0.1 | in the window, bracketed, never run |
+| 8.1.0 | **CI leg `newest`**; the canary (`latest`) resolved to the same digest on 2026-10-07 |
+
+No `production` leg: the current Production line (7.2.x) is below the
+floor. It returns with the next Production line, announced for
+**2026-10-26**.
+
+### Worked example (dates after today are assumptions)
+
+| Date | Event | Window | Legs |
+|---|---|---|---|
+| 2026-10-08 | today | 7.3.0 – 8.1.0 | oldest 7.3.0, previous-major 7.5.0, newest 8.1.0 |
+| 2026-10-26 | Production 8.2.x cut from 8.2.0 | 7.3.0 – 8.2.0, plus 8.2.x | oldest 7.3.0, previous-major 7.5.0, newest 8.2.0, production 8.2.x |
+| ~2026-12 | 9.0.0 ships | 8.0.0 – 9.0.0, plus 8.2.x | oldest 8.0.0, previous-major 8.3.0, newest 9.0.0, production 8.2.x |
+| ~2027-02 | 10.0.0 ships | 9.0.0 – 10.0.0, plus 8.2.x (still the current Production line) | oldest 9.0.0, previous-major 9.x, newest 10.0.0, production 8.2.x |
+| ~2027-04 | Production 10.1.x cut | 9.0.0 – 10.1.0, plus 10.1.x; 8.2.x leaves | oldest 9.0.0, previous-major 9.x, newest 10.1.0, production 10.1.x |
 
 ### What "supported" means, concretely
 
-A version is supported if and only if **CI runs the full OpenCloud fixture
-suite and the browser E2E against it** (decisions.md #9's lesson: a claim
-not exercised against the real thing is not a claim). The CI matrix
-(Phase 9) is:
-
-| Leg | Version | Blocking |
-|---|---|---|
-| Production | newest patch of the Production line | yes |
-| Oldest Rolling | oldest Rolling still in the window | yes |
-| Newest Rolling | newest Rolling release | yes |
-| Canary | `opencloud-rolling:latest` (by tag, not digest), nightly | **no** — opens an issue |
-
-Intermediate Rolling releases are not run on every PR. They were each run
-when they were newest, and the outer legs bracket them. A release's notes list
-the exact versions (by digest) it was tested against.
+A version is supported if and only if CI runs the full OpenCloud fixture
+suite and the browser E2E against it or against legs on both sides of it
+(decisions.md #9's lesson: a claim not exercised against the real thing is
+not a claim). A release's notes list the exact versions (by digest) it was
+tested against.
 
 ### What the plugin does outside the window
 

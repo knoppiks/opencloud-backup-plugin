@@ -89,9 +89,12 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
 
 ## Deployment preconditions
 
-**Supported OpenCloud versions: Rolling 7.3.0 to 8.1.0.**
-CI runs the full OpenCloud suite and the browser tests against every version
-pinned by digest in [`pkg/ocversion/versions.yaml`](pkg/ocversion/versions.yaml);
+**Supported OpenCloud versions: 7.3.0 to 8.1.0.**
+The range covers OpenCloud's newest two majors, whether a release came out as
+Rolling or Production. CI runs the full OpenCloud suite and the browser tests
+against its oldest release, the newest minor of each major, and the newest
+patch of OpenCloud's Production line, each pinned by digest in
+[`pkg/ocversion/versions.yaml`](pkg/ocversion/versions.yaml);
 a test keeps this sentence equal to that file. Outside that range the service
 logs a warning and the admin view shows a notice, and backups keep running.
 The service talks to OpenCloud over CS3, which OpenCloud does not treat as a
@@ -101,7 +104,15 @@ upgrading a deployment that runs backups.
 **Upgrading OpenCloud to 8.x** needs a search reindex on the OpenCloud side
 (see OpenCloud's 8.0.0 release notes). That is unrelated to this service:
 backups and restores do not use search. Configure `CS3_DATA_SERVER_URL` before
-crossing 7.5 (step 1 below); it is harmless on older releases.
+crossing 7.5 (step 1 below); it is harmless on older releases. If you keep
+a CSP override file, rebase it on 8.x's default when you upgrade (see the CSP
+section below): a file copied from 7.x takes away the `blob:` styles 8.1 adds.
+
+**OpenCloud's Production line 7.2.x is not supported.** On it, the service
+account cannot create the Space the service keeps its state in (OpenCloud
+fixed that in 7.3.0 and did not backport it), so setup stops at
+`backupd provision-state-space`. Run a Rolling release from 7.3.0 on, or
+wait for the next Production line.
 
 The image is published as `ghcr.io/knoppiks/opencloud-backupd` for every
 release tag, or built from the `Dockerfile` in this repository (`make image`). It
@@ -601,7 +612,7 @@ make web-install-fixture         # build, install into the fixture, verify it re
 ```
 
 The fixture needs [`yq`](https://github.com/mikefarah/yq) v4 to read the pin
-file. It starts the pin file's default leg (the newest Rolling release); pick
+file. It starts the pin file's default leg (`newest`, the newest release); pick
 another with `OC_LEG`, e.g. `OC_LEG=canary make dev-up`. A fixture keeps
 the version it was initialised with, so switching needs
 `test/fixtures/opencloud/down.sh --purge` first.

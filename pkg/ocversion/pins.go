@@ -17,8 +17,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Channels OpenCloud publishes on that a leg may belong to. LTS is out of
-// scope (compatibility-policy.md §3).
+// Channels OpenCloud publishes on that a leg may belong to. They decide the
+// image a leg pulls and whether its line's later patches are covered; the
+// support range itself is by version number. LTS is out of scope
+// (compatibility-policy.md §3).
 const (
 	ChannelProduction = "production"
 	ChannelRolling    = "rolling"
@@ -29,7 +31,7 @@ var embedded []byte
 
 // Leg is one OpenCloud version the plugin is tested against.
 type Leg struct {
-	// Name is the leg's role ("newest-rolling"), stable across version bumps
+	// Name is the leg's role ("newest"), stable across version bumps
 	// so CI job names can be required by a ruleset.
 	Name    string `yaml:"name"`
 	Channel string `yaml:"channel"`
@@ -96,14 +98,36 @@ func (p Pins) validate() error {
 	if !seen[p.Default] {
 		return fmt.Errorf("default %q is not a leg", p.Default)
 	}
-	if !slices.ContainsFunc(p.Legs, func(l Leg) bool { return l.Channel == ChannelRolling }) {
+	if !slices.ContainsFunc(p.Legs, isRolling) {
 		return errors.New("no rolling leg")
+	}
+	if err := p.validateMajors(); err != nil {
+		return err
 	}
 	if p.Canary.Name == "" || p.Canary.Image == "" || p.Canary.Tag == "" {
 		return errors.New("canary needs name, image and tag")
 	}
 	if seen[p.Canary.Name] {
 		return fmt.Errorf("canary %q: name collides with a leg", p.Canary.Name)
+	}
+	return nil
+}
+
+// supportedMajors is how many OpenCloud majors the Rolling range spans: the
+// newest and the one before it (compatibility-policy.md §3). The current
+// Production line is supported on top, whatever its major.
+const supportedMajors = 2
+
+func isRolling(l Leg) bool { return l.Channel == ChannelRolling }
+
+// validateMajors refuses Rolling legs spanning more majors than the policy
+// supports, so raising the oldest leg cannot be forgotten when a major ships.
+func (p Pins) validateMajors() error {
+	rolling := p.versions(isRolling)
+	oldest, newest := rolling[0], rolling[len(rolling)-1]
+	if newest.Major-oldest.Major >= supportedMajors {
+		return fmt.Errorf("legs span majors %d to %d; the policy supports the last %d (raise the oldest leg)",
+			oldest.Major, newest.Major, supportedMajors)
 	}
 	return nil
 }
@@ -164,12 +188,12 @@ func (v Version) Compare(w Version) int {
 	return 0
 }
 
-// versionsOf returns the parsed tags of the legs on channel, oldest first.
+// versions returns the parsed tags of the legs keep selects, oldest first.
 // Tags were validated by Parse.
-func (p Pins) versionsOf(channel string) []Version {
+func (p Pins) versions(keep func(Leg) bool) []Version {
 	var vs []Version
 	for _, l := range p.Legs {
-		if l.Channel == channel {
+		if keep(l) {
 			v, _ := ParseVersion(l.Tag)
 			vs = append(vs, v)
 		}
