@@ -73,9 +73,39 @@ func noteCause(r *http.Request, code string, cause error) {
 	}
 }
 
-// newRequestID returns 16 hex characters from the system CSPRNG. The id is
-// always minted here: an id taken from the client would let a caller choose
-// what the operator's log says.
+// maxRequestIDLen bounds a caller's id; 128 holds any UUID or trace id an
+// ingress or OpenCloud's own web client sends.
+const maxRequestIDLen = 128
+
+// requestIDFrom returns the caller's X-Request-Id when it is well-formed, so
+// an id set by an ingress or the browser ties this log line to theirs, and
+// mints one otherwise. Accepting it from anyone is safe: the id only finds log
+// lines, it is never used to decide anything, and the JSON log handler
+// escapes it. The charset and length bound keep it a searchable token.
+func requestIDFrom(r *http.Request) string {
+	if id := r.Header.Get(RequestIDHeader); validRequestID(id) {
+		return id
+	}
+	return newRequestID()
+}
+
+func validRequestID(id string) bool {
+	if id == "" || len(id) > maxRequestIDLen {
+		return false
+	}
+	for _, c := range id {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.', c == '_', c == ':', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// newRequestID returns 16 hex characters from the system CSPRNG, for a
+// request that arrived without a usable id.
 func newRequestID() string {
 	var b [8]byte
 	// crypto/rand.Read does not fail on supported platforms (Go 1.24+); it
@@ -116,7 +146,7 @@ func (rec *statusRecorder) Unwrap() http.ResponseWriter { return rec.ResponseWri
 func (s *Server) observe(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
-		rl := &requestLog{id: newRequestID()}
+		rl := &requestLog{id: requestIDFrom(r)}
 		w.Header().Set(RequestIDHeader, rl.id)
 		rec := &statusRecorder{ResponseWriter: w}
 		r = r.WithContext(context.WithValue(r.Context(), requestLogKey{}, rl))

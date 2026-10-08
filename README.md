@@ -597,7 +597,9 @@ Users are unaffected and need do nothing.
 
 `backupd` logs JSON to stderr, one line per API request (`"msg":"http request"`;
 health probes only at debug level). Every response carries an `X-Request-Id`
-header. When the API answers 5xx, the line for that request is raised to WARN
+header: the one the request came with, if your ingress or client set a
+well-formed one (up to 128 characters of letters, digits and `._:-`), else
+one `backupd` minted. When the API answers 5xx, the line for that request is raised to WARN
 (503) or ERROR and names the cause (`err`), which the browser is never shown.
 So with the id from the failed response (the browser's network tab):
 

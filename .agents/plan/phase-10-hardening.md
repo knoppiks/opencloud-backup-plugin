@@ -92,11 +92,12 @@ old code. Where it differs from the table:
   dependency not wired or not up yet, shutting down); every other 5xx and
   every panic is ERROR; the health probes log at DEBUG while they pass, since
   the kubelet calls them every few seconds; everything else INFO.
-- **Request id, *proposed, owner to confirm*:** always minted by `backupd`
-  (16 hex characters from `crypto/rand`), never taken from an incoming
-  `X-Request-Id`, so a client cannot choose what the operator's log says.
-  Returned as `X-Request-Id` only, as planned; it is not in the JSON error
-  body and the web UI does not show it yet (backlog candidate).
+- **Request id (owner decision, 2026-10-08):** an incoming `X-Request-Id`
+  of 1–128 characters from `[A-Za-z0-9._:-]` is kept, from any caller, so an
+  ingress's or the browser's id reaches this log; otherwise `backupd` mints
+  16 hex characters from `crypto/rand`. Returned as `X-Request-Id` only; it
+  is not in the JSON error body and the web UI does not show it (owner: not
+  now). The extension sending its own id is a separate PR.
 - **Logged path** comes from the request line, so a `BACKUPD_BASE_PATH`
   prefix stripped before the router is still in the log; never the query.
 - **Causes kept elsewhere, as F3 listed:** `keys.StateStore` wraps the state

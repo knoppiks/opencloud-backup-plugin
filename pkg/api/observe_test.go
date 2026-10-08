@@ -86,15 +86,49 @@ func TestEveryResponseCarriesAFreshRequestID(t *testing.T) {
 	}
 }
 
-// The id is the server's own: a client cannot choose what the log says.
-func TestRequestIDIsNotTakenFromTheClient(t *testing.T) {
+// A well-formed caller id (an ingress's, or OpenCloud's web client's UUID) is
+// kept, so the request can be followed across services.
+func TestRequestIDIsTakenFromTheCallerWhenWellFormed(t *testing.T) {
+	var logs logCapture
+	srv := NewServer(WithLogger(logs.logger()))
+	for _, id := range []string{
+		"3f2b8c1e-9d4a-4e6b-8f1a-2c7d5e9b0a13",
+		"req.42_a:b-c",
+		strings.Repeat("a", maxRequestIDLen),
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/spaces", nil)
+		req.Header.Set(RequestIDHeader, id)
+		srv.Handler().ServeHTTP(rec, req)
+		if got := rec.Header().Get(RequestIDHeader); got != id {
+			t.Errorf("caller id %q answered as %q", id, got)
+		}
+		if line := logs.onlyLineFor(t, rec); line["request_id"] != id {
+			t.Errorf("logged request_id %v, want %q", line["request_id"], id)
+		}
+	}
+}
+
+// An id that is empty, too long or carries anything outside the token
+// charset is replaced by a minted one rather than logged.
+func TestMalformedRequestIDIsReplaced(t *testing.T) {
 	srv := NewServer()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	req.Header.Set(RequestIDHeader, "chosen-by-client")
-	srv.Handler().ServeHTTP(rec, req)
-	if got := rec.Header().Get(RequestIDHeader); got == "chosen-by-client" {
-		t.Fatal("the server echoed a client-chosen request id")
+	for _, id := range []string{
+		"",
+		strings.Repeat("a", maxRequestIDLen+1),
+		"has space",
+		`quote"d`,
+		"new\nline",
+		"ünïcode",
+		"a/b",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		req.Header.Set(RequestIDHeader, id)
+		srv.Handler().ServeHTTP(rec, req)
+		if got := rec.Header().Get(RequestIDHeader); !requestIDShape.MatchString(got) {
+			t.Errorf("caller id %q answered as %q, want a minted id", id, got)
+		}
 	}
 }
 

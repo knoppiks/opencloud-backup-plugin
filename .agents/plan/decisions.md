@@ -1343,9 +1343,15 @@ request path, which holds Space and job ids.
   any header, or a request or response body, which is where tokens, the Data
   Key at setup and target credentials travel; tests drive those routes and
   check the log.
-- **Proposed, owner to confirm:** the request id is always minted by the
-  service, never taken from the client. Levels: 503 WARN, other 5xx and
-  panics ERROR, passing health probes DEBUG, everything else INFO.
+- **Request id (owner decision, 2026-10-08):** a well-formed incoming
+  `X-Request-Id` (1–128 characters of `[A-Za-z0-9._:-]`) is used as it is,
+  from any caller, so a request can be followed from an ingress or the
+  browser into this log; anything else is replaced by a minted one. Taking it
+  from anyone is safe because the id only finds log lines and is never used
+  to decide anything; the JSON handler escapes it. Not in the JSON error
+  body or the UI for now.
+- **Proposed, owner to confirm:** levels: 503 WARN, other 5xx and panics
+  ERROR, passing health probes DEBUG, everything else INFO.
 - **Proposed, owner to confirm:** an SMTP server's reply is logged by its
   numeric code only, never its text, because a reply to AUTH can quote the
   credentials. Locally produced causes (connect, TLS, timeout, the step that
