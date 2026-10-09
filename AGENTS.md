@@ -78,6 +78,13 @@ a follow-up edit alone: once committed, it is in history.
 - **Never commit.** The user commits. You may `git add` to stage intended files
   and suggest a concise, imperative commit message (<= 72-char subject).
 - Do not modify git config, skip hooks, force-push, or amend.
+- **One commit per issue/PR.** Follow-up work on an open PR is folded into
+  its commit by the user (amend). When suggesting a message for such a
+  change, give the full combined message for the whole PR, not a delta.
+- **Link the issue with a closing keyword**: `Closes #<ID>` as the last line
+  of the commit message and of the PR description, so merging closes the
+  issue. Use `Refs #<ID>` only when the PR deliberately leaves part of the
+  issue open, and say in the PR what remains.
 
 ## When unsure
 
