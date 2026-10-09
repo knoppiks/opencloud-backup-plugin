@@ -66,10 +66,15 @@ No MAJOR bump licenses dropping them:
 - **Key envelopes** (`key-envelope-format.md`): every version ever written
   stays readable by `decrypt` and `backupd`.
 - **Take-Out manifest**: `decrypt` reads every Take-Out any released
-  `takeout` has produced. Pinned by a frozen fixture from Phase 10 on.
+  `takeout` has produced. Pinned by a frozen fixture from Phase 10 on
+  (`pkg/takeout/testdata/takeout-v1`, written 2026-10-07 with kopia
+  v0.23.1); every new manifest version, envelope version or kopia on-disk
+  repository format adds one, none is ever deleted.
 - **Recovery Key encoding** (`ocbk1-…`): a key a user saved stays valid.
 - **TW-wrapped credential blob** and **state-Space record layouts**: newer
-  versions read older layouts (as R1 does with the pre-versioned ones).
+  versions read older layouts (as R1 does with the pre-versioned ones). The
+  credential blob's shapes are frozen in
+  `pkg/targets/testdata/sealed-credentials-v1.json`.
 
 ### Things with a deprecation period
 

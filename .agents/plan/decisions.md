@@ -1399,6 +1399,36 @@ the declarations.
   record) and skipped seeding silently on the second. `CS3_DATA_SERVER_URL` is
   checked at load as well, no longer only when dialling.
 
+### Amendments from Phase 10.4 (fuzzing, frozen fixtures, #76)
+
+None reopens a locked decision. The compatibility promises of
+`compatibility-policy.md` §2 are now checked by tests: a Take-Out and sealed
+target credentials written by the code of 2026-10-07 are committed, each with
+the throwaway key generated for it (allowlisted by path in `.gitleaks.toml`),
+and opened by every test run. Frozen fixtures are append-only.
+
+- **Proposed, owner to confirm:** a new frozen Take-Out is required for
+  every new Take-Out format: a new manifest version, a new envelope version,
+  or a new on-disk repository format written by kopia (format or index
+  version, hash, encryption, ECC or splitter). Not for every kopia release:
+  the existing fixture is what proves a kopia upgrade still reads an old
+  repository. kopia's format is read from the repositories themselves, since
+  kopia can change its default without a version bump of ours. A new sealed
+  credential file is required for every new envelope version or payload
+  shape.
+- **Proposed, owner to confirm:** the Take-Out manifest reader refuses a
+  version below 1 and a blob id that is not a flat file name (`.`, `..`, or
+  anything with a separator), both as a damaged Take-Out. No `takeout` ever
+  wrote either; `Verify` would have read such an id as a path. The state
+  key decoder accepts only the canonical form `EscapeSegment` writes:
+  exactly two upper-case hex digits per escape, no escaped safe byte, no raw
+  unsafe byte. Anything else gave one record a second key. `EscapeSegment`
+  has only ever written the canonical form, so no stored key is affected.
+- **Proposed, owner to confirm:** the nightly fuzz run opens (or comments
+  on) one issue labelled `fuzz` when it finds a failing input, like the
+  OpenCloud canary. Only a failing input the fuzzer wrote counts; a run
+  that fails for any other reason stays red without an issue.
+
 ---
 
 ## Trust & key model

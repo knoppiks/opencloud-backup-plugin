@@ -1,0 +1,54 @@
+{
+  "_comment": "Frozen Take-Out, written once by `go test ./pkg/takeout/decrypt -run TestFreezeTakeOut -freeze takeout-v1`. Never regenerate or edit it. The Recovery Key is a throwaway generated for this fixture and opens nothing else.",
+  "written": "2026-10-07",
+  "written_by": {
+    "go": "go1.26.0",
+    "kopia": "v0.23.1",
+    "manifest_version": 1,
+    "envelope_version": 1
+  },
+  "recovery_key": "ocbk1-ANRGH-7A6RC-Q5S37-KN0Z5-JEQJR-4FEFH-98B0",
+  "space_id": "storage-1$space-1",
+  "snapshots": [
+    {
+      "id": "a2a6ece5415a3c7e60a176e24152daac",
+      "files": {
+        "docs/notes.txt": {
+          "size": 12,
+          "sha256": "1d71e666d384318337d10a6a827614749b09ed98bdf1cb326ac7538cb48ca089",
+          "mod_time": "2021-03-14T15:09:26Z"
+        },
+        "empty.txt": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "mod_time": "2021-03-14T15:09:26Z"
+        },
+        "readme.txt": {
+          "size": 14,
+          "sha256": "ebfa015966891a400bf353bdf8ef30444a71b1751e2808ef6c014db34d168d85",
+          "mod_time": "2021-03-14T15:09:26Z"
+        }
+      }
+    },
+    {
+      "id": "b518856b696129a30052c3d48da62ee3",
+      "files": {
+        "docs/notes.txt": {
+          "size": 12,
+          "sha256": "1d71e666d384318337d10a6a827614749b09ed98bdf1cb326ac7538cb48ca089",
+          "mod_time": "2021-03-14T15:09:26Z"
+        },
+        "readme.txt": {
+          "size": 26,
+          "sha256": "c914bbf1ed8a950c6dfb8e4433147baca42c7229092bf266be3dea195f741738",
+          "mod_time": "2021-03-14T15:09:26Z"
+        },
+        "фото/café.txt": {
+          "size": 15,
+          "sha256": "84811d8ab6470c17a69d0b1b4b400532bed303d8c9d1aa92e1f21dca32ccf376",
+          "mod_time": "2021-03-14T15:09:26Z"
+        }
+      }
+    }
+  ]
+}

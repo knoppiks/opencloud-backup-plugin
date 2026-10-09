@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"opencloud-backup-plugin/pkg/snapshot"
@@ -127,13 +128,21 @@ func ReadManifest(dir string) (Manifest, error) {
 		}
 		return Manifest{}, fmt.Errorf("takeout: read manifest: %w", err)
 	}
+	return parseManifest(data)
+}
 
+// parseManifest decodes and checks a manifest's bytes. It is ReadManifest
+// without the file system, so the parser can be fuzzed on its own.
+func parseManifest(data []byte) (Manifest, error) {
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Manifest{}, fmt.Errorf("%w: manifest is unreadable", ErrCorrupt)
 	}
 	if m.Format != ManifestFormat {
 		return Manifest{}, ErrNoTakeOut
+	}
+	if m.Version < 1 {
+		return Manifest{}, fmt.Errorf("%w: manifest has no format version", ErrCorrupt)
 	}
 	if m.Version > ManifestVersion {
 		return Manifest{}, fmt.Errorf("%w (version %d, this tool reads up to %d)",
@@ -164,6 +173,14 @@ func checkLocalPaths(m Manifest) error {
 		}
 		if !filepath.IsLocal(filepath.FromSlash(p.value)) {
 			return fmt.Errorf("%w: manifest field %s points outside the take-out", ErrCorrupt, p.field)
+		}
+	}
+	// Verify reads each recorded blob by its id from the repository
+	// directory, so an id is a file name too. kopia's ids are flat names; one
+	// with a separator or a dot-dot is not something a takeout wrote.
+	for _, b := range m.Blobs {
+		if b.ID == "" || b.ID == "." || strings.ContainsAny(b.ID, `/\`) || !filepath.IsLocal(b.ID) {
+			return fmt.Errorf("%w: manifest lists a blob outside the repository", ErrCorrupt)
 		}
 	}
 	return nil

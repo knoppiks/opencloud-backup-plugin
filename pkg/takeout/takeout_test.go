@@ -466,6 +466,36 @@ func TestReadManifestRejectsPathsOutsideTheTakeOut(t *testing.T) {
 	}
 }
 
+// Verify reads every recorded blob by its id, so an id is a path too. The "."
+// case was found by FuzzReadManifest.
+func TestReadManifestRejectsBlobIDsOutsideTheRepository(t *testing.T) {
+	for _, id := range []string{"", ".", "..", "../kopia.repository", "/etc/passwd", `..\x`, "p0/../../x"} {
+		t.Run(id, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := WriteManifest(dir, Manifest{
+				Format: ManifestFormat, Version: ManifestVersion, SpaceID: "space-1",
+				Blobs: []snapshot.BlobRef{{ID: "kopia.repository"}, {ID: id}},
+			}); err != nil {
+				t.Fatalf("WriteManifest: %v", err)
+			}
+			if _, err := ReadManifest(dir); !errors.Is(err, ErrCorrupt) {
+				t.Fatalf("ReadManifest = %v, want ErrCorrupt", err)
+			}
+		})
+	}
+}
+
+// No takeout ever wrote a manifest without a version; one that has none was
+// not written by takeout.
+func TestReadManifestRejectsAMissingVersion(t *testing.T) {
+	for _, version := range []int{0, -1} {
+		dir := writeRawManifest(t, version, "", "")
+		if _, err := ReadManifest(dir); !errors.Is(err, ErrCorrupt) {
+			t.Fatalf("version %d: ReadManifest = %v, want ErrCorrupt", version, err)
+		}
+	}
+}
+
 func TestReadManifestAcceptsLocalPaths(t *testing.T) {
 	dir := writeRawManifest(t, ManifestVersion, "repo/sub", "keys/recovery.ocbke")
 	m, err := ReadManifest(dir)

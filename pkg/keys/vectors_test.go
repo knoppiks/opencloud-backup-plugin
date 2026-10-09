@@ -400,7 +400,7 @@ func buildVectors(t *testing.T) vectorFile {
 	return file
 }
 
-func readVectors(t *testing.T) vectorFile {
+func readVectors(t testing.TB) vectorFile {
 	t.Helper()
 	raw, err := os.ReadFile(vectorsPath)
 	if err != nil {

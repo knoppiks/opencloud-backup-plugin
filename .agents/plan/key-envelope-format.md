@@ -199,6 +199,11 @@ refuse to return anything if the recovered Data Key differs.
 Interop between that client and this package is pinned in both directions:
 `pkg/keys/testdata/vectors.json` (Go's bytes, reproduced by the browser) and
 `web/testdata/browser-vectors.json` (the browser's envelopes, opened by Go).
+The parser and the Recovery Key decoder are fuzzed from those vectors
+(`FuzzEnvelope`, `FuzzDecodeRecoveryKey`, `FuzzRecoveryKeyRoundTrip`; Phase
+10.4), and a frozen Take-Out (`pkg/takeout/testdata/`) holds an envelope and
+its Recovery Key written by the code of 2026-10, which every later `decrypt`
+must open.
 
 ---
 
@@ -216,6 +221,10 @@ Implementation: `pkg/keys/credsealer.go` + the `pkg/targets` adapter. Because
 `kind` is authenticated, a DK envelope can never be opened as a credential blob
 (or vice versa) even under the same key.
 
+Both payload shapes written so far (the flat backup pair, and the backup pair
+plus a nested `maintenance` pair) are frozen, sealed under a throwaway TW key,
+in `pkg/targets/testdata/sealed-credentials-v1.json`; a test opens them.
+
 ---
 
 ## 7. Versioning rules
@@ -226,3 +235,7 @@ Implementation: `pkg/keys/credsealer.go` + the `pkg/targets` adapter. Because
   branch rather than replacing the old one.
 - `EnvelopeVersion` is pinned by a test — changing it is a deliberate decision,
   not an accident.
+- A new `version` freezes a fixture of itself in the same change: a Take-Out
+  (`pkg/takeout/decrypt/frozen_test.go`) and a sealed credential blob
+  (`pkg/targets/frozen_test.go`). Tests fail until it exists, and frozen
+  fixtures are never deleted.
