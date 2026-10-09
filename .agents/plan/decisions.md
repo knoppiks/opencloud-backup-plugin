@@ -1357,6 +1357,48 @@ request path, which holds Space and job ids.
   credentials. Locally produced causes (connect, TLS, timeout, the step that
   failed) are logged in full.
 
+### Amendments from Phase 10.3 (configuration, #74)
+
+None reopens a locked decision. All configuration is read, defaulted and
+validated once at startup, and the environment reference is generated from
+the declarations.
+
+- **Configuration is declared per component (owner, 2026-10-09).** Each
+  component declares the variables it needs on a struct of its own, with its
+  defaults and its checks (`api.Env`, `cs3.Env`, `scheduler.Env`,
+  `notify.SMTPEnv`, `targets.BootstrapEnv`). Each binary composes them into
+  one root (`cmd/backupd/env.go`, `cmd/takeout/env.go`) and adds the checks
+  that span components. Every part of the wiring is handed its own section,
+  never the root. `internal/config` is machinery only (loader, `Secret`,
+  reference renderer) and imports no domain package. *Why:* one struct for
+  everything becomes a god object referenced everywhere, and its package has
+  to know every component's rules and defaults (it imported `pkg/keys`, and
+  a test had to hold its defaults equal to the packages' own).
+  - Defaults are the values in the struct when it is loaded, taken from the
+    component's own constants: no second copy.
+  - Public packages (`pkg/keys`, `pkg/takeout`, 10.7) declare no variables;
+    the binary declares those sections. `pkg/snapshot` neither, because
+    `decrypt` links it.
+  - The reference is one file per binary (`docs/reference/environment-*.md`),
+    written by a golden test in the binary's package (`make generate`).
+
+- **Secrets are redacted by type.** Whatever a deployment takes from a
+  Kubernetes Secret (wrapping keys, the service account's id and secret,
+  SMTP password, S3 access key ids and secrets) is a `config.Secret`, which
+  cannot be formatted or logged as its value. The startup configuration line
+  shows such a variable only as set or unset. This extends "never log key
+  material" to every credential, by construction rather than by a list.
+- **Proposed, owner to confirm:** booleans accept exactly `true` and
+  `false`; `STATE_BACKEND` accepts only `memory`; both refuse anything else
+  at startup instead of reading it as "off"/"durable". The service account
+  is required whenever `CS3_GATEWAY_ADDR` is set, for the service and every
+  operator command alike. These refuse configurations rc.2 accepted.
+- **Proposed, owner to confirm (2026-10-09 rework):** `BOOTSTRAP_ENABLE=true`
+  is refused at startup when the `BOOTSTRAP_S3_*` target is incomplete or
+  `TW_KEY` is unset. rc.2 failed on the first (after claiming the instance
+  record) and skipped seeding silently on the second. `CS3_DATA_SERVER_URL` is
+  checked at load as well, no longer only when dialling.
+
 ---
 
 ## Trust & key model

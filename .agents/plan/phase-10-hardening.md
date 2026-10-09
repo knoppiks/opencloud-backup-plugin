@@ -116,11 +116,12 @@ old code. Where it differs from the table:
 
 ## 10.3 Configuration
 
-- One `config` package (under `internal/`), one struct, parsed and validated
-  in one place, with defaults declared beside the field. All ~48 variables.
+- Configuration parsed and validated in one place at startup, with defaults
+  declared beside the field. All ~48 variables. (Planned as one struct; see
+  the outcome: declared per component instead.)
 - Strict booleans (`true`/`false` only; anything else refused at startup).
-- The struct is the source for the **environment reference** the docs site
-  publishes (Phase 13): a `go generate` step writes it, a test fails when it
+- The declarations are the source for the **environment reference** the docs
+  site publishes (Phase 13): a generate step writes it, a test fails when it
   is stale.
 - Effective-config log line at startup with secrets redacted by type, not by
   name list.
@@ -128,6 +129,65 @@ old code. Where it differs from the table:
   stops being a hand-kept list.
 - Service-account credentials checked in serve mode (today only in
   `provision`).
+
+**Outcome (10.3, #74).** All six done. Where it differs from the plan:
+
+- **Declared per component, not one struct (owner, 2026-10-09; see
+  `phase-10-3-config-per-component.md` and decisions.md).** `internal/config`
+  is machinery only: `Load` (parse, placeholders, then every section's
+  `Validate`, all errors joined), `Secret`, `Describe`/`Names`/`Effective`,
+  `Reference`, and `configtest` for the checks every binary runs. Components
+  declare their own sections: `api.Env` (Authentication, OpenCloud),
+  `cs3.Env`, `scheduler.Env`, `notify.SMTPEnv`, `targets.BootstrapEnv`.
+  `cmd/backupd/env.go` declares the binary's own (listener, state, custody
+  keys, work directory) and composes `serviceEnv`; `cmd/takeout/env.go`
+  declares the extractor's two S3 credentials. `run` loads once and hands
+  each consumer its section (`dialCS3(cfg.CS3)`, `provision(cfg.CS3,
+  cfg.State)`, `rotate(cfg.Keys, cfg.CS3, cfg.State)`); no `os.Getenv` is left
+  under `cmd/`.
+- **Defaults** are the values in the struct before loading, built from the
+  components' own constants (`scheduler.DefaultEnv()`, `api.DefaultEnv()`,
+  `cs3state.DefaultPrefix`). There is no `default` tag and no defaults-sync
+  test.
+- **Reference**: one file per binary, `docs/reference/environment-backupd.md`
+  and `environment-takeout.md`, written by `TestEnvironmentReference -update`
+  in each `cmd` package (`make generate`); the same test fails when a file is
+  stale.
+- **Every problem in one error.** Type errors and every section's checks are
+  collected and reported together, so one restart shows them all. An
+  unreplaced placeholder is reported alone, as before, because everything
+  after it is a symptom.
+- **Strictness, *proposed, owner to confirm*:** booleans are exactly `true`
+  or `false` (not `1`, `yes`, `True`); `STATE_BACKEND` refuses anything but
+  `memory` (case-insensitive, as before) instead of reading a typo as
+  "durable". Both used to be silently accepted. The shipped manifests only
+  use `"true"`/`"false"`.
+- **Redaction by type, *proposed, owner to confirm*:** `config.Secret`
+  holds its value behind an unexported pointer and prints `[redacted]` (or
+  nothing when unset) through `String`, `GoString`, `LogValue` and
+  `MarshalText`, so even `%d` or reflection over the struct shows no value.
+  The rule for what is a Secret: whatever the manifest takes from a
+  Kubernetes Secret, which includes `OC_SERVICE_ACCOUNT_ID` and the S3
+  access key ids. `configtest` fails if a credential-named variable is
+  declared as a plain string, or if a set secret reaches the configuration
+  line, a formatted root, JSON, or a load error.
+- **Effective-config line:** `msg=configuration`, one attribute per variable
+  under `config`, keyed by the lower-cased variable name, unset ones
+  included so defaults are visible. Logged by `serve` before anything can
+  fail; the commands do not log it.
+- **Service account, *proposed, owner to confirm*:** required whenever
+  `CS3_GATEWAY_ADDR` is set, in every mode (service, rotation, provision),
+  since every CS3 call is made as it.
+- **Checked at load:** the base-path rules, the TLS pair, the OIDC
+  prerequisites, the timezone, the wrapping keys' shape and SRW ≠ TW (the
+  `_OLD` keys too), `CS3_DATA_SERVER_URL`, and, *proposed*, an enabled
+  bootstrap's completeness and its need for `TW_KEY`. **Left at startup:**
+  "`STATE_SPACE_ID` required" (the provisioning command needs it *unset*)
+  and the work directory's filesystem.
+- **Placeholder check** reads the declared variables, so a placeholder in a
+  name the service does not read (even one with a familiar prefix) is no
+  longer refused. In exchange a new test fails if a shipped manifest names
+  a variable the service does not read.
 
 ## 10.4 Formats that must parse forever
 
@@ -210,7 +270,9 @@ asserted by a dependency-graph test like the existing one for `takeout`.
       (F1, F2, F4–F7 done in 10.1 (#70); F3 in 10.2 (#72).)
 - [x] Every 5xx leaves exactly one server-side log line with a request id;
       `noleak` tests cover the new lines. (10.2, #72)
-- [ ] One config struct; environment reference generated from it.
+- [x] Configuration read and validated once; environment reference
+      generated from it. (10.3, #74: declared per component, composed per
+      binary; machinery in `internal/config`.)
 - [ ] Fuzz targets run in CI; frozen Take-Out and TW-blob fixtures opened by
       tests; gitleaks clean.
 - [ ] `decrypt` dependency test passes (no S3/AWS/Azure).

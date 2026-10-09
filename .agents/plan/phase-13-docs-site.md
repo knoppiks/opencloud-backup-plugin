@@ -87,7 +87,7 @@ page is stale:
 
 | Page | Source |
 |---|---|
-| Configuration reference | Phase 10's config struct (`go generate`) |
+| Configuration reference | Phase 10's config declarations (`docs/reference/environment-*.md`, `make generate`) |
 | CLI reference | the binaries' flag sets (`-h` output captured) |
 | HTTP API | the OpenAPI spec (13.4) |
 | Compatibility matrix | `pkg/ocversion/versions.yaml` + release notes |

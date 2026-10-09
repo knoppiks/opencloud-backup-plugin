@@ -14,6 +14,7 @@ package targets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -44,6 +45,24 @@ type BootstrapConfig struct {
 // DefaultBootstrapID is used when BootstrapConfig.ID is empty.
 const DefaultBootstrapID = "default"
 
+// Validate reports what an enabled seeding is missing. It says nothing about
+// the credentials beyond whether they are there.
+func (c BootstrapConfig) Validate() error {
+	var errs []error
+	if c.Bucket == "" || c.Endpoint == "" {
+		errs = append(errs, errors.New("an endpoint and a bucket are required"))
+	}
+	if !c.Creds.Complete() {
+		errs = append(errs, errors.New("S3 credentials are required"))
+	}
+	// Refused rather than ignored: half a maintenance credential would seed a
+	// target that silently uses the backup key for both roles.
+	if !c.MaintenanceCreds.Empty() && !c.MaintenanceCreds.Complete() {
+		errs = append(errs, errors.New("both halves of the maintenance credential are required, or neither"))
+	}
+	return errors.Join(errs...)
+}
+
 // Bootstrap seeds a single default target and grants it to all users, but only
 // when seeding is enabled and the store holds no targets yet. It reports whether
 // a target was created.
@@ -54,17 +73,8 @@ func Bootstrap(ctx context.Context, store Store, sealer CredSealer, cfg Bootstra
 	if store == nil || sealer == nil {
 		return false, fmt.Errorf("targets: bootstrap requires a store and a credential sealer")
 	}
-	if cfg.Bucket == "" || cfg.Endpoint == "" {
-		return false, fmt.Errorf("targets: bootstrap requires an endpoint and a bucket")
-	}
-	if !cfg.Creds.Complete() {
-		return false, fmt.Errorf("targets: bootstrap requires S3 credentials")
-	}
-	// Refused rather than ignored: half a maintenance credential would seed a
-	// target that silently uses the backup key for both roles.
-	if !cfg.MaintenanceCreds.Empty() && !cfg.MaintenanceCreds.Complete() {
-		return false, fmt.Errorf(
-			"targets: bootstrap needs both halves of the maintenance credential, or neither")
+	if err := cfg.Validate(); err != nil {
+		return false, fmt.Errorf("targets: bootstrap: %w", err)
 	}
 
 	existing, err := store.ListTargets(ctx)

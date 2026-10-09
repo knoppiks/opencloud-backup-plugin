@@ -23,6 +23,8 @@ import (
 	"os"
 	"time"
 
+	"opencloud-backup-plugin/internal/config"
+	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/jobs"
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/rotate"
@@ -40,14 +42,16 @@ const rotateTimeout = 10 * time.Minute
 //
 // stdout receives the command's output and nothing else; logs go to the
 // logger, which writes to stderr.
-func runCommand(ctx context.Context, name string, args []string, logger *slog.Logger, stdout io.Writer) error {
+func runCommand(
+	ctx context.Context, cfg serviceEnv, name string, args []string, logger *slog.Logger, stdout io.Writer,
+) error {
 	switch name {
 	case "rotate-srw":
-		return runRotate(ctx, srwRotation, args, logger)
+		return runRotate(ctx, srwRotation, cfg.Keys, cfg.CS3, cfg.State, args, logger)
 	case "rotate-tw":
-		return runRotate(ctx, twRotation, args, logger)
+		return runRotate(ctx, twRotation, cfg.Keys, cfg.CS3, cfg.State, args, logger)
 	case "provision-state-space":
-		return runProvisionStateSpace(ctx, args, logger, stdout)
+		return runProvisionStateSpace(ctx, cfg.CS3, cfg.State, args, logger, stdout)
 	default:
 		return fmt.Errorf(
 			"unknown command %q; known commands are provision-state-space, rotate-srw and rotate-tw",
@@ -63,6 +67,8 @@ type rotation struct {
 	// oldEnv / newEnv are the environment variables holding the retiring and
 	// the incoming key.
 	oldEnv, newEnv string
+	// keys picks the retiring and the incoming key from the configuration.
+	keys func(custodyEnv) (oldKey, newKey config.Secret)
 	// what is the human name of the records being re-wrapped.
 	what string
 	// run performs the rotation against the durable state store.
@@ -73,6 +79,7 @@ var srwRotation = rotation{
 	name:   "rotate-srw",
 	oldEnv: "SRW_KEY_OLD",
 	newEnv: "SRW_KEY",
+	keys:   func(k custodyEnv) (config.Secret, config.Secret) { return k.SRWOld, k.SRW },
 	what:   "server key envelopes",
 	run: func(ctx context.Context, st state.Store, oldKey, newKey []byte) (rotate.Result, error) {
 		return rotate.SRW(ctx, keys.NewStateStore(st, nil), oldKey, newKey)
@@ -83,14 +90,19 @@ var twRotation = rotation{
 	name:   "rotate-tw",
 	oldEnv: "TW_KEY_OLD",
 	newEnv: "TW_KEY",
+	keys:   func(k custodyEnv) (config.Secret, config.Secret) { return k.TWOld, k.TW },
 	what:   "target credentials",
 	run: func(ctx context.Context, st state.Store, oldKey, newKey []byte) (rotate.Result, error) {
 		return rotate.TW(ctx, targets.NewStateStore(st), oldKey, newKey)
 	},
 }
 
-// runRotate re-wraps every affected record from the old key to the new one.
-func runRotate(ctx context.Context, r rotation, args []string, logger *slog.Logger) error {
+// runRotate re-wraps every affected record from the old key to the new one, in
+// the state Space reached through the gateway.
+func runRotate(
+	ctx context.Context, r rotation, custody custodyEnv, cs3Env cs3.Env, st stateEnv,
+	args []string, logger *slog.Logger,
+) error {
 	stopped, err := parseRotateFlags(r, args)
 	if err != nil {
 		return err
@@ -102,18 +114,19 @@ func runRotate(ctx context.Context, r rotation, args []string, logger *slog.Logg
 				"under a key that run does not hold (%s)", r.name)
 	}
 
-	oldKey, err := requireWrapKey(r.oldEnv)
+	oldSecret, newSecret := r.keys(custody)
+	oldKey, err := requireWrapKey(r.oldEnv, oldSecret)
 	if err != nil {
 		return err
 	}
 	defer keys.Zeroize(oldKey)
-	newKey, err := requireWrapKey(r.newEnv)
+	newKey, err := requireWrapKey(r.newEnv, newSecret)
 	if err != nil {
 		return err
 	}
 	defer keys.Zeroize(newKey)
 
-	client, closeCS3, err := dialCS3()
+	client, closeCS3, err := dialCS3(cs3Env)
 	if err != nil {
 		return err
 	}
@@ -121,10 +134,10 @@ func runRotate(ctx context.Context, r rotation, args []string, logger *slog.Logg
 	if client == nil {
 		return errors.New("CS3_GATEWAY_ADDR is required: rotation reads the service's state Space")
 	}
-	if os.Getenv("STATE_SPACE_ID") == "" {
+	if st.SpaceID == "" {
 		return errors.New("STATE_SPACE_ID is required: there is nothing to rotate in in-memory state")
 	}
-	store, err := buildStateStore(client, logger)
+	store, err := buildStateStore(st, client, cs3Env.ServiceAccountID.Reveal(), logger)
 	if err != nil {
 		return err
 	}
@@ -177,8 +190,8 @@ func parseRotateFlags(r rotation, args []string) (bool, error) {
 }
 
 // requireWrapKey loads a wrapping key that must be present.
-func requireWrapKey(envVar string) ([]byte, error) {
-	key, err := loadWrapKey(envVar)
+func requireWrapKey(envVar string, s config.Secret) ([]byte, error) {
+	key, err := decodeWrapKey(envVar, s)
 	if err != nil {
 		return nil, err
 	}

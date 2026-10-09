@@ -103,6 +103,10 @@ web-vectors: ## Regenerate the browser-produced interop vectors, then verify Go 
 	cd $(WEB_DIR) && $(PNPM) vectors
 	$(GO) test ./pkg/keys -run TestBrowserVectors -count=1
 
+.PHONY: generate
+generate: ## Regenerate checked-in generated files (environment references).
+	$(GO) test ./cmd/backupd ./cmd/takeout -run '^TestEnvironmentReference$$' -count=1 -update
+
 .PHONY: lint
 lint: ## Run golangci-lint.
 	golangci-lint run ./...

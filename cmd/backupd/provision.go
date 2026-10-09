@@ -43,24 +43,23 @@ const provisionTimeout = 2 * time.Minute
 const defaultStateSpaceName = "Backup service state"
 
 // runProvisionStateSpace creates a state Space and prints its id.
-func runProvisionStateSpace(ctx context.Context, args []string, logger *slog.Logger, stdout io.Writer) error {
+func runProvisionStateSpace(
+	ctx context.Context, cs3Env cs3.Env, st stateEnv, args []string, logger *slog.Logger, stdout io.Writer,
+) error {
 	name, err := parseProvisionFlags(args)
 	if err != nil {
 		return err
 	}
 
-	addr := os.Getenv("CS3_GATEWAY_ADDR")
+	// The Space must be created by the service account, because whoever
+	// creates it keeps the one grant OpenCloud will not let anyone remove.
+	// cs3.Env.Validate refuses a gateway without the service account.
+	addr := cs3Env.GatewayAddr
 	if addr == "" {
 		return errors.New("CS3_GATEWAY_ADDR is required: the state Space is created over CS3")
 	}
-	saID := os.Getenv("OC_SERVICE_ACCOUNT_ID")
-	saSecret := os.Getenv("OC_SERVICE_ACCOUNT_SECRET")
-	if saID == "" || saSecret == "" {
-		return errors.New(
-			"OC_SERVICE_ACCOUNT_ID and OC_SERVICE_ACCOUNT_SECRET are required: the Space must be " +
-				"created by the service account, because whoever creates it keeps the one grant " +
-				"OpenCloud will not let anyone remove")
-	}
+	saID := cs3Env.ServiceAccountID.Reveal()
+	saSecret := cs3Env.ServiceAccountSecret.Reveal()
 
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -70,7 +69,7 @@ func runProvisionStateSpace(ctx context.Context, args []string, logger *slog.Log
 
 	gw := gateway.NewGatewayAPIClient(conn)
 	auth := cs3.NewCachedAuth(cs3.ServiceAccountAuth{Gateway: gw, ClientID: saID, Secret: saSecret})
-	opts, err := cs3ClientOptions()
+	opts, err := cs3ClientOptions(cs3Env)
 	if err != nil {
 		return err
 	}
@@ -82,7 +81,7 @@ func runProvisionStateSpace(ctx context.Context, args []string, logger *slog.Log
 	// Refusing to make a second one is the point of the check. Every wrapped
 	// Data Key the service holds lives in the Space it is already using, and a
 	// duplicate is how an operator ends up with two and no idea which.
-	if existing := os.Getenv("STATE_SPACE_ID"); existing != "" {
+	if st.SpaceID != "" {
 		return fmt.Errorf(
 			"STATE_SPACE_ID is already set: unset it to provision a new state Space, or leave it " +
 				"alone. Creating a second one would leave the first holding every wrapped Data Key " +
@@ -96,7 +95,7 @@ func runProvisionStateSpace(ctx context.Context, args []string, logger *slog.Log
 		check: func(ctx context.Context, id string) error {
 			store, err := cs3state.New(client, cs3state.Options{
 				SpaceID:          id,
-				Prefix:           envOr("STATE_PREFIX", cs3state.DefaultPrefix),
+				Prefix:           st.Prefix,
 				ServiceAccountID: saID,
 			})
 			if err != nil {
