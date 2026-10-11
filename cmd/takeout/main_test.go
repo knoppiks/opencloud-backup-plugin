@@ -7,12 +7,12 @@ package main
 import (
 	"errors"
 	"flag"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 
+	"opencloud-backup-plugin/internal/cli"
 	"opencloud-backup-plugin/pkg/takeout"
 )
 
@@ -26,7 +26,7 @@ var keyUsagePhrases = []string{"recovery key", "data key", "password", "passphra
 
 func TestNoFlagAcceptsKeyMaterial(t *testing.T) {
 	var cfg config
-	fs := flags(&cfg, io.Discard)
+	fs := flags(&cfg)
 
 	fs.VisitAll(func(f *flag.Flag) {
 		name := strings.ToLower(f.Name)
@@ -118,26 +118,29 @@ func packageDeps(t *testing.T, pkg string) map[string]bool {
 	return deps
 }
 
-func TestValidateRequiresTargetAndSpace(t *testing.T) {
-	cases := map[string]config{
-		"no bucket": {spaceID: "s", outDir: "o"},
-		"no space":  {bucket: "b", outDir: "o"},
-		"no out":    {bucket: "b", spaceID: "s"},
+func TestRequireFlagsNamesWhatIsMissing(t *testing.T) {
+	cases := map[string]struct {
+		cfg  config
+		want string
+	}{
+		"no bucket": {config{spaceID: "s", outDir: "o"}, "-bucket"},
+		"no space":  {config{bucket: "b", outDir: "o"}, "-space"},
+		"no out":    {config{bucket: "b", spaceID: "s"}, "-out"},
 	}
-	for name, cfg := range cases {
-		if err := validate(cfg); err == nil {
-			t.Errorf("%s: expected an error", name)
+	for name, c := range cases {
+		err := requireFlags(c.cfg)
+		if cli.ExitCode(err) != cli.ExitUsage || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: requireFlags = %v, want a usage error naming %s", name, err, c.want)
 		}
 	}
-	if err := validate(config{bucket: "b", spaceID: "s", outDir: "o", accessKey: "id", secretKey: "s"}); err != nil {
-		t.Errorf("valid config rejected: %v", err)
+	if err := requireFlags(config{bucket: "b", spaceID: "s", outDir: "o"}); err != nil {
+		t.Errorf("complete command line rejected: %v", err)
 	}
 }
 
 // Missing credentials are named before anything reaches the network; the S3
 // SDK would otherwise ask the cloud metadata service (review-2026-10.md F5).
-func TestValidateNamesTheMissingCredentialVariable(t *testing.T) {
-	base := config{bucket: "b", spaceID: "s", outDir: "o"}
+func TestRequireCredentialsNamesTheMissingVariable(t *testing.T) {
 	cases := map[string]struct {
 		access, secret, want string
 	}{
@@ -146,28 +149,31 @@ func TestValidateNamesTheMissingCredentialVariable(t *testing.T) {
 		"neither":          {want: "S3_ACCESS_KEY_ID"},
 	}
 	for name, tc := range cases {
-		cfg := base
-		cfg.accessKey, cfg.secretKey = tc.access, tc.secret
-		err := validate(cfg)
+		err := requireCredentials(config{accessKey: tc.access, secretKey: tc.secret})
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: validate = %v, want it to name %s", name, err, tc.want)
+			t.Errorf("%s: requireCredentials = %v, want it to name %s", name, err, tc.want)
 		}
+		// The environment, not the command line: a failure, not wrong usage.
+		if cli.ExitCode(err) != cli.ExitFailure {
+			t.Errorf("%s: exit status %d, want %d", name, cli.ExitCode(err), cli.ExitFailure)
+		}
+	}
+	if err := requireCredentials(config{accessKey: "id", secretKey: "s"}); err != nil {
+		t.Errorf("credentials rejected: %v", err)
 	}
 }
 
 func TestRunWithoutCredentialsNamesTheVariable(t *testing.T) {
-	t.Setenv("S3_ACCESS_KEY_ID", "")
-	t.Setenv("S3_SECRET_ACCESS_KEY", "")
-	err := run([]string{"-bucket", "b", "-space", "s", "-out", t.TempDir()}, os.Stderr)
-	if err == nil || !strings.Contains(err.Error(), "S3_ACCESS_KEY_ID") {
-		t.Fatalf("run = %v, want it to name S3_ACCESS_KEY_ID", err)
+	r := runTakeout(t, nil, unreachable, "-bucket", "b", "-space", "s", "-out", t.TempDir())
+	if r.code != cli.ExitFailure || !strings.Contains(r.stderr, "S3_ACCESS_KEY_ID") {
+		t.Fatalf("run = %d, stderr %q, want it to name S3_ACCESS_KEY_ID", r.code, r.stderr)
 	}
 }
 
 func TestRunReportsMissingArguments(t *testing.T) {
-	err := run([]string{"-bucket", "backups"}, os.Stderr)
-	if err == nil || !strings.Contains(err.Error(), "-space") {
-		t.Fatalf("err = %v, want a complaint about -space", err)
+	r := runTakeout(t, credentials(), unreachable, "-bucket", "backups")
+	if r.code != cli.ExitUsage || !strings.Contains(r.stderr, "-space is required") {
+		t.Fatalf("run = %d, stderr %q, want a usage error about -space", r.code, r.stderr)
 	}
 }
 
@@ -175,15 +181,15 @@ func TestRunReportsMissingArguments(t *testing.T) {
 func TestCredentialsComeFromTheEnvironment(t *testing.T) {
 	// The environment is read, and through the shared configuration: an
 	// unedited placeholder there is refused by name before anything else.
-	t.Setenv("S3_ACCESS_KEY_ID", "REPLACE_ME")
-	t.Setenv("S3_SECRET_ACCESS_KEY", "")
-	err := run([]string{"-bucket", "b", "-space", "s", "-out", t.TempDir()}, os.Stderr)
-	if err == nil || !strings.Contains(err.Error(), "S3_ACCESS_KEY_ID still holds the manifest's placeholder") {
-		t.Errorf("run = %v, want the placeholder in S3_ACCESS_KEY_ID refused", err)
+	r := runTakeout(t, []string{"S3_ACCESS_KEY_ID=REPLACE_ME"}, unreachable,
+		"-bucket", "b", "-space", "s", "-out", t.TempDir())
+	if r.code != cli.ExitFailure ||
+		!strings.Contains(r.stderr, "S3_ACCESS_KEY_ID still holds the manifest's placeholder") {
+		t.Errorf("run = %d, stderr %q, want the placeholder in S3_ACCESS_KEY_ID refused", r.code, r.stderr)
 	}
 
 	var cfg config
-	fs := flags(&cfg, io.Discard)
+	fs := flags(&cfg)
 	for _, name := range []string{"access-key", "secret-key", "secret", "access-key-id"} {
 		if fs.Lookup(name) != nil {
 			t.Errorf("credential flag -%s must not exist", name)

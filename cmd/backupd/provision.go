@@ -23,13 +23,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"time"
 
 	gateway "github.com/cs3org/go-cs3apis/cs3/gateway/v1beta1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"opencloud-backup-plugin/internal/cli"
 	"opencloud-backup-plugin/pkg/cs3"
 	"opencloud-backup-plugin/pkg/cs3state"
 )
@@ -44,13 +44,8 @@ const defaultStateSpaceName = "Backup service state"
 
 // runProvisionStateSpace creates a state Space and prints its id.
 func runProvisionStateSpace(
-	ctx context.Context, cs3Env cs3.Env, st stateEnv, args []string, logger *slog.Logger, stdout io.Writer,
+	ctx context.Context, cs3Env cs3.Env, st stateEnv, name string, logger *slog.Logger, stdout io.Writer,
 ) error {
-	name, err := parseProvisionFlags(args)
-	if err != nil {
-		return err
-	}
-
 	// The Space must be created by the service account, because whoever
 	// creates it keeps the one grant OpenCloud will not let anyone remove.
 	// cs3.Env.Validate refuses a gateway without the service account.
@@ -149,13 +144,12 @@ func provisionStateSpace(
 	return err
 }
 
-// parseProvisionFlags reads the command's only flag.
-func parseProvisionFlags(args []string) (string, error) {
+// parseProvision reads the command's only flag.
+func parseProvision(args []string, stdout, stderr io.Writer) (action, error) {
 	fs := flag.NewFlagSet("provision-state-space", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
 	name := fs.String("name", defaultStateSpaceName, "name of the Space to create")
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr,
+		_, _ = fmt.Fprint(fs.Output(),
 			"usage: backupd provision-state-space [-name NAME]\n\n"+
 				"Creates the project Space the service keeps its state in, as the service\n"+
 				"account, and prints its id on stdout for STATE_SPACE_ID.\n\n"+
@@ -167,14 +161,13 @@ func parseProvisionFlags(args []string) (string, error) {
 				"run while STATE_SPACE_ID is already set.\n\n")
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
-		return "", err
-	}
-	if fs.NArg() > 0 {
-		return "", fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	if err := cli.Parse(fs, args, stdout, stderr); err != nil {
+		return nil, err
 	}
 	if *name == "" {
-		return "", errors.New("-name must not be empty")
+		return nil, cli.Usagef("-name must not be empty")
 	}
-	return *name, nil
+	return func(ctx context.Context, cfg serviceEnv, logger *slog.Logger, stdout io.Writer) error {
+		return runProvisionStateSpace(ctx, cfg.CS3, cfg.State, *name, logger, stdout)
+	}, nil
 }
