@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
 )
 
 type sample struct {

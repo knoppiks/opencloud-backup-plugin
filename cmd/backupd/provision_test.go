@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
 )
 
 func TestParseProvision(t *testing.T) {

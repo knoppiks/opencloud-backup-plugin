@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"opencloud-backup-plugin/pkg/snapshot"
 )
 
 // copyFrozenTakeOut copies the committed v1 Take-Out (10.4) to a temporary
@@ -128,7 +126,7 @@ func TestReadManifestRejectsBlobIDsOutsideTheRepository(t *testing.T) {
 			dir := t.TempDir()
 			if err := WriteManifest(dir, Manifest{
 				Format: ManifestFormat, Version: ManifestVersion, SpaceID: "space-1",
-				Blobs: []snapshot.BlobRef{{ID: "kopia.repository"}, {ID: id}},
+				Blobs: []BlobRef{{ID: "kopia.repository"}, {ID: id}},
 			}); err != nil {
 				t.Fatalf("WriteManifest: %v", err)
 			}

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"opencloud-backup-plugin/pkg/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
 )
 
 // Verify re-reads a Take-Out and checks it against its own manifest. It needs no
@@ -16,7 +16,7 @@ func Verify(ctx context.Context, dir string) error {
 		return err
 	}
 
-	if err := snapshot.VerifyRepoDir(ctx, m.RepoPath(dir), m.Blobs); err != nil {
+	if err := snapshot.VerifyRepoDir(ctx, m.RepoPath(dir), copiedBlobs(m.Blobs)); err != nil {
 		return fmt.Errorf("%w: %s", ErrCorrupt, err.Error())
 	}
 	if m.EnvelopeRef != "" {
@@ -25,4 +25,13 @@ func Verify(ctx context.Context, dir string) error {
 		}
 	}
 	return nil
+}
+
+// copiedBlobs converts the manifest's blob records into the copier's.
+func copiedBlobs(refs []BlobRef) []snapshot.BlobRef {
+	out := make([]snapshot.BlobRef, len(refs))
+	for i, r := range refs {
+		out[i] = snapshot.BlobRef{ID: r.ID, Size: r.Size, SHA256: r.SHA256}
+	}
+	return out
 }

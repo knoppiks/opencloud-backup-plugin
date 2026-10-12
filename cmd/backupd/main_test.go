@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"opencloud-backup-plugin/internal/buildinfo"
-	"opencloud-backup-plugin/pkg/cs3"
-	"opencloud-backup-plugin/pkg/keys"
-	"opencloud-backup-plugin/pkg/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
 )
 
 func encodedKey(t *testing.T) string {

@@ -36,8 +36,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"opencloud-backup-plugin/pkg/snapshot"
 )
 
 const (
@@ -107,7 +105,17 @@ type Manifest struct {
 	TotalBytes int64        `json:"total_bytes"`
 	// Blobs records every copied repository blob (id, size, ciphertext digest)
 	// so the copy can be verified offline.
-	Blobs []snapshot.BlobRef `json:"blobs"`
+	Blobs []BlobRef `json:"blobs"`
+}
+
+// BlobRef records one copied repository blob. The digest is over ciphertext and
+// reveals nothing about the backed-up data; it exists so a Take-Out can be
+// verified offline before anyone depends on it. It is part of the manifest
+// format, so it is defined here and not by the code that copies the blobs.
+type BlobRef struct {
+	ID     string `json:"id"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
 }
 
 // WriteManifest serializes the manifest into a Take-Out directory.

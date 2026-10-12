@@ -17,9 +17,6 @@ linters:
       - name: exported
         disabled: true
   exclusions:
-    paths:
-    # Throwaway Phase-0 spike drivers (phase-0-findings.md). Not production code.
-    - spikes/
     rules:
     # Phase-0 Garage fixture uses the classic s3/manager uploader; migrating to
     # feature/s3/transfermanager is a separate, tracked decision.
@@ -35,4 +32,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-      - opencloud-backup-plugin
+      - github.com/knoppiks/opencloud-backup-plugin

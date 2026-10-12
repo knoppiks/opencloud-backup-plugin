@@ -3,9 +3,9 @@
 // Every artifact of a release carries the same version
 // (compatibility-policy.md §1). The release stamps it at link time:
 //
-//	go build -ldflags "-X opencloud-backup-plugin/internal/buildinfo.Version=v1.2.3 \
-//	  -X opencloud-backup-plugin/internal/buildinfo.Commit=<sha> \
-//	  -X opencloud-backup-plugin/internal/buildinfo.Date=<RFC 3339>"
+//	go build -ldflags "-X github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo.Version=v1.2.3 \
+//	  -X github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo.Commit=<sha> \
+//	  -X github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo.Date=<RFC 3339>"
 //
 // Phase 11 wires that into the Makefile, the Dockerfile and the release. Until
 // then, and for any build nobody stamped, the version is "dev" and the commit

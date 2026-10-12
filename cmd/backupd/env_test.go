@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"opencloud-backup-plugin/internal/config"
-	"opencloud-backup-plugin/internal/config/configtest"
-	"opencloud-backup-plugin/pkg/cs3state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config/configtest"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3state"
 )
 
 func loadErr(t *testing.T, environ ...string) error {

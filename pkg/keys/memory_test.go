@@ -200,3 +200,13 @@ func TestMemoryStoreConcurrent(t *testing.T) {
 		<-done
 	}
 }
+
+// The memory store honours cancellation, like the durable one
+// (internal/keystore), so both behave the same to a caller.
+func TestMemoryStore_HonoursTheCallersContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewMemoryStore().Status(ctx, "s1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Status on a cancelled context = %v, want context.Canceled", err)
+	}
+}

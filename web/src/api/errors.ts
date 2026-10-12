@@ -11,7 +11,7 @@
 // worth logging when a code is not one we know.
 
 /**
- * ApiErrorCode is the complete set of codes `pkg/api` emits.
+ * ApiErrorCode is the complete set of codes `internal/api` emits.
  *
  * Kept exhaustive on purpose: an unrecognised code means the server grew a
  * failure mode the UI has no wording for, which `isKnownApiErrorCode` makes

@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	envconfig "opencloud-backup-plugin/internal/config"
-	"opencloud-backup-plugin/internal/config/configtest"
+	envconfig "github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config/configtest"
 )
 
 func TestTakeoutEnv_Declarations(t *testing.T) {

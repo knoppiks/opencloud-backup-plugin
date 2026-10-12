@@ -22,13 +22,13 @@ import (
 	"strings"
 	"syscall"
 
-	"opencloud-backup-plugin/internal/buildinfo"
-	"opencloud-backup-plugin/internal/cli"
-	"opencloud-backup-plugin/pkg/objstore"
-	"opencloud-backup-plugin/pkg/snapshot"
-	"opencloud-backup-plugin/pkg/snapshot/s3repo"
-	"opencloud-backup-plugin/pkg/takeout"
-	"opencloud-backup-plugin/pkg/takeout/remote"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/objstore"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot/s3repo"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/takeout/remote"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/takeout"
 )
 
 // config is the CLI's full input surface. Every field addresses the *target*;

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
 )
 
 var update = flag.Bool("update", false, "rewrite the generated environment reference")

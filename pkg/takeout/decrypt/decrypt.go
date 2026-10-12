@@ -26,9 +26,9 @@ import (
 	"os"
 	"time"
 
-	"opencloud-backup-plugin/pkg/keys"
-	"opencloud-backup-plugin/pkg/snapshot"
-	"opencloud-backup-plugin/pkg/takeout"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/takeout"
 )
 
 // Errors this package adds to the Take-Out set. Like those, they stay coarse on

@@ -94,7 +94,7 @@ The range covers OpenCloud's newest two majors, whether a release came out as
 Rolling or Production. CI runs the full OpenCloud suite and the browser tests
 against its oldest release, the newest minor of each major, and the newest
 patch of OpenCloud's Production line, each pinned by digest in
-[`pkg/ocversion/versions.yaml`](pkg/ocversion/versions.yaml);
+[`internal/ocversion/versions.yaml`](internal/ocversion/versions.yaml);
 a test keeps this sentence equal to that file. Outside that range the service
 logs a warning and the admin view shows a notice, and backups keep running.
 The service talks to OpenCloud over CS3, which OpenCloud does not treat as a
@@ -482,7 +482,8 @@ USB stick is fine, it is useless without their Recovery Key.
 
 **Step 2 — the user decrypts it, on their own machine.** `decrypt` uses **no
 network at all**. Builds for Linux, macOS and Windows are produced by
-`make decrypt-release`.
+`make decrypt-release`; with a Go toolchain it also installs directly:
+`go install github.com/knoppiks/opencloud-backup-plugin/cmd/decrypt@latest`.
 
 ```sh
 decrypt -in ./takeout-alice -list             # which backups are in here?

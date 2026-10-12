@@ -372,7 +372,7 @@ asserted by a dependency-graph test like the existing one for `takeout`.
   a public function taking a type no importer can name. Move the
   state-store adapter out of `pkg/keys` (e.g. `internal/keystore`) as part
   of 10.7; `ownPackages` in `cmd/decrypt/deps_test.go` then loses
-  `pkg/state`.
+  `pkg/state`. *(Done in 10.7, see its outcome.)*
 - **Effect:** third-party and module packages in `go list -deps` 451 → 326;
   stripped linux/amd64 binary 21.8 MB → 19.1 MB.
 
@@ -397,6 +397,57 @@ asserted by a dependency-graph test like the existing one for `takeout`.
    nothing. (`git` keeps them.)
 7. Verify: `go install github.com/knoppiks/opencloud-backup-plugin/cmd/decrypt@<branch>`
    works from a clean `GOPATH`.
+
+**Outcome (10.7, #82).** All seven done. Where it differs from the plan:
+
+- **Moved:** every former `pkg/` package except the three format packages,
+  with its tests and `testdata/`: `api`, `backup`, `cs3`, `cs3state`,
+  `instance`, `jobs`, `notify`, `objstore`, `ocversion` (with
+  `versions.yaml`), `restore`, `rotate`, `scheduler`, `snapshot` (+
+  `s3repo`), `spacecfg`, `state` (+ `statetest`), `targets`, and
+  `pkg/takeout/remote` → `internal/takeout/remote`. Path references in the
+  Makefile, the workflows, the fixture scripts, `.gitleaks.toml`,
+  `.gitattributes`, README, web comments and the planning docs that describe
+  the current layout follow. Older phase docs and the reviews keep the paths
+  they were written against.
+- **The frozen credentials file is untouched**, including its `_comment`,
+  which still says `go test ./pkg/targets …`: it is a frozen fixture, never
+  edited (10.4). The generator's flag is unchanged, only the package path is.
+  `.gitleaks.toml` allowlists both its new and its old path, since the
+  history scan still meets it under `pkg/targets/`.
+- **The public packages name no internal type.** Two exported APIs did
+  after the move, which an importer outside the module could not use:
+  - `keys.NewStateStore(state.Store, …)`: the durable key store adapts the
+    service's storage and is not part of the key format, so it moved to
+    `internal/keystore` (`keystore.New`, `*keystore.Store`). What it shared
+    with the in-memory store became two small methods on existing public
+    types, `WrappedDK.Clone()` and `SpaceKeys.Status()`. The Store contract
+    test moved with it and still runs both implementations.
+  - `takeout.Manifest.Blobs []snapshot.BlobRef`: the blob record is part of
+    the manifest's JSON, so it is now `takeout.BlobRef`. `internal/snapshot`
+    keeps its own untagged `BlobRef` (it cannot import `pkg/takeout`, which
+    imports it for `VerifyRepoDir`); `Verify` and `remote.Extract` convert.
+    The manifest's bytes are unchanged; the frozen Take-Out still verifies.
+
+  `internal/publicapi` holds a test that walks every exported identifier
+  under `pkg/` (signatures, exported fields and methods, element and type
+  arguments) through the compiler's export data and fails on any type
+  declared under `internal/`; a control asserts it does find the ones
+  `internal/takeout/remote` uses.
+- **`cmd/decrypt`'s `ownPackages`** is now the full module paths, sorted,
+  and has seven packages: `internal/state` is gone with the key store.
+- **Toolchain:** `toolchain go1.26.9` (the current 1.26 patch; first written as 1.26.8,
+  bumped in review); CI, the
+  nightly fuzz and canary workflows and the Dockerfile's build stage (by
+  digest) name the same. `go 1.26` stays the language version.
+  `internal/buildinfo/toolchain_test.go` fails when the five places disagree,
+  until Renovate (Phase 11) keeps them aligned.
+- **`spikes/` deleted** with its `.golangci.yml`, `.dockerignore` and
+  `.gitignore` entries.
+- README's decrypt section names `go install …/cmd/decrypt@latest` next to
+  `make decrypt-release`.
+- **Verified** after pushing: `go install …/cmd/decrypt@<branch>` with an
+  empty `GOPATH` and module cache built a working binary (`-version`).
 
 ## 10.8 Lint and test plumbing
 
@@ -435,7 +486,8 @@ asserted by a dependency-graph test like the existing one for `takeout`.
 - [x] `decrypt` dependency test passes (no S3/AWS/Azure).
       (10.6, #80: no S3 client or storage driver; the Azure SDK and
       Prometheus modules stay because kopia's core imports them.)
-- [ ] Module renamed; only `pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`
+- [x] Module renamed; only `pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`
       public; `go install …/cmd/decrypt` works; AGENTS.md and phase-1 updated.
+      (10.7, #82)
 - [ ] Extended lint set clean; depguard boundaries in place; integration
       tests under `-race`.

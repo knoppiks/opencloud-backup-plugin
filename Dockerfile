@@ -20,7 +20,7 @@
 # Keep the Go version in step with go.mod and CI's GO_VERSION.
 # The build runs on the builder's own platform and cross-compiles, so a
 # multi-arch release does not run the Go toolchain under emulation.
-FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS build
 ARG TARGETOS
 ARG TARGETARCH
 

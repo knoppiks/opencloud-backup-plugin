@@ -13,8 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"opencloud-backup-plugin/pkg/snapshot"
 )
 
 func FuzzReadManifest(f *testing.F) {
@@ -31,12 +29,12 @@ func FuzzReadManifest(f *testing.F) {
 	}
 	for _, m := range []Manifest{
 		{Format: ManifestFormat, Version: ManifestVersion, SpaceID: "s", RepoDir: "repo",
-			Blobs: []snapshot.BlobRef{{ID: "kopia.repository", Size: 1, SHA256: "00"}}},
+			Blobs: []BlobRef{{ID: "kopia.repository", Size: 1, SHA256: "00"}}},
 		{Format: ManifestFormat, Version: ManifestVersion + 1, SpaceID: "s"},
 		{Format: ManifestFormat, Version: ManifestVersion, SpaceID: "s", RepoDir: "../x"},
 		{Format: ManifestFormat, Version: ManifestVersion, SpaceID: "s", EnvelopeRef: "/etc/passwd"},
 		{Format: ManifestFormat, Version: ManifestVersion, SpaceID: "s",
-			Blobs: []snapshot.BlobRef{{ID: "../../kopia.repository"}}},
+			Blobs: []BlobRef{{ID: "../../kopia.repository"}}},
 		{Format: "something-else", Version: 1},
 	} {
 		data, err := json.Marshal(m)
