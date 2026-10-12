@@ -45,9 +45,17 @@ decrypt-release: ## Cross-build the offline decrypt CLI for every supported OS.
 			-o $(DIST)/decrypt-$$os-$$arch$$ext ./cmd/decrypt || exit 1; \
 	done
 
+# Unit tests build with kopia's own `testing` tag: repositories they create
+# derive their key with kopia's fast test derivation instead of scrypt, which
+# was most of the run under -race (#94). The release derivation stays covered:
+# the frozen Take-Out uses it and is opened by every run, and the integration
+# tests, built without the tag, create repositories with it. Never set this
+# tag on a build that ships.
+UNIT_TEST_TAGS := testing
+
 .PHONY: test
-test: ## Run unit tests with the race detector.
-	$(GO) test -race ./...
+test: ## Run unit tests with the race detector (kopia's fast test key derivation).
+	$(GO) test -race -tags $(UNIT_TEST_TAGS) ./...
 
 # Fuzz targets are found by name, so a new one joins `make fuzz` (and CI) by
 # being written. `go test -fuzz` takes one target in one package per run.

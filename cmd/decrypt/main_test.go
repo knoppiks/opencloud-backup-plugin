@@ -66,24 +66,42 @@ func TestReadRecoveryKeyToleratesUserTypingAndRejectsTypos(t *testing.T) {
 		t.Fatal("case/whitespace-tolerant decoding failed")
 	}
 
-	// Flip one payload character: the checksum must catch it before any
-	// expensive KDF runs. The *first* payload character is mutated on purpose —
-	// the last one carries padding bits, so not every change to it alters the
-	// decoded bytes.
-	broken := []byte(display)
-	first := strings.IndexByte(display, '-') + 1
-	if broken[first] == 'A' {
-		broken[first] = 'B'
-	} else {
-		broken[first] = 'A'
-	}
-	_, err = readRecoveryKey(pipeStdin(t, string(broken)+"\n"), io.Discard)
+	// A mistyped key is refused before any expensive KDF runs.
+	_, err = readRecoveryKey(pipeStdin(t, caughtTypo(t)+"\n"), io.Discard)
 	if err == nil {
 		t.Fatal("a mistyped recovery key must be rejected")
 	}
 	if !strings.Contains(err.Error(), "ocbk1-") {
 		t.Fatalf("error should show the expected shape, got %q", err)
 	}
+}
+
+// caughtTypo is a fresh Recovery Key with its first payload character
+// changed, drawn again until the checksum catches the change. The checksum is
+// eight bits, so about one such typo in 256 passes it: the format promises a
+// typo detector, not a guarantee, and a test on one random key failed that
+// often (#94). The first character is the one changed because the last
+// carries padding bits.
+func caughtTypo(t *testing.T) string {
+	t.Helper()
+	for range 64 {
+		display, _, err := keys.GenerateRecoveryKey()
+		if err != nil {
+			t.Fatalf("GenerateRecoveryKey: %v", err)
+		}
+		typo := []byte(display)
+		first := strings.IndexByte(display, '-') + 1
+		if typo[first] == 'A' {
+			typo[first] = 'B'
+		} else {
+			typo[first] = 'A'
+		}
+		if _, err := keys.DecodeRecoveryKey(string(typo)); err != nil {
+			return string(typo)
+		}
+	}
+	t.Fatal("no typo the checksum catches in 64 keys")
+	return ""
 }
 
 func TestReadRecoveryKeyRejectsEmptyInput(t *testing.T) {

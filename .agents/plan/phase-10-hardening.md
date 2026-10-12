@@ -501,7 +501,32 @@ helper and headers), A (linters and trust boundaries), B (CI plumbing).
   and advice (German included); a 413 without the envelope maps to it too,
   since an ingress may refuse the body first. Not "may have landed".
 - **Not done here:** requiring `Content-Type: application/json` (owner: own
-  PR).
+  PR, #92).
+
+**Outcome (10.8, unit test speed, #94).** Not in the plan; added by the
+owner before A, because every later PR waits on the unit job.
+
+- Measured: the unit job took ~8 min, of which `go test -race` 390 s; lint
+  9 s (cached). The time was kopia's scrypt key derivation on every test
+  repository, slowed further by the race detector. With kopia's `testing`
+  tag `internal/snapshot` went from 44 s to 4 s locally without `-race`, and
+  the whole `make test` (with `-race`) runs in under 40 s on 16 cores.
+- `make test` sets the tag; CI's `unit tests (race)` runs `make test`.
+  `build / vet / lint` is its own job. The integration jobs are unchanged
+  and keep the release derivation.
+- `pkg/takeout/decrypt`: `TestFreezeTakeOut` refuses under the tag;
+  `TestFrozenTakeOutsCoverTheReleaseKeyDerivation` (built only without it)
+  fails when no fixture's `kopia.repository.f` uses kopia's release
+  default.
+- Not done: `t.Parallel()` in the kopia-heavy packages; not needed at this
+  speed.
+- The first CI run hit a flaky test unrelated to the tag:
+  `TestReadRecoveryKeyToleratesUserTypingAndRejectsTypos` changed one
+  character of a random Recovery Key and expected the 8-bit checksum to
+  catch it, which fails one time in 256. It and
+  `TestRecoveryKeyChecksumCatchesTypos` now do what the web tests already
+  did: draw until a caught typo is found, or assert that nearly all typos
+  are caught and none decodes to the mistyped key.
 
 ## Exit criteria
 

@@ -133,27 +133,39 @@ func TestRecoveryKeyLookalikeMapping(t *testing.T) {
 	}
 }
 
+// The checksum is eight bits, so about one single-character typo in 256 slips
+// through by chance; asserting that it catches *every* typo was a test that
+// failed that often (#94). What it is for is telling a user "mistyped" rather
+// than "wrong key", so nearly all must be caught. What must hold without
+// exception: a typo never decodes to the entropy that was mistyped, which
+// would make a key nobody holds look like the right one.
 func TestRecoveryKeyChecksumCatchesTypos(t *testing.T) {
-	display, _, err := GenerateRecoveryKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Change one payload character to something else in the alphabet.
-	runes := []rune(display)
-	idx := len(runes) - 1
-	orig := runes[idx]
-	for _, c := range crockford {
-		if c != orig {
-			runes[idx] = c
-			break
+	const index = len(RKPrefix) + 3 // inside the first group, clear of the padding bits
+	typos, caught := 0, 0
+	for range 20 {
+		display, secret, err := GenerateRecoveryKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range crockford {
+			if byte(c) == display[index] {
+				continue
+			}
+			typo := display[:index] + string(c) + display[index+1:]
+			typos++
+			got, err := DecodeRecoveryKey(typo)
+			if err != nil {
+				caught++
+				continue
+			}
+			if bytes.Equal(got, secret) {
+				t.Fatalf("a typo decoded to the mistyped key's own entropy")
+			}
 		}
 	}
-	typo := string(runes)
-	if typo == display {
-		t.Skip("could not construct a typo")
-	}
-	if _, err := DecodeRecoveryKey(typo); err == nil {
-		t.Fatal("checksum must catch a single-character typo")
+	// Expected ~99.6 %; 95 % is far beyond what chance takes away from 620.
+	if caught*100 < typos*95 {
+		t.Fatalf("checksum caught %d of %d single-character typos", caught, typos)
 	}
 }
 

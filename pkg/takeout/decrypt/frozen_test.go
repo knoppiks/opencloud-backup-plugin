@@ -20,7 +20,9 @@ package decrypt
 //
 //	go test ./pkg/takeout/decrypt -run TestFreezeTakeOut -freeze <name>
 //
-// then add the name to frozenTakeOuts. The generator refuses to overwrite.
+// then add the name to frozenTakeOuts. The generator refuses to overwrite,
+// and refuses to run under kopia's `testing` tag (`make test` sets it), which
+// would write a repository with kopia's insecure test key derivation.
 
 import (
 	"context"
@@ -282,6 +284,12 @@ func readKopiaFormat(t *testing.T, repoDir string, dk []byte) kopiaFormat {
 func TestFreezeTakeOut(t *testing.T) {
 	if *freezeName == "" {
 		t.Skip("run with -freeze <name> to write a new frozen Take-Out")
+	}
+	// A fixture is permanent evidence of what a release writes. Under kopia's
+	// testing tag the repository would derive its key the insecure test way,
+	// which no release does (#94).
+	if kopiaTestingTag {
+		t.Fatal("refusing to freeze a Take-Out in a build with kopia's testing tag; run without -tags testing")
 	}
 	name := *freezeName
 	target := filepath.Join(frozenDir, name)
