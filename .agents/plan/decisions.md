@@ -1515,7 +1515,28 @@ None reopens a locked decision.
   own wording ("too large", "nothing was changed"), and reads an envelope-less
   413 (an ingress's own page) the same way.
 - Requiring `Content-Type: application/json` on requests with a body is
-  left to its own PR (owner, 2026-10-12).
+  left to its own PR (owner, 2026-10-12; #92).
+
+### Amendments from Phase 10.8 (unit test speed, #94)
+
+None reopens a locked decision.
+
+- **Unit tests build with kopia's own `testing` tag (owner, 2026-10-12).**
+  Under it kopia gives new repositories its fast, insecure test key
+  derivation instead of scrypt, which was most of the unit run under
+  `-race` (CI: 390 s, `internal/snapshot` alone 297 s; locally `make test`
+  now takes under a minute). It is kopia's mechanism, not ours; nothing else
+  in kopia changes under it but an opt-in fake clock. `make test` is the one
+  definition and CI runs it.
+- **The release derivation stays covered:** the frozen Take-Out was written
+  with it and is opened by every run; the integration jobs build without the
+  tag and create repositories with it; and a test compiled only without the
+  tag fails when no frozen fixture uses kopia's release default (a kopia
+  upgrade that changes it). The fixture generator refuses to run under the
+  tag. No build that ships sets it.
+- **Build, vet and lint are their own CI job** (`build / vet / lint`), beside
+  `unit tests (race)` (owner, 2026-10-12). The required check
+  `build / vet / lint / test` in the `Default` ruleset is replaced by those two.
 
 ---
 

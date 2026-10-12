@@ -35,8 +35,10 @@ env:
   KUBECONFORM_VERSION: "0.6.7"
 
 jobs:
-  build-test:
-    name: build / vet / lint / test
+  # Building, vetting and linting run beside the unit tests rather than in
+  # front of them (#94).
+  build-lint:
+    name: build / vet / lint
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
@@ -57,8 +59,23 @@ jobs:
       with:
         version: ${{ env.GOLANGCI_LINT_VERSION }}
 
-    - name: go test (race)
-      run: go test -race ./...
+  # `make test` is the one definition of the unit run: -race, with kopia's
+  # `testing` tag for its fast test key derivation (see the Makefile). The
+  # integration job runs without the tag, so the release derivation is still
+  # exercised end to end.
+  unit-test:
+    name: unit tests (race)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: make test
+      run: make test
 
   # The parsers of the formats read forever, and of outside input, for a few
   # seconds each (phase-10-hardening.md §10.4). The seed corpora already run
@@ -129,7 +146,7 @@ jobs:
     # The crypto suite reads pkg/keys/testdata/vectors.json directly: it fails
     # when the browser stops agreeing with Go about a byte. The other direction
     # (Go opening browser-produced envelopes) is a Go test and runs in
-    # build-test, so neither half can be forgotten.
+    # unit-test, so neither half can be forgotten.
     - name: test
       working-directory: web
       run: pnpm test
