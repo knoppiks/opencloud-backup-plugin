@@ -175,6 +175,7 @@ describe('BackupApi failures', () => {
     [403, 'forbidden'],
     [404, 'not_found'],
     [409, 'conflict'],
+    [413, 'payload_too_large'],
     [502, 'upstream_error'],
     [503, 'unavailable'],
     [500, 'internal_error']
@@ -193,6 +194,16 @@ describe('BackupApi failures', () => {
 
     expect(err.message).not.toContain('nginx')
     expect(err.serverMessage).toBeUndefined()
+  })
+
+  it('maps the too-large refusal to its own code', async () => {
+    const { fetchImpl } = stub(413, {
+      error: { code: 'payload_too_large', message: 'request body too large' }
+    })
+    await expect(client(fetchImpl).listSpaces()).rejects.toMatchObject({
+      code: 'payload_too_large',
+      status: 413
+    })
   })
 
   it('reports an unrecognised code as unknown rather than guessing', async () => {

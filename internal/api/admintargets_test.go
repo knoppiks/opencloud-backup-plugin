@@ -259,8 +259,15 @@ func TestAdminCreateTargetSealsCredentialsAndReturnsNone(t *testing.T) {
 // that overwrites an existing target.
 func TestAdminCreateMintsAFreshIDEachTime(t *testing.T) {
 	env := newAdminTestEnv(t)
-	body := []byte(`{"name":"Buddy","endpoint":"e","bucket":"b","id":"chosen",
+	body := []byte(`{"name":"Buddy","endpoint":"e","bucket":"b",
 		"credentials":{"access_key_id":"k","secret_access_key":"s"}}`)
+
+	// An id in the body is not a field of the request: refused, not ignored.
+	chosen := []byte(`{"name":"Buddy","endpoint":"e","bucket":"b","id":"chosen",
+		"credentials":{"access_key_id":"k","secret_access_key":"s"}}`)
+	if rec := env.as(adminToken, http.MethodPost, "/api/v1/admin/targets", chosen); rec.Code != http.StatusBadRequest {
+		t.Fatalf("create naming its id = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
 
 	seen := map[string]bool{}
 	for range 3 {
@@ -595,6 +602,10 @@ func TestAdminGrantValidation(t *testing.T) {
 		{"space grant without a space", `{"grants":[{"scope":"space"}]}`},
 		{"all-users grant naming a user", `{"grants":[{"scope":"all_users","user_id":"alice"}]}`},
 		{"malformed body", `{`},
+		// Only an explicit [] revokes everyone; a body that forgot the list
+		// must not (#90).
+		{"no grants field", `{}`},
+		{"null grants", `{"grants":null}`},
 	}
 
 	for _, tc := range cases {
@@ -620,7 +631,8 @@ func TestAdminGrantValidation(t *testing.T) {
 	}
 }
 
-// A grant body cannot retarget: the target comes from the path.
+// A grant body cannot retarget: the target comes from the path, and a body
+// that names one is refused rather than half-applied.
 func TestAdminGrantsCannotNameAnotherTarget(t *testing.T) {
 	env := newAdminTestEnv(t)
 	env.seedTarget(t, "t1")
@@ -628,12 +640,36 @@ func TestAdminGrantsCannotNameAnotherTarget(t *testing.T) {
 
 	rec := env.as(adminToken, http.MethodPut, "/api/v1/admin/targets/t1/grants",
 		[]byte(`{"grants":[{"target_id":"t2","scope":"all_users"}]}`))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("replace = %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("replace = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
-	other, err := env.store.ListGrants(context.Background(), "t2")
-	if err != nil || len(other) != 0 {
-		t.Fatalf("a grant landed on another target: %+v (%v)", other, err)
+	for _, id := range []string{"t1", "t2"} {
+		got, err := env.store.ListGrants(context.Background(), id)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("a refused grant write landed on %s: %+v (%v)", id, got, err)
+		}
+	}
+}
+
+// A misspelt credentials field used to be dropped and the target saved
+// without the credentials the admin typed (#90). It is refused, and nothing
+// is stored.
+func TestAdminCreateRefusesAMisspeltCredentialField(t *testing.T) {
+	env := newAdminTestEnv(t)
+	for name, body := range map[string]string{
+		"misspelt object": `{"name":"n","endpoint":"e","bucket":"b",
+			"credential":{"access_key_id":"k","secret_access_key":"s"}}`,
+		"misspelt nested field": `{"name":"n","endpoint":"e","bucket":"b",
+			"credentials":{"access_key_id":"k","secret_access_key":"s"},
+			"maintenance_credentials":{"access_key":"k","secret_access_key":"s"}}`,
+	} {
+		rec := env.as(adminToken, http.MethodPost, "/api/v1/admin/targets", []byte(body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want 400: %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	if all, err := env.store.ListTargets(context.Background()); err != nil || len(all) != 0 {
+		t.Fatalf("a refused create stored something: %+v (%v)", all, err)
 	}
 }
 

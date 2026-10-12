@@ -202,12 +202,12 @@ func NewServer(opts ...Option) *Server {
 		s.logger = slog.New(slog.DiscardHandler)
 	}
 	s.routes()
-	s.handler = s.observe(s.mux)
+	s.handler = WithResponseHeaders(s.observe(s.mux))
 	return s
 }
 
-// Handler exposes the router, behind request ids, panic recovery and the
-// request log, for mounting or testing.
+// Handler exposes the router, behind the common response headers, request
+// ids, panic recovery and the request log, for mounting or testing.
 func (s *Server) Handler() http.Handler { return s.handler }
 
 func (s *Server) routes() {

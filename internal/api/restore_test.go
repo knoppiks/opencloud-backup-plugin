@@ -271,14 +271,17 @@ func TestRestore_UnavailableWithoutRunner(t *testing.T) {
 }
 
 // The client cannot choose where a restore lands: the request carries only a
-// snapshot id, and any extra field is ignored rather than honoured.
+// snapshot id, and a body asking for more is refused, not half-honoured.
 func TestRestore_ClientCannotChooseDestination(t *testing.T) {
 	env := newRestoreTestEnv(t)
 
 	rec := doJSON(env.srv, http.MethodPost, "/api/v1/spaces/space-alice/restore", "alice-tok",
 		[]byte(`{"snapshot_id":"snap-2","target_path":"/","overwrite":true}`))
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body %s", rec.Code, rec.Body)
+	}
+	if len(env.restorer.started) != 0 {
+		t.Fatalf("a refused request started a restore: %+v", env.restorer.started)
 	}
 
 	var req restoreRequest

@@ -169,6 +169,25 @@ func TestMountBasePath(t *testing.T) {
 	}
 }
 
+// A path outside the prefix is answered by the mount, not by the API; that
+// answer still carries the headers every response of the service has (#90).
+func TestMountBasePath_OwnAnswerCarriesTheResponseHeaders(t *testing.T) {
+	rec := httptest.NewRecorder()
+	mountBasePath(http.NotFoundHandler(), "/backup").ServeHTTP(
+		rec, httptest.NewRequest(http.MethodGet, "/elsewhere", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	for name, want := range map[string]string{
+		"Cache-Control":          "no-store",
+		"X-Content-Type-Options": "nosniff",
+	} {
+		if got := rec.Header().Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestChainRunsEveryCleanupInOrder(t *testing.T) {
 	var order []string
 	chain(

@@ -24,7 +24,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -163,8 +162,12 @@ func scopeFromWire(s string) (targets.GrantScope, error) {
 
 // grantsRequest / grantsResponse wrap the list. A target's audience is edited
 // as a set, so it travels as one.
+//
+// Grants is a pointer so a missing or null list is told apart from an empty
+// one: only an explicit [] revokes the target from everyone. A body that
+// forgot the field must not have that effect (#90).
 type grantsRequest struct {
-	Grants []grantDTO `json:"grants"`
+	Grants *[]grantDTO `json:"grants"`
 }
 
 type grantsResponse struct {
@@ -408,7 +411,8 @@ func (s *Server) handleAdminListGrants(w http.ResponseWriter, r *http.Request) {
 // Whole-list, because that is how an admin thinks about it and how the store
 // writes it: one request, one document, no way for a crash to leave an audience
 // nobody chose. An empty list is a legitimate instruction — it revokes the
-// target from everyone without deleting it.
+// target from everyone without deleting it — but only when sent as [];
+// a missing or null list is refused.
 func (s *Server) handleAdminReplaceGrants(w http.ResponseWriter, r *http.Request) {
 	if !s.adminTargetsAvailable(w, r) {
 		return
@@ -419,14 +423,18 @@ func (s *Server) handleAdminReplaceGrants(w http.ResponseWriter, r *http.Request
 	}
 
 	var req grantsRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAdminRequestBytes))
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+	if !decodeJSONBody(w, r, maxAdminRequestBytes, &req) {
 		return
 	}
 
-	list := make([]targets.Grant, 0, len(req.Grants))
-	for _, g := range req.Grants {
+	if req.Grants == nil {
+		writeError(w, http.StatusBadRequest, "bad_request",
+			"grants is required; send an empty list to revoke the target from everyone")
+		return
+	}
+
+	list := make([]targets.Grant, 0, len(*req.Grants))
+	for _, g := range *req.Grants {
 		scope, err := scopeFromWire(g.Scope)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -580,9 +588,7 @@ func (r adminTargetRequest) validate(requireCredentials bool) error {
 
 func decodeAdminTargetRequest(w http.ResponseWriter, r *http.Request) (adminTargetRequest, bool) {
 	var req adminTargetRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAdminRequestBytes))
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+	if !decodeJSONBody(w, r, maxAdminRequestBytes, &req) {
 		return adminTargetRequest{}, false
 	}
 	return req, true

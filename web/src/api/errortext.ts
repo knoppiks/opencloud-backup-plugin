@@ -29,6 +29,8 @@ export function errorTitle(code: ApiFailureCode, $gettext: Gettext): string {
       return $gettext('You do not have access to this')
     case 'not_found':
       return $gettext('This is not available')
+    case 'payload_too_large':
+      return $gettext('This request is too large for the backup service')
     case 'not_configured':
       return $gettext('Backups are not set up for this space yet')
     case 'run_in_progress':
@@ -59,6 +61,8 @@ export function errorAdvice(code: ApiFailureCode, $gettext: Gettext): string {
       return $gettext('Ask a manager of this space if you need access.')
     case 'upstream_error':
       return $gettext('This usually clears up on its own. Try again in a moment.')
+    case 'payload_too_large':
+      return $gettext('Nothing was changed. Ask whoever runs the backup service.')
     default:
       return ''
   }

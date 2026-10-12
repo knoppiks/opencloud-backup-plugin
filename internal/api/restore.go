@@ -14,7 +14,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -96,9 +95,7 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req restoreRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRestoreRequestBytes))
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+	if !decodeJSONBody(w, r, maxRestoreRequestBytes, &req) {
 		return
 	}
 	if req.SnapshotID == "" {

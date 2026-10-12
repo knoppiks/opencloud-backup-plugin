@@ -1303,17 +1303,17 @@ layout, which was a scaffolding choice rather than a locked decision.
   `opencloud-rolling:latest` to 8.1.0, passed, and opened its test issue
   (#68).
 - **Policy items (#67):** dropping a version that left the window is MINOR
-  (policy §2): proposed, owner to confirm, applied as the working rule. The
+  (policy §2): confirmed (owner, 2026-10-12). The
   90-day grace for the previous Production line (policy §3) is superseded by
   the amended #25: a release leaves only when the second major after its own
-  ships, and the current Production line never leaves (proposed, owner to
-  confirm). Neither has bound anything yet: the plugin is 0.x and the only
+  ships, and the current Production line never leaves (confirmed, owner,
+  2026-10-12). Neither has bound anything yet: the plugin is 0.x and the only
   drop (7.2.x) came before any release.
 
 ### Amendments from Phase 10.1 (silent-failure bugs, #70)
 
 None reopens a locked decision. Two choices the plan left to the PR,
-**proposed, owner to confirm**:
+**confirmed (owner, 2026-10-12)**:
 
 - **A state read that fails for any reason other than not-found or
   malformed fails the whole listing** (Space configurations, targets, run
@@ -1350,9 +1350,9 @@ request path, which holds Space and job ids.
   from anyone is safe because the id only finds log lines and is never used
   to decide anything; the JSON handler escapes it. Not in the JSON error
   body or the UI for now.
-- **Proposed, owner to confirm:** levels: 503 WARN, other 5xx and panics
+- **Confirmed (owner, 2026-10-12):** levels: 503 WARN, other 5xx and panics
   ERROR, passing health probes DEBUG, everything else INFO.
-- **Proposed, owner to confirm:** an SMTP server's reply is logged by its
+- **Confirmed (owner, 2026-10-12):** an SMTP server's reply is logged by its
   numeric code only, never its text, because a reply to AUTH can quote the
   credentials. Locally produced causes (connect, TLS, timeout, the step that
   failed) are logged in full.
@@ -1388,12 +1388,12 @@ the declarations.
   cannot be formatted or logged as its value. The startup configuration line
   shows such a variable only as set or unset. This extends "never log key
   material" to every credential, by construction rather than by a list.
-- **Proposed, owner to confirm:** booleans accept exactly `true` and
+- **Confirmed (owner, 2026-10-12):** booleans accept exactly `true` and
   `false`; `STATE_BACKEND` accepts only `memory`; both refuse anything else
   at startup instead of reading it as "off"/"durable". The service account
   is required whenever `CS3_GATEWAY_ADDR` is set, for the service and every
   operator command alike. These refuse configurations rc.2 accepted.
-- **Proposed, owner to confirm (2026-10-09 rework):** `BOOTSTRAP_ENABLE=true`
+- **Confirmed (owner, 2026-10-12); reworked 2026-10-09:** `BOOTSTRAP_ENABLE=true`
   is refused at startup when the `BOOTSTRAP_S3_*` target is incomplete or
   `TW_KEY` is unset. rc.2 failed on the first (after claiming the instance
   record) and skipped seeding silently on the second. `CS3_DATA_SERVER_URL` is
@@ -1407,7 +1407,7 @@ target credentials written by the code of 2026-10-07 are committed, each with
 the throwaway key generated for it (allowlisted by path in `.gitleaks.toml`),
 and opened by every test run. Frozen fixtures are append-only.
 
-- **Proposed, owner to confirm:** a new frozen Take-Out is required for
+- **Confirmed (owner, 2026-10-12):** a new frozen Take-Out is required for
   every new Take-Out format: a new manifest version, a new envelope version,
   or a new on-disk repository format written by kopia (format or index
   version, hash, encryption, ECC or splitter). Not for every kopia release:
@@ -1416,7 +1416,7 @@ and opened by every test run. Frozen fixtures are append-only.
   kopia can change its default without a version bump of ours. A new sealed
   credential file is required for every new envelope version or payload
   shape.
-- **Proposed, owner to confirm:** the Take-Out manifest reader refuses a
+- **Confirmed (owner, 2026-10-12):** the Take-Out manifest reader refuses a
   version below 1 and a blob id that is not a flat file name (`.`, `..`, or
   anything with a separator), both as a damaged Take-Out. No `takeout` ever
   wrote either; `Verify` would have read such an id as a path. The state
@@ -1424,7 +1424,7 @@ and opened by every test run. Frozen fixtures are append-only.
   exactly two upper-case hex digits per escape, no escaped safe byte, no raw
   unsafe byte. Anything else gave one record a second key. `EscapeSegment`
   has only ever written the canonical form, so no stored key is affected.
-- **Proposed, owner to confirm:** the nightly fuzz run opens (or comments
+- **Confirmed (owner, 2026-10-12):** the nightly fuzz run opens (or comments
   on) one issue labelled `fuzz` when it finds a failing input, like the
   OpenCloud canary. Only a failing input the fuzzer wrote counts; a run
   that fails for any other reason stays red without an issue.
@@ -1436,14 +1436,14 @@ surface (no key flag, credentials from the environment only); the tests that
 audit it are unchanged.
 
 - **One exit-status convention for all three programs:** 0 success and
-  help, 1 failure, 2 wrong usage. **Proposed, owner to confirm:** "usage"
+  help, 1 failure, 2 wrong usage. **Confirmed (owner, 2026-10-12):** "usage"
   is whatever is decidable from the command line alone, including a missing
   required flag, a stray positional argument (ignored before) and a rotation
   without `-service-stopped`; anything read from the environment is a
   failure.
 - **`backupd` reads a command's flags before its configuration**, so help,
   version and wrong usage need no environment.
-- **Proposed, owner to confirm:** `takeout -insecure` is renamed
+- **Confirmed (owner, 2026-10-12):** `takeout -insecure` is renamed
   `-plain-http` outright, with no deprecated alias: nothing has been
   released and the version is 0.x (compatibility-policy.md §1). The flag
   rules that do apply from 1.0.0 are added to §2: `decrypt`'s flags are
@@ -1488,6 +1488,35 @@ None reopens a locked decision; #26 is implemented as written.
   that does is unusable from outside the module. The durable key store
   therefore lives in `internal/keystore`, not `pkg/keys`, and the manifest's
   blob record is `takeout.BlobRef`.
+
+### Amendments from Phase 10.8 (API request bodies and response headers, #90)
+
+None reopens a locked decision.
+
+- **Every JSON request body is read the same way (owner, 2026-10-12):**
+  within its endpoint's size limit, exactly one JSON value, no field the
+  endpoint does not define at any depth, an empty body refused. Before, two
+  of the eight bodies refused unknown fields and the rest dropped them, so
+  a misspelt field (`credential` for `credentials`) was answered with
+  success having done less than asked. This refuses requests rc.2 accepted. The only client is
+  the bundle of the same version, which sends no other fields.
+- **Too large is 413 `payload_too_large` (owner, 2026-10-12)**; every other
+  refusal stays 400 `bad_request`, "malformed request body". Neither names
+  the field or repeats the input (owner, 2026-10-12).
+- **Every response of `backupd` carries `Cache-Control: no-store` and
+  `X-Content-Type-Options: nosniff` (owner, 2026-10-12):** errors, probes,
+  a recovered panic and the base-path mount's own 404 included, not only
+  `/api/v1/*`.
+- **Only an explicit `[]` revokes a target from everyone (owner,
+  2026-10-12).** `PUT /admin/targets/{id}/grants` with the `grants` field
+  missing or `null` is refused (400) and the audience is unchanged; before,
+  `{}` took the target away from every user.
+- **The web bundle knows `payload_too_large` (owner, 2026-10-12)**, with its
+  own wording ("too large", "nothing was changed"), and reads an envelope-less
+  413 (an ingress's own page) the same way.
+- Requiring `Content-Type: application/json` on requests with a body is
+  left to its own PR (owner, 2026-10-12).
+
 ---
 
 ## Trust & key model

@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/knoppiks/opencloud-backup-plugin/internal/api"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
 )
 
@@ -30,6 +31,9 @@ const (
 // The probes are hit directly on the pod by the kubelet, which knows nothing
 // about the ingress that adds the prefix; moving them would turn a path prefix
 // into a failing readiness check.
+//
+// The mount's own 404, for a path outside the prefix, carries the API's
+// response headers too: it is an answer of this service like any other.
 func mountBasePath(h http.Handler, basePath string) http.Handler {
 	if basePath == "" {
 		return h
@@ -39,7 +43,7 @@ func mountBasePath(h http.Handler, basePath string) http.Handler {
 		mux.Handle(probe, h)
 	}
 	mux.Handle(basePath+"/", http.StripPrefix(basePath, h))
-	return mux
+	return api.WithResponseHeaders(mux)
 }
 
 // resolveWorkDir validates the per-run work directory and clears what a previous

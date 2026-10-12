@@ -19,6 +19,7 @@
  */
 export type ApiErrorCode =
   | 'bad_request'
+  | 'payload_too_large'
   | 'unauthorized'
   | 'forbidden'
   | 'not_found'
@@ -33,6 +34,7 @@ export type ApiErrorCode =
 
 const KNOWN_CODES: readonly string[] = [
   'bad_request',
+  'payload_too_large',
   'unauthorized',
   'forbidden',
   'not_found',
@@ -181,6 +183,10 @@ function codeFromStatus(status: number): string {
       return 'not_found'
     case 409:
       return 'conflict'
+    case 413:
+      // An ingress in front of the service may refuse a body with its own
+      // page before the service sees it; it means the same thing.
+      return 'payload_too_large'
     case 502:
       return 'upstream_error'
     case 503:

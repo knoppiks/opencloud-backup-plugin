@@ -12,7 +12,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -128,9 +127,7 @@ func (s *Server) handlePutBackupConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req configRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxConfigRequestBytes))
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+	if !decodeJSONBody(w, r, maxConfigRequestBytes, &req) {
 		return
 	}
 	if req.TargetID == "" {
@@ -200,10 +197,7 @@ func (s *Server) handlePatchBackupConfig(w http.ResponseWriter, r *http.Request)
 	}
 
 	var patch configPatch
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxConfigRequestBytes))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&patch); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+	if !decodeJSONBody(w, r, maxConfigRequestBytes, &patch) {
 		return
 	}
 	if patch.TargetID != nil && *patch.TargetID == "" {

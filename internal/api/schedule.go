@@ -12,7 +12,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -118,13 +117,7 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req scheduleRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxScheduleRequestBytes))
-	// Unknown fields are refused, as on PATCH /backup/config. `enabled` is a
-	// plain bool, so a body that misspelt the schedule used to be read as
-	// "default schedule, disabled" — a 200 that switched backups off.
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+	if !decodeJSONBody(w, r, maxScheduleRequestBytes, &req) {
 		return
 	}
 

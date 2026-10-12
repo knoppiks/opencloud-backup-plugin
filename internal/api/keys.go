@@ -19,7 +19,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -105,9 +104,7 @@ func (s *Server) handleKeySetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req setupRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxKeyRequestBytes))
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+	if !decodeJSONBody(w, r, maxKeyRequestBytes, &req) {
 		return
 	}
 
@@ -248,9 +245,7 @@ func (s *Server) handleRotateRecoveryKey(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req rotateRecoveryKeyRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxKeyRequestBytes))
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "malformed request body")
+	if !decodeJSONBody(w, r, maxKeyRequestBytes, &req) {
 		return
 	}
 	if !isEnvelopeDigest(req.ReplacesSHA256) {
