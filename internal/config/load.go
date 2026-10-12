@@ -59,7 +59,6 @@ type variable struct {
 var (
 	secretType      = reflect.TypeOf(Secret{})
 	stringSliceType = reflect.TypeOf([]string(nil))
-	validatorType   = reflect.TypeOf((*Validator)(nil)).Elem()
 )
 
 // structOf returns the struct root points to, refusing anything else: a
@@ -165,8 +164,8 @@ func validate(v reflect.Value) error {
 			errs = append(errs, validate(v.Field(i)))
 		}
 	}
-	if v.Addr().Type().Implements(validatorType) {
-		errs = append(errs, v.Addr().Interface().(Validator).Validate())
+	if validator, ok := v.Addr().Interface().(Validator); ok {
+		errs = append(errs, validator.Validate())
 	}
 	return errors.Join(errs...)
 }

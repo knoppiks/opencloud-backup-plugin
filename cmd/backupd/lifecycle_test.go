@@ -28,7 +28,7 @@ func minimalServiceEnv(t *testing.T) []string {
 // sharedState hands every startup the same store, as a restarted pod finds
 // the same state Space.
 func sharedState(st state.Store) startupDeps {
-	return startupDeps{openState: func(stateEnv, *cs3.Client, string, *slog.Logger) (state.Store, error) {
+	return startupDeps{openState: func(context.Context, stateEnv, *cs3.Client, string, *slog.Logger) (state.Store, error) {
 		return st, nil
 	}}
 }

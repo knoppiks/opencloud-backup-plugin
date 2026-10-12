@@ -512,6 +512,8 @@ func TestIntegration_StaleBackupIsReported(t *testing.T) {
 				stale = append(stale, e)
 			case notify.KindRunFailed:
 				failed = append(failed, e)
+			default:
+				// Other kinds are not what this test counts.
 			}
 		}
 		if len(failed) != 3 {

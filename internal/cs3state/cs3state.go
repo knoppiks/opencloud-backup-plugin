@@ -125,7 +125,7 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	reader, err := s.client.OpenFile(ctx, space, s.pathFor(key), 0)
 	if err != nil {
 		if isNotFound(err) {
-			return nil, state.ErrNotFound{Key: key}
+			return nil, state.NotFoundError{Key: key}
 		}
 		return nil, fmt.Errorf("cs3state: read state: %w", err)
 	}
@@ -159,12 +159,12 @@ func (s *Store) Create(ctx context.Context, key string, value []byte) error {
 		return err
 	}
 	if exists {
-		return state.ErrExists{Key: key}
+		return state.ExistsError{Key: key}
 	}
 
 	if err := s.upload(ctx, space, full, value); err != nil {
 		if errors.Is(err, cs3.ErrAlreadyExists) {
-			return state.ErrExists{Key: key}
+			return state.ExistsError{Key: key}
 		}
 		return fmt.Errorf("cs3state: write state: %w", err)
 	}
@@ -241,7 +241,7 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 
 	if err := s.client.Delete(ctx, space, s.pathFor(key)); err != nil {
 		if isNotFound(err) {
-			return state.ErrNotFound{Key: key}
+			return state.NotFoundError{Key: key}
 		}
 		return fmt.Errorf("cs3state: delete state: %w", err)
 	}

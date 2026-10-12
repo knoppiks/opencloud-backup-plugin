@@ -285,8 +285,8 @@ func TestErrAbortHandlerIsReRaised(t *testing.T) {
 		panic(http.ErrAbortHandler)
 	}))
 	defer func() {
-		if v := recover(); v != http.ErrAbortHandler {
-			t.Fatalf("recovered %v, want http.ErrAbortHandler re-raised", v)
+		if err, ok := recover().(error); !ok || !errors.Is(err, http.ErrAbortHandler) {
+			t.Fatalf("recovered %v, want http.ErrAbortHandler re-raised", err)
 		}
 	}()
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))

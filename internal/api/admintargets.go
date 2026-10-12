@@ -650,7 +650,7 @@ func (s *Server) adminSealerAvailable(w http.ResponseWriter, r *http.Request) bo
 }
 
 func isTargetNotFound(err error) bool {
-	var notFound targets.ErrNotFound
+	var notFound targets.NotFoundError
 	return errors.As(err, &notFound)
 }
 

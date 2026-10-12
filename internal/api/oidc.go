@@ -140,7 +140,7 @@ func (v *oidcValidator) Validate(ctx context.Context, rawToken string) (Identity
 
 	tok, err := jwt.ParseSigned(rawToken, signatureAlgorithms)
 	if err != nil {
-		return Identity{}, fmt.Errorf("%w: parse: %v", errInvalidToken, err)
+		return Identity{}, fmt.Errorf("%w: parse: %w", errInvalidToken, err)
 	}
 	if len(tok.Headers) == 0 {
 		return Identity{}, fmt.Errorf("%w: no JWS header", errInvalidToken)
@@ -154,7 +154,7 @@ func (v *oidcValidator) Validate(ctx context.Context, rawToken string) (Identity
 		if errors.Is(err, ErrKeySetUnavailable) {
 			return Identity{}, err
 		}
-		return Identity{}, fmt.Errorf("%w: key lookup: %v", errInvalidToken, err)
+		return Identity{}, fmt.Errorf("%w: key lookup: %w", errInvalidToken, err)
 	}
 	if len(keys) == 0 {
 		return Identity{}, fmt.Errorf("%w: no matching key", errInvalidToken)
@@ -191,7 +191,7 @@ func (v *oidcValidator) Validate(ctx context.Context, rawToken string) (Identity
 			}
 		}
 		if err != nil {
-			return Identity{}, fmt.Errorf("%w: claims: %v", errInvalidToken, err)
+			return Identity{}, fmt.Errorf("%w: claims: %w", errInvalidToken, err)
 		}
 	}
 	if claims.Subject == "" {
@@ -386,7 +386,7 @@ func (l *lazyKeySet) resolve(ctx context.Context) (*jwksKeySet, error) {
 	jwksURI, err := discoverJWKSURI(ctx, l.issuer, l.client)
 	if err != nil {
 		l.logger.Warn("could not discover the identity provider's keys; will retry", "issuer", l.issuer, "err", err)
-		return nil, fmt.Errorf("%w: %v", ErrKeySetUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrKeySetUnavailable, err)
 	}
 	l.logger.Info("identity provider keys discovered", "issuer", l.issuer)
 	l.inner = &jwksKeySet{jwksURI: jwksURI, client: l.client, ttl: l.ttl, now: time.Now}
@@ -395,11 +395,12 @@ func (l *lazyKeySet) resolve(ctx context.Context) (*jwksKeySet, error) {
 
 func discoverJWKSURI(ctx context.Context, issuer string, client *http.Client) (string, error) {
 	metaURL := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metaURL, nil)
+	// The URL is the operator's OIDC_ISSUER, not request input.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metaURL, nil) //nolint:gosec // G704: operator-configured issuer
 	if err != nil {
 		return "", fmt.Errorf("oidc discovery: %w", err)
 	}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: operator-configured issuer
 	if err != nil {
 		return "", fmt.Errorf("oidc discovery: %w", err)
 	}
@@ -437,7 +438,7 @@ func (k *jwksKeySet) Key(ctx context.Context, keyID string) ([]jose.JSONWebKey, 
 		return keys, nil
 	}
 	if err := k.refresh(ctx); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrKeySetUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrKeySetUnavailable, err)
 	}
 	keys, _ = k.cached(keyID)
 	return keys, nil
@@ -468,11 +469,13 @@ func (k *jwksKeySet) beginRefresh() bool {
 }
 
 func (k *jwksKeySet) refresh(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.jwksURI, nil)
+	// jwks_uri comes from the discovery document of the operator's
+	// OIDC_ISSUER, not from request input.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.jwksURI, nil) //nolint:gosec // G704: from the configured issuer
 	if err != nil {
 		return fmt.Errorf("jwks fetch: %w", err)
 	}
-	resp, err := k.client.Do(req)
+	resp, err := k.client.Do(req) //nolint:gosec // G704: from the configured issuer
 	if err != nil {
 		return fmt.Errorf("jwks fetch: %w", err)
 	}

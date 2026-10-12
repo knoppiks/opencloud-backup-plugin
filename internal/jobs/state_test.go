@@ -44,7 +44,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatalf("Get: %+v", got)
 			}
 
-			var nf ErrNotFound
+			var nf NotFoundError
 			if _, err := store.Get(ctx, "absent"); !errors.As(err, &nf) {
 				t.Fatalf("Get absent: %v", err)
 			}
@@ -251,7 +251,7 @@ func TestStoreContract_GetInSpaceIsScopedToTheSpace(t *testing.T) {
 				t.Fatalf("GetInSpace: %+v", got)
 			}
 
-			var nf ErrNotFound
+			var nf NotFoundError
 			for _, tc := range []struct{ name, space, id string }{
 				{"another space's job", "space$a!a", theirs.ID},
 				{"my job asked for from another space", "space$b!b", mine.ID},
@@ -260,7 +260,7 @@ func TestStoreContract_GetInSpaceIsScopedToTheSpace(t *testing.T) {
 				{"an empty space", "", mine.ID},
 			} {
 				if _, err := store.GetInSpace(ctx, tc.space, tc.id); !errors.As(err, &nf) {
-					t.Errorf("%s: err = %v, want ErrNotFound", tc.name, err)
+					t.Errorf("%s: err = %v, want NotFoundError", tc.name, err)
 				}
 			}
 		})
@@ -309,9 +309,9 @@ func TestStateStore_GetInSpaceRefusesARecordFiledUnderTheWrongSpace(t *testing.T
 		t.Fatalf("CreateKey: %v", err)
 	}
 
-	var nf ErrNotFound
+	var nf NotFoundError
 	if _, err := store.GetInSpace(ctx, "s1", "abc123"); !errors.As(err, &nf) {
-		t.Fatalf("GetInSpace = %v, want ErrNotFound", err)
+		t.Fatalf("GetInSpace = %v, want NotFoundError", err)
 	}
 }
 

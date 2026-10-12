@@ -171,7 +171,7 @@ func TestStore_GetDoesNotMistakeNotReadyForMissing(t *testing.T) {
 	fake.openErr = fmt.Errorf("cs3 download: gave up after 2m0s: %w", cs3.ErrNotReady)
 
 	_, err := store.Get(ctx, "jobs/space/1")
-	var notFound state.ErrNotFound
+	var notFound state.NotFoundError
 	if errors.As(err, &notFound) {
 		t.Fatalf("Get = %v, reported as not found", err)
 	}

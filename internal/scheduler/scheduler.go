@@ -509,7 +509,7 @@ func (s *Scheduler) Timezone() string {
 func (s *Scheduler) NextRun(ctx context.Context, spaceID string) (time.Time, error) {
 	cfg, err := s.deps.Configs.Get(ctx, spaceID)
 	if err != nil {
-		var notFound spacecfg.ErrNotFound
+		var notFound spacecfg.NotFoundError
 		if errors.As(err, &notFound) {
 			return time.Time{}, nil
 		}
@@ -561,7 +561,8 @@ func (s *Scheduler) jitterFor(spaceID string, window time.Duration) time.Duratio
 	}
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(spaceID))
-	return time.Duration(h.Sum64() % uint64(window))
+	// The remainder is below window, itself an int64, so it converts back.
+	return time.Duration(h.Sum64() % uint64(window)) //nolint:gosec // G115: < window
 }
 
 // dispatch starts a run of one kind if a concurrency slot is free. It reports

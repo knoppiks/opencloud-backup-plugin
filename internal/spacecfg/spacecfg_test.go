@@ -105,12 +105,12 @@ func TestGetDelete_NotFound(t *testing.T) {
 	store, _ := newStore(t)
 
 	_, err := store.Get(ctx, "absent")
-	var nf ErrNotFound
+	var nf NotFoundError
 	if !errors.As(err, &nf) || nf.SpaceID != "absent" {
-		t.Fatalf("Get error = %v, want ErrNotFound{absent}", err)
+		t.Fatalf("Get error = %v, want NotFoundError{absent}", err)
 	}
 	if err := store.Delete(ctx, "absent"); !errors.As(err, &nf) {
-		t.Fatalf("Delete error = %v, want ErrNotFound", err)
+		t.Fatalf("Delete error = %v, want NotFoundError", err)
 	}
 }
 

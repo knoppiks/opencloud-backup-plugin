@@ -19,7 +19,7 @@ import (
 )
 
 func quietLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return slog.New(slog.DiscardHandler)
 }
 
 // The work directory holds kopia's per-run cache. A disk-backed one is allowed,

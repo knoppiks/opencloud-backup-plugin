@@ -55,13 +55,13 @@ func TestMemoryStoreRoundTrip(t *testing.T) {
 
 func TestMemoryStoreNotFound(t *testing.T) {
 	st := NewMemoryStore()
-	var nf ErrNotFound
+	var nf NotFoundError
 
 	if _, err := st.GetRK(context.Background(), "missing"); !errors.As(err, &nf) {
-		t.Fatalf("want ErrNotFound, got %v", err)
+		t.Fatalf("want NotFoundError, got %v", err)
 	}
 	if _, err := st.GetSRW(context.Background(), "missing"); !errors.As(err, &nf) {
-		t.Fatalf("want ErrNotFound, got %v", err)
+		t.Fatalf("want NotFoundError, got %v", err)
 	}
 }
 

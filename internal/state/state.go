@@ -41,10 +41,10 @@ import (
 // them onto directories and files, so callers must not invent key syntax of
 // their own — build every key with Key.
 type Store interface {
-	// Get returns the value stored under key, or ErrNotFound.
+	// Get returns the value stored under key, or NotFoundError.
 	Get(ctx context.Context, key string) ([]byte, error)
 	// Create stores value under key. A key that already holds a value is
-	// ErrExists: creating never destroys anything, which is what lets
+	// ExistsError: creating never destroys anything, which is what lets
 	// append-only records (see Versions) survive a crash mid-write.
 	Create(ctx context.Context, key string, value []byte) error
 	// Replace stores value under key, discarding any previous value. On a
@@ -52,49 +52,49 @@ type Store interface {
 	// value can be gone before the new one is durable — so it is reserved for
 	// records the service can re-derive after a restart (leases, job records).
 	Replace(ctx context.Context, key string, value []byte) error
-	// Delete removes key. Deleting a missing key returns ErrNotFound.
+	// Delete removes key. Deleting a missing key returns NotFoundError.
 	Delete(ctx context.Context, key string) error
 	// List returns the keys under prefix, in lexical order. The prefix is
 	// matched on whole segments: "a/b" matches "a/b/c" but never "a/bc".
 	List(ctx context.Context, prefix string) ([]string, error)
 }
 
-// ErrNotFound is returned when a key holds no value.
-type ErrNotFound struct{ Key string }
+// NotFoundError is returned when a key holds no value.
+type NotFoundError struct{ Key string }
 
-func (e ErrNotFound) Error() string { return "state: no value for key " + e.Key }
+func (e NotFoundError) Error() string { return "state: no value for key " + e.Key }
 
 // IsNotFound reports whether err is a not-found error from any Store.
 func IsNotFound(err error) bool {
-	var nf ErrNotFound
+	var nf NotFoundError
 	return errors.As(err, &nf)
 }
 
-// ErrMalformed is returned when a stored document cannot be decoded.
+// MalformedError is returned when a stored document cannot be decoded.
 //
 // It names the key and never the content: a document may hold wrapped key
 // material, and an error is the one place bytes escape by accident. It is a
 // distinct type because "the record is corrupt" and "the store is unreachable"
 // call for different reactions — one is reported and skipped, the other is
 // retried.
-type ErrMalformed struct{ Key string }
+type MalformedError struct{ Key string }
 
-func (e ErrMalformed) Error() string { return "state: malformed document at key " + e.Key }
+func (e MalformedError) Error() string { return "state: malformed document at key " + e.Key }
 
 // IsMalformed reports whether err is a decode failure from any Store.
 func IsMalformed(err error) bool {
-	var m ErrMalformed
+	var m MalformedError
 	return errors.As(err, &m)
 }
 
-// ErrExists is returned when a create would overwrite an existing value.
-type ErrExists struct{ Key string }
+// ExistsError is returned when a create would overwrite an existing value.
+type ExistsError struct{ Key string }
 
-func (e ErrExists) Error() string { return "state: a value already exists for key " + e.Key }
+func (e ExistsError) Error() string { return "state: a value already exists for key " + e.Key }
 
 // IsExists reports whether err is an already-exists error from any Store.
 func IsExists(err error) bool {
-	var ex ErrExists
+	var ex ExistsError
 	return errors.As(err, &ex)
 }
 
@@ -215,7 +215,7 @@ func (d *Documents[T]) Get(ctx context.Context, id ...string) (T, error) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		// The value, not the error, is corrupt; never echo the bytes — a
 		// document may hold wrapped key material.
-		return zero, ErrMalformed{Key: d.Key(id...)}
+		return zero, MalformedError{Key: d.Key(id...)}
 	}
 	return v, nil
 }
@@ -229,7 +229,7 @@ func (d *Documents[T]) GetKey(ctx context.Context, key string) (T, error) {
 	}
 	var v T
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return zero, ErrMalformed{Key: key}
+		return zero, MalformedError{Key: key}
 	}
 	return v, nil
 }

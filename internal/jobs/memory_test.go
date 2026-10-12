@@ -109,9 +109,9 @@ func TestFinish_Validation(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newStore(t)
 
-	var nf ErrNotFound
+	var nf NotFoundError
 	if err := store.Finish(ctx, "absent", Outcome{State: StateFailed}); !errors.As(err, &nf) {
-		t.Fatalf("Finish error = %v, want ErrNotFound", err)
+		t.Fatalf("Finish error = %v, want NotFoundError", err)
 	}
 
 	j, _ := store.Create(ctx, Job{SpaceID: "s1", Kind: KindBackup})
@@ -232,9 +232,9 @@ func TestLastOf(t *testing.T) {
 
 func TestGet_NotFound(t *testing.T) {
 	store, _ := newStore(t)
-	var nf ErrNotFound
+	var nf NotFoundError
 	if _, err := store.Get(context.Background(), "absent"); !errors.As(err, &nf) {
-		t.Fatalf("Get error = %v, want ErrNotFound", err)
+		t.Fatalf("Get error = %v, want NotFoundError", err)
 	}
 }
 

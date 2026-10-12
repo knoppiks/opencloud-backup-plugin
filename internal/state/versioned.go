@@ -102,7 +102,7 @@ type Span struct {
 }
 
 // Newest returns the newest version of a record, falling back to the legacy
-// single-document layout, or ErrNotFound.
+// single-document layout, or NotFoundError.
 func (v *Versions[T]) Newest(ctx context.Context, id ...string) (T, error) {
 	value, _, err := v.Load(ctx, id...)
 	return value, err
@@ -144,7 +144,7 @@ func (v *Versions[T]) Load(ctx context.Context, id ...string) (T, Span, error) {
 	}
 
 	if v.legacy == nil {
-		return zero, Span{}, ErrNotFound{Key: prefix}
+		return zero, Span{}, NotFoundError{Key: prefix}
 	}
 	value, err := v.legacy.Get(ctx, id...)
 	if err != nil {
@@ -302,7 +302,7 @@ func (v *Versions[T]) DeleteAll(ctx context.Context, id ...string) (bool, error)
 	return removed, nil
 }
 
-// NewestKey returns the lexically last key under prefix, or ErrNotFound when the
+// NewestKey returns the lexically last key under prefix, or NotFoundError when the
 // prefix holds nothing. It is the primitive Versions is built on, exported
 // because "read the newest record under this prefix" is the shape every
 // append-only store needs.
@@ -314,7 +314,7 @@ func NewestKey(ctx context.Context, store Store, prefix string) (string, error) 
 	if _, key, ok := newestVersion(keys); ok {
 		return key, nil
 	}
-	return "", ErrNotFound{Key: prefix}
+	return "", NotFoundError{Key: prefix}
 }
 
 // versionName renders a version's timestamp as a fixed-width, sortable name.

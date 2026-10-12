@@ -93,12 +93,12 @@ type SpaceKeys struct {
 // returns plaintext key material. Every method honours ctx: a cancelled request
 // or a stopping run stops the store operation it started.
 type Store interface {
-	// GetSRW returns the SRW-wrapped DK for a space, or ErrNotFound.
+	// GetSRW returns the SRW-wrapped DK for a space, or NotFoundError.
 	GetSRW(ctx context.Context, spaceID string) (WrappedDK, error)
 	// PutSRW stores the SRW-wrapped DK for a space.
 	PutSRW(ctx context.Context, spaceID string, w WrappedDK) error
 	// GetRK returns the RK-wrapped DK for a space (for Take-Out export), or
-	// ErrNotFound.
+	// NotFoundError.
 	GetRK(ctx context.Context, spaceID string) (WrappedDK, error)
 	// PutRK stores the RK-wrapped DK for a space.
 	PutRK(ctx context.Context, spaceID string, w WrappedDK) error
@@ -136,10 +136,10 @@ type Wrapper interface {
 	UnwrapSRW(w WrappedDK) (dk []byte, err error)
 }
 
-// ErrNotFound is returned by Store when no envelope exists for a space.
-type ErrNotFound struct{ SpaceID string }
+// NotFoundError is returned by Store when no envelope exists for a space.
+type NotFoundError struct{ SpaceID string }
 
-func (e ErrNotFound) Error() string { return "keys: no envelope for space " + e.SpaceID }
+func (e NotFoundError) Error() string { return "keys: no envelope for space " + e.SpaceID }
 
 // Clone returns a deep copy of the envelope, so a Store can hand one out (or
 // take one in) without the caller reaching into what it keeps.

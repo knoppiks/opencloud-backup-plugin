@@ -14,9 +14,9 @@ func TestEnvelopeVersionPinned(t *testing.T) {
 }
 
 func TestErrNotFoundIsErrorsAs(t *testing.T) {
-	err := error(ErrNotFound{SpaceID: "s1"})
-	var nf ErrNotFound
+	err := error(NotFoundError{SpaceID: "s1"})
+	var nf NotFoundError
 	if !errors.As(err, &nf) || nf.SpaceID != "s1" {
-		t.Fatalf("ErrNotFound not matchable via errors.As: %v", err)
+		t.Fatalf("NotFoundError not matchable via errors.As: %v", err)
 	}
 }

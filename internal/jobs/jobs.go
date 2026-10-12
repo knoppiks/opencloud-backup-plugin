@@ -122,9 +122,9 @@ type Outcome struct {
 type Store interface {
 	// Create records a new job, filling in id and timestamps when absent.
 	Create(ctx context.Context, j Job) (Job, error)
-	// Get returns one job by id, or ErrNotFound.
+	// Get returns one job by id, or NotFoundError.
 	Get(ctx context.Context, id string) (Job, error)
-	// GetInSpace returns one job of one Space, or ErrNotFound — including for
+	// GetInSpace returns one job of one Space, or NotFoundError — including for
 	// a job that exists but belongs to another Space, so a caller scoped to a
 	// Space cannot tell the two apart.
 	//
@@ -170,10 +170,10 @@ var ErrLocked = errors.New("jobs: another run is already in progress for this sp
 // non-terminal state.
 var ErrNotTerminal = errors.New("jobs: finish requires a terminal state")
 
-// ErrNotFound is returned when no job exists with the given id.
-type ErrNotFound struct{ ID string }
+// NotFoundError is returned when no job exists with the given id.
+type NotFoundError struct{ ID string }
 
-func (e ErrNotFound) Error() string { return "jobs: no job with id " + e.ID }
+func (e NotFoundError) Error() string { return "jobs: no job with id " + e.ID }
 
 // Locker serialises runs per Space. Concurrent backup runs against one kopia
 // repository would race on maintenance and produce confusing partial history,

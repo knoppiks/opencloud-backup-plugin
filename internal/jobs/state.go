@@ -95,7 +95,7 @@ func (s *StateStore) Get(ctx context.Context, id string) (Job, error) {
 	if err != nil {
 		if state.IsNotFound(err) {
 			s.forget(id)
-			return Job{}, ErrNotFound{ID: id}
+			return Job{}, NotFoundError{ID: id}
 		}
 		return Job{}, fmt.Errorf("jobs: read job: %w", err)
 	}
@@ -111,7 +111,7 @@ func (s *StateStore) Get(ctx context.Context, id string) (Job, error) {
 // served by a different replica, would read as "your restore vanished".
 func (s *StateStore) GetInSpace(ctx context.Context, spaceID, id string) (Job, error) {
 	if spaceID == "" || id == "" {
-		return Job{}, ErrNotFound{ID: id}
+		return Job{}, NotFoundError{ID: id}
 	}
 	keys, err := s.docs.Keys(ctx, spaceID)
 	if err != nil {
@@ -125,19 +125,19 @@ func (s *StateStore) GetInSpace(ctx context.Context, spaceID, id string) (Job, e
 		j, err := s.docs.GetKey(ctx, key)
 		if err != nil {
 			if state.IsNotFound(err) {
-				return Job{}, ErrNotFound{ID: id}
+				return Job{}, NotFoundError{ID: id}
 			}
 			return Job{}, fmt.Errorf("jobs: read job: %w", err)
 		}
 		// The key says which Space the document is filed under; the document
 		// says which Space it is about. Both must agree before it is served.
 		if j.SpaceID != spaceID {
-			return Job{}, ErrNotFound{ID: id}
+			return Job{}, NotFoundError{ID: id}
 		}
 		s.remember(j.ID, key)
 		return j, nil
 	}
-	return Job{}, ErrNotFound{ID: id}
+	return Job{}, NotFoundError{ID: id}
 }
 
 // List returns a Space's jobs, newest first.
@@ -217,7 +217,7 @@ func (s *StateStore) Finish(ctx context.Context, id string, out Outcome) error {
 	if err != nil {
 		if state.IsNotFound(err) {
 			s.forget(id)
-			return ErrNotFound{ID: id}
+			return NotFoundError{ID: id}
 		}
 		return fmt.Errorf("jobs: read job: %w", err)
 	}
@@ -321,7 +321,7 @@ func (s *StateStore) keyFor(ctx context.Context, id string) (string, error) {
 		return key, nil
 	}
 	if indexed {
-		return "", ErrNotFound{ID: id}
+		return "", NotFoundError{ID: id}
 	}
 
 	keys, err := s.docs.Keys(ctx)
@@ -340,7 +340,7 @@ func (s *StateStore) keyFor(ctx context.Context, id string) (string, error) {
 	s.mu.Unlock()
 
 	if !ok {
-		return "", ErrNotFound{ID: id}
+		return "", NotFoundError{ID: id}
 	}
 	return key, nil
 }

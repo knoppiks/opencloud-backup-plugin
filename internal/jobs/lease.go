@@ -180,13 +180,16 @@ func (l *LeaseLocker) Acquire(ctx context.Context, spaceID string) (func(), erro
 		return nil, err
 	}
 
-	go l.renewUntil(spaceID, stop)
+	// Renewing and releasing the lease outlive ctx, which may be a request's:
+	// they keep its values and drop its cancellation.
+	detached := context.WithoutCancel(ctx)
+	go l.renewUntil(detached, spaceID, stop)
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			close(stop)
-			l.release(spaceID)
+			l.release(detached, spaceID)
 		})
 	}, nil
 }
@@ -231,7 +234,7 @@ func (l *LeaseLocker) write(ctx context.Context, spaceID string, now time.Time) 
 
 // renewUntil keeps a held lease alive until the run releases it. A run may
 // legitimately take hours; the lease stays short so a crash is noticed quickly.
-func (l *LeaseLocker) renewUntil(spaceID string, stop <-chan struct{}) {
+func (l *LeaseLocker) renewUntil(ctx context.Context, spaceID string, stop <-chan struct{}) {
 	interval := l.ttl / 3
 	if interval <= 0 {
 		interval = l.ttl
@@ -241,8 +244,8 @@ func (l *LeaseLocker) renewUntil(spaceID string, stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-l.after(interval):
-			ctx, cancel := context.WithTimeout(context.Background(), leaseWriteTimeout)
-			err := l.write(ctx, spaceID, l.clock.Now())
+			writeCtx, cancel := context.WithTimeout(ctx, leaseWriteTimeout)
+			err := l.write(writeCtx, spaceID, l.clock.Now())
 			cancel()
 			if err != nil {
 				// Best effort: if renewal keeps failing the lease expires and
@@ -254,12 +257,12 @@ func (l *LeaseLocker) renewUntil(spaceID string, stop <-chan struct{}) {
 }
 
 // release drops the lease and the process-local hold.
-func (l *LeaseLocker) release(spaceID string) {
+func (l *LeaseLocker) release(ctx context.Context, spaceID string) {
 	l.mu.Lock()
 	delete(l.local, spaceID)
 	l.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), leaseWriteTimeout)
+	ctx, cancel := context.WithTimeout(ctx, leaseWriteTimeout)
 	defer cancel()
 	if err := l.docs.Delete(ctx, spaceID); err != nil && !state.IsNotFound(err) {
 		l.logger.Warn("could not release run lease", "space", spaceID, "err", err)

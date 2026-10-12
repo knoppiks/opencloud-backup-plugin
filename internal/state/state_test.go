@@ -245,8 +245,8 @@ func TestDocumentsSkipsMalformedRecords(t *testing.T) {
 func TestErrNotFoundIsMatchable(t *testing.T) {
 	t.Parallel()
 
-	err := error(state.ErrNotFound{Key: "k"})
-	var target state.ErrNotFound
+	err := error(state.NotFoundError{Key: "k"})
+	var target state.NotFoundError
 	if !errors.As(err, &target) || target.Key != "k" {
 		t.Fatalf("errors.As: %v", err)
 	}

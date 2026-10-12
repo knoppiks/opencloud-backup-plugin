@@ -70,7 +70,7 @@ func (m *MemoryStore) Get(_ context.Context, id string) (Job, error) {
 	defer m.mu.RUnlock()
 	j, ok := m.jobs[id]
 	if !ok {
-		return Job{}, ErrNotFound{ID: id}
+		return Job{}, NotFoundError{ID: id}
 	}
 	return j, nil
 }
@@ -79,7 +79,7 @@ func (m *MemoryStore) Get(_ context.Context, id string) (Job, error) {
 func (m *MemoryStore) GetInSpace(ctx context.Context, spaceID, id string) (Job, error) {
 	j, err := m.Get(ctx, id)
 	if err != nil || j.SpaceID != spaceID {
-		return Job{}, ErrNotFound{ID: id}
+		return Job{}, NotFoundError{ID: id}
 	}
 	return j, nil
 }
@@ -146,7 +146,7 @@ func (m *MemoryStore) Finish(_ context.Context, id string, out Outcome) error {
 	defer m.mu.Unlock()
 	j, ok := m.jobs[id]
 	if !ok {
-		return ErrNotFound{ID: id}
+		return NotFoundError{ID: id}
 	}
 	m.jobs[id] = applyOutcome(j, out, m.clock.Now())
 	return nil

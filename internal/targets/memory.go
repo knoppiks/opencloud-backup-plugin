@@ -48,7 +48,7 @@ func (m *MemoryStore) UpdateTarget(_ context.Context, t Target) (Target, error) 
 	defer m.mu.Unlock()
 	existing, ok := m.targets[t.ID]
 	if !ok {
-		return Target{}, ErrNotFound{ID: t.ID}
+		return Target{}, NotFoundError{ID: t.ID}
 	}
 	if t.WrappedCreds == nil {
 		t.WrappedCreds = existing.WrappedCreds
@@ -63,7 +63,7 @@ func (m *MemoryStore) DeleteTarget(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.targets[id]; !ok {
-		return ErrNotFound{ID: id}
+		return NotFoundError{ID: id}
 	}
 	delete(m.targets, id)
 	delete(m.grants, id)
@@ -76,7 +76,7 @@ func (m *MemoryStore) GetTarget(_ context.Context, id string) (Target, error) {
 	defer m.mu.RUnlock()
 	t, ok := m.targets[id]
 	if !ok {
-		return Target{}, ErrNotFound{ID: id}
+		return Target{}, NotFoundError{ID: id}
 	}
 	return t, nil
 }
@@ -176,7 +176,7 @@ func (m *MemoryStore) MayUse(_ context.Context, userID, spaceID, targetID string
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if _, ok := m.targets[targetID]; !ok {
-		return false, ErrNotFound{ID: targetID}
+		return false, NotFoundError{ID: targetID}
 	}
 	spaceSet := map[string]struct{}{}
 	if spaceID != "" {
@@ -199,6 +199,8 @@ func grantsAllow(grants []Grant, userID string, spaceSet map[string]struct{}) bo
 			if _, ok := spaceSet[g.SpaceID]; ok {
 				return true
 			}
+		case ScopeUnknown:
+			// A grant whose scope could not be read admits nobody.
 		}
 	}
 	return false

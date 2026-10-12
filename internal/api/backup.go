@@ -103,7 +103,7 @@ func (s *Server) handleGetBackupConfig(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := s.spaceConfigs.Get(r.Context(), spaceID)
 	if err != nil {
-		var notFound spacecfg.ErrNotFound
+		var notFound spacecfg.NotFoundError
 		if errors.As(err, &notFound) {
 			writeError(w, http.StatusNotFound, "not_found", "backup is not configured for this space")
 			return
@@ -354,7 +354,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 	j, err := s.jobStore.GetInSpace(r.Context(), spaceID, jobID)
 	if err != nil {
-		var notFound jobs.ErrNotFound
+		var notFound jobs.NotFoundError
 		if errors.As(err, &notFound) {
 			writeError(w, http.StatusNotFound, "not_found", "no such run")
 			return

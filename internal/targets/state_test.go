@@ -24,7 +24,7 @@ func TestStoreContract(t *testing.T) {
 			ctx := context.Background()
 			store := newImpl()
 
-			var nf ErrNotFound
+			var nf NotFoundError
 			if _, err := store.GetTarget(ctx, "absent"); !errors.As(err, &nf) {
 				t.Fatalf("GetTarget absent: %v", err)
 			}
@@ -224,7 +224,7 @@ func TestStateStore_ReadsPreVersionedRecords(t *testing.T) {
 	if err := store.DeleteTarget(ctx, "t1"); err != nil {
 		t.Fatalf("DeleteTarget: %v", err)
 	}
-	var nf ErrNotFound
+	var nf NotFoundError
 	if _, err := store.GetTarget(ctx, "t1"); !errors.As(err, &nf) {
 		t.Fatalf("GetTarget after delete: %v", err)
 	}
@@ -289,9 +289,9 @@ func TestStateStore_UnreadableTargetIsReportedNotDropped(t *testing.T) {
 	}
 
 	_, err = store.ListTargets(ctx)
-	var unreadable ErrUnreadableTargets
+	var unreadable UnreadableTargetsError
 	if !errors.As(err, &unreadable) || len(unreadable.Keys) != 1 || unreadable.Keys[0] != keys[0] {
-		t.Fatalf("ListTargets = %v, want ErrUnreadableTargets naming %s", err, keys[0])
+		t.Fatalf("ListTargets = %v, want UnreadableTargetsError naming %s", err, keys[0])
 	}
 
 	views, err := store.VisibleTargets(ctx, "alice", []string{"s1"})

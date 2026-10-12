@@ -212,15 +212,25 @@ func isEnvelopeDigest(s string) bool {
 // single instance (#16 again), so a lock held across "read, compare, write"
 // inside this process is a real compare-and-set for the one writer there is.
 type spaceLocks struct {
-	locks sync.Map // space id -> *sync.Mutex
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex // space id -> its lock
 }
 
 // lock takes the Space's lock and returns its release.
 func (l *spaceLocks) lock(spaceID string) (unlock func()) {
-	m, _ := l.locks.LoadOrStore(spaceID, &sync.Mutex{})
-	mu := m.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+	l.mu.Lock()
+	m, ok := l.locks[spaceID]
+	if !ok {
+		if l.locks == nil {
+			l.locks = make(map[string]*sync.Mutex)
+		}
+		m = &sync.Mutex{}
+		l.locks[spaceID] = m
+	}
+	l.mu.Unlock()
+
+	m.Lock()
+	return m.Unlock
 }
 
 // handleRotateRecoveryKey stores a new recovery envelope for a Space, leaving
@@ -326,7 +336,7 @@ func (s *Server) handleRecoveryEnvelope(w http.ResponseWriter, r *http.Request) 
 
 	wrapped, err := s.keyStore.GetRK(r.Context(), spaceID)
 	if err != nil {
-		var nf keys.ErrNotFound
+		var nf keys.NotFoundError
 		if errors.As(err, &nf) {
 			writeError(w, http.StatusNotFound, "not_found", "backup not configured for this space")
 			return

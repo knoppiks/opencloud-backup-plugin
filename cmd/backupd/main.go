@@ -47,17 +47,12 @@ import (
 	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3state"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/instance"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/jobs"
-	"github.com/knoppiks/opencloud-backup-plugin/internal/keystore"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/notify"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/objstore"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/ocversion"
-	"github.com/knoppiks/opencloud-backup-plugin/internal/restore"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/scheduler"
-	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
-	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot/s3repo"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/spacecfg"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
-	"github.com/knoppiks/opencloud-backup-plugin/internal/takeout/remote"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/targets"
 	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
 )
@@ -85,7 +80,7 @@ const (
 // productionStartup.
 type startupDeps struct {
 	// openState returns the durable state store.
-	openState func(st stateEnv, client *cs3.Client, serviceAccountID string, logger *slog.Logger) (state.Store, error)
+	openState func(ctx context.Context, st stateEnv, client *cs3.Client, serviceAccountID string, logger *slog.Logger) (state.Store, error)
 }
 
 // productionStartup is what the service runs with.
@@ -323,56 +318,11 @@ func buildService(ctx context.Context, cfg serviceEnv, logger *slog.Logger, deps
 		return service{}, cleanup, err
 	}
 
-	// --- OIDC validator ---------------------------------------------------
-	// An issuer without an audience or without OC_BASE_URL was refused by
-	// api.Env.Validate.
-	if issuer := cfg.API.OIDC.Issuer; issuer != "" {
-		// Discovery happens in the background: an identity provider that is not
-		// up yet must delay authentication, not the whole service (a
-		// crash-looping pod is harder to diagnose than a 503 that explains
-		// itself).
-		ks := api.NewLazyKeySet(issuer, httpClient(), time.Hour, logger)
-		v, err := api.NewOIDCValidator(api.OIDCConfig{
-			Issuer:   issuer,
-			Audience: cfg.API.OIDC.Audience,
-			KeySet:   ks,
-		})
-		if err != nil {
-			return service{}, cleanup, err
-		}
-		opts = append(opts, api.WithTokenValidator(v))
-
-		// The token's `sub` is not the OpenCloud user id, and every
-		// authorization decision is taken on the latter (internal/api/users.go).
-		opts = append(opts, api.WithUserResolver(api.NewGraphUserResolver(cfg.API.OpenCloud.BaseURL, httpClient())))
-	} else {
-		logger.Warn("OIDC_ISSUER unset; authenticated routes will reject all requests")
+	authOpts, err := authOptions(cfg.API, logger)
+	if err != nil {
+		return service{}, cleanup, err
 	}
-
-	// --- admin resolver ---------------------------------------------------
-	// ADMIN_SUBJECT_ALLOWLIST holds OpenCloud user ids, despite its name,
-	// which predates the finding in internal/api/users.go.
-	if ids := cfg.API.OpenCloud.AdminAllowlist; len(ids) > 0 {
-		opts = append(opts, api.WithAdminResolver(api.NewAllowlistAdminResolver(ids)))
-		logger.Info("admin detection: allow-list of OpenCloud user ids", "count", len(ids))
-	} else if base := cfg.API.OpenCloud.BaseURL; base != "" {
-		roleID := cfg.API.OpenCloud.AdminAppRoleID
-		opts = append(opts, api.WithAdminResolver(api.NewGraphAdminResolver(base, roleID, httpClient())))
-		logger.Info("admin detection: graph appRoleAssignments", "admin_app_role_id", roleID)
-	} else {
-		logger.Warn("no admin resolver configured; admin routes will 403 for everyone")
-	}
-
-	// --- group resolver ---------------------------------------------------
-	// Group grants on a Space are only honoured when the caller's groups can be
-	// resolved. Without this, a Space granted to a group refuses the members who
-	// need that grant rather than guessing (fail closed).
-	if base := cfg.API.OpenCloud.BaseURL; base != "" {
-		opts = append(opts, api.WithGroupResolver(api.NewGraphGroupResolver(base, httpClient())))
-		logger.Info("group resolution: graph memberOf")
-	} else {
-		logger.Warn("OC_BASE_URL unset; group grants on a Space cannot be honoured")
-	}
+	opts = append(opts, authOpts...)
 
 	// --- OpenCloud version (compatibility-policy.md §3) ------------------
 	// Read, logged, and warned about when it is outside the window this build
@@ -410,7 +360,7 @@ func buildService(ctx context.Context, cfg serviceEnv, logger *slog.Logger, deps
 	// internal/cs3state for the trade-offs; the short version is that a scheduler
 	// whose memory dies with the process cannot tell a missed run from a fresh
 	// install.
-	backing, err := deps.openState(cfg.State, cs3Client, cfg.CS3.ServiceAccountID.Reveal(), logger)
+	backing, err := deps.openState(ctx, cfg.State, cs3Client, cfg.CS3.ServiceAccountID.Reveal(), logger)
 	if err != nil {
 		return service{}, cleanup, err
 	}
@@ -443,51 +393,12 @@ func buildService(ctx context.Context, cfg serviceEnv, logger *slog.Logger, deps
 		api.WithTargetChecker(objstore.S3Checker{Logger: logger}),
 	)
 
-	// --- key service (Phase 3) -------------------------------------------
-	// The SRW key is cluster/KMS custody (decisions.md #1): it arrives via a
-	// Secret-backed env var, is used to wrap/unwrap DKs, and is NEVER logged.
-	// Without it the backup key endpoints stay unavailable rather than running
-	// in a degraded, insecure mode. The store holds wrapped envelopes only.
-	wrapKeys, err := loadWrapKeys(cfg.Keys)
+	custody, err := buildCustody(cfg.Keys, backing, logger)
 	if err != nil {
 		return service{}, cleanup, err
 	}
-	defer wrapKeys.zeroize()
-
-	var srwWrapper *keys.SRWWrapper
-	keyStore := keystore.New(backing, nil)
-	// The store holds ciphertext only and is wired regardless of the SRW key:
-	// the status board reads a Space's key state from it, and "is this Space
-	// set up" must not become unanswerable because the key that *adds* a wrap
-	// is missing. Setup itself still refuses without the SRW wrapper.
-	opts = append(opts, api.WithKeyStore(keyStore))
-	if wrapKeys.srw != nil {
-		srwWrapper, err = keys.NewSRWWrapper(wrapKeys.srw)
-		if err != nil {
-			return service{}, cleanup, err
-		}
-		opts = append(opts, api.WithSRWWrapper(srwWrapper))
-		logger.Info("key service enabled")
-	} else {
-		logger.Warn("SRW_KEY unset; backup key endpoints will be unavailable")
-	}
-
-	// --- target credential sealer (decisions.md #14) ---------------------
-	// The TW key is a distinct cluster/KMS secret so data-key custody and
-	// target-credential custody rotate independently.
-	var credSealer targets.CredSealer
-	if wrapKeys.tw != nil {
-		credSealer, err = targets.NewCredSealer(wrapKeys.tw)
-		if err != nil {
-			return service{}, cleanup, err
-		}
-		// The API seals with it and never opens: a credential blob is opened
-		// in worker memory at run time and nowhere else (decisions.md #14).
-		opts = append(opts, api.WithCredSealer(credSealer))
-		logger.Info("target credential sealing enabled")
-	} else {
-		logger.Warn("TW_KEY unset; backup runs will be unavailable")
-	}
+	opts = append(opts, custody.options()...)
+	keyStore, srwWrapper, credSealer := custody.keyStore, custody.srw, custody.sealer
 
 	// --- optional default target ------------------------------------------
 	// Seeding is skipped unless explicitly enabled and the store is empty, so it
@@ -541,102 +452,36 @@ func buildService(ctx context.Context, cfg serviceEnv, logger *slog.Logger, deps
 	reporter := notify.NewReporter(notifier, classifyRunFailure, logger)
 	opts = append(opts, api.WithNotificationStore(events))
 
-	var sched *scheduler.Scheduler
 	// Manual runs outlive their request but not the process: serve stops
 	// this at shutdown, which cancels them, and waits for them to record how
 	// they ended.
 	background := jobs.NewBackground(logger)
 
+	var sched *scheduler.Scheduler
 	if spaceReader != nil && srwWrapper != nil && credSealer != nil {
-		parallelism := cfg.Backup.Parallelism
-		engine, err := snapshot.NewEngine(s3repo.Opener{Limits: cfg.Backup.limits()}, snapshot.EngineOptions{
-			Parallelism: parallelism,
-			WorkDir:     workDir,
+		pipeOpts, built, err := buildPipelines(pipelineDeps{
+			cfg:          cfg,
+			workDir:      workDir,
+			background:   background,
+			spaceReader:  spaceReader,
+			spaceWriter:  spaceWriter,
+			spaceConfigs: spaceConfigs,
+			targetStore:  targetStore,
+			credSealer:   credSealer,
+			keyStore:     keyStore,
+			srwWrapper:   srwWrapper,
+			jobStore:     jobStore,
+			locker:       locker,
+			events:       events,
+			reporter:     reporter,
+			monitor:      monitor,
+			logger:       logger,
 		})
 		if err != nil {
 			return service{}, cleanup, err
 		}
-
-		runner, err := backup.NewRunner(backup.Deps{
-			Background: background,
-			Spaces:     spaceReader,
-			Configs:    spaceConfigs,
-			Targets:    targetStore,
-			Sealer:     credSealer,
-			Keys:       keyStore,
-			Unwrap:     srwWrapper,
-			Engine:     engine,
-			Jobs:       jobStore,
-			Locks:      locker,
-			// Publishing the RK-wrapped envelope to the target is what makes an
-			// admin Take-Out self-contained, so Path A works with OpenCloud
-			// down. It is ciphertext the server cannot open (Phase 5).
-			Envelopes: remote.S3Publisher{},
-			// Asked on prune runs only: what this target can actually enforce,
-			// observed rather than assumed from the version it claims to be
-			// (decisions.md #8).
-			Immutability: objstore.S3Prober{},
-			Logger:       logger,
-		})
-		if err != nil {
-			return service{}, cleanup, err
-		}
-		opts = append(opts, api.WithBackupRunner(runner))
-
-		// Restore Path B: same collaborators, plus the CS3 write path. It is a
-		// user-only capability; the API gates every route on membership.
-		restorer, err := restore.NewRunner(restore.Deps{
-			Background: background,
-			Spaces:     spaceReader,
-			Writer:     spaceWriter,
-			Configs:    spaceConfigs,
-			Targets:    targetStore,
-			Sealer:     credSealer,
-			Keys:       keyStore,
-			Unwrap:     srwWrapper,
-			Engine:     engine,
-			Jobs:       jobStore,
-			Locks:      locker,
-			Logger:     logger,
-		})
-		if err != nil {
-			return service{}, cleanup, err
-		}
-		opts = append(opts, api.WithRestoreRunner(restorer))
-
-		logger.Info("backup and restore pipelines enabled", "parallelism", parallelism)
-
-		// --- scheduler (Phase 6) ------------------------------------------
-		sched, err = scheduler.New(scheduler.Deps{
-			Configs: spaceConfigs,
-			Jobs:    jobStore,
-			Runner: scheduler.RunnerFunc(func(ctx context.Context, spaceID string) error {
-				_, err := runner.RunScheduled(ctx, spaceID)
-				return err
-			}),
-			// Retention is applied by the same runner, as its own job kind:
-			// nothing else ever expires a snapshot or reclaims the storage a
-			// failed run left behind (decisions.md #9 Tier 1).
-			Prunes: scheduler.PruneRunnerFunc(func(ctx context.Context, spaceID string) error {
-				_, err := runner.RunPrune(ctx, spaceID)
-				return err
-			}),
-			Recoverer: locker,
-			// The run lock answers "is this Space already running" in one read,
-			// for every process, instead of scanning run history every tick.
-			Runs: locker,
-			// Notifications are trimmed with the run history they describe;
-			// nothing else in the service would ever trim them.
-			Events:        events,
-			Clock:         scheduler.SystemClock(),
-			Logger:        logger,
-			OnRunFinished: reporter.RunFinished,
-			OnSweep:       monitor.Sweep,
-		}, cfg.Scheduler.Options())
-		if err != nil {
-			return service{}, cleanup, err
-		}
-		opts = append(opts, api.WithScheduleAdvisor(sched))
+		opts = append(opts, pipeOpts...)
+		sched = built
 	} else {
 		logger.Warn("backup pipeline disabled; CS3_GATEWAY_ADDR, SRW_KEY and TW_KEY are all required")
 	}
@@ -734,7 +579,7 @@ func cs3ClientOptions(cfg cs3.Env) ([]cs3.ClientOption, error) {
 // the loss happens on an ordinary pod restart — long after the person who
 // completed the key ceremony has stopped watching. A deployment that genuinely
 // wants throwaway state says so with STATE_BACKEND=memory.
-func buildStateStore(st stateEnv, client *cs3.Client, serviceAccountID string, logger *slog.Logger) (state.Store, error) {
+func buildStateStore(ctx context.Context, st stateEnv, client *cs3.Client, serviceAccountID string, logger *slog.Logger) (state.Store, error) {
 	if st.memory() {
 		logger.Warn("STATE_BACKEND=" + stateBackendMemory + ": service state is in memory only. " +
 			"Schedules, run history and key envelopes will not survive a restart")
@@ -771,7 +616,7 @@ func buildStateStore(st stateEnv, client *cs3.Client, serviceAccountID string, l
 	// later. A Space that cannot be checked at all is a different matter:
 	// OpenCloud may simply not be up yet, and resolution is lazy for exactly
 	// that reason, so it is a warning.
-	checkCtx, cancel := context.WithTimeout(context.Background(), stateCheckTimeout)
+	checkCtx, cancel := context.WithTimeout(ctx, stateCheckTimeout)
 	defer cancel()
 	if err := store.Check(checkCtx); err != nil {
 		if errors.Is(err, cs3state.ErrUnsafeStateSpace) {
@@ -838,7 +683,13 @@ func classifyRunFailure(err error) notify.Classification {
 // moving the client's own inactivity guard takes over (cs3.DefaultStallTimeout),
 // and the run itself is bounded by backup.DefaultRunTimeout.
 func dataGatewayClient() *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		// Nothing in this program replaces it; something that did would also
+		// take away the dial and proxy defaults this client is built on.
+		panic(fmt.Sprintf("backupd: http.DefaultTransport is a %T, not an *http.Transport", http.DefaultTransport))
+	}
+	transport := base.Clone()
 	transport.ResponseHeaderTimeout = 60 * time.Second
 	transport.TLSHandshakeTimeout = 15 * time.Second
 	return &http.Client{Transport: transport}

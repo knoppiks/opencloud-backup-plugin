@@ -103,7 +103,7 @@ func (s *StateStore) DeleteTarget(ctx context.Context, id string) error {
 		return fmt.Errorf("targets: delete target: %w", err)
 	}
 	if !removed {
-		return ErrNotFound{ID: id}
+		return NotFoundError{ID: id}
 	}
 	// A grant that outlived its target would be a dangling permission.
 	if _, err := s.grants.DeleteAll(ctx, id); err != nil {
@@ -117,7 +117,7 @@ func (s *StateStore) GetTarget(ctx context.Context, id string) (Target, error) {
 	t, err := s.targets.Newest(ctx, id)
 	if err != nil {
 		if state.IsNotFound(err) {
-			return Target{}, ErrNotFound{ID: id}
+			return Target{}, NotFoundError{ID: id}
 		}
 		return Target{}, fmt.Errorf("targets: read target: %w", err)
 	}
@@ -127,7 +127,7 @@ func (s *StateStore) GetTarget(ctx context.Context, id string) (Target, error) {
 // ListTargets returns all targets (admin view).
 //
 // A target record that cannot be decoded fails the listing with
-// ErrUnreadableTargets rather than dropping out of it. Every caller of the full
+// UnreadableTargetsError rather than dropping out of it. Every caller of the full
 // list acts on what it does not see: TW rotation would leave that target sealed
 // under the retiring key, and bootstrap would take a store whose one record is
 // corrupt for an empty one (review-2026-10.md F2).
@@ -137,7 +137,7 @@ func (s *StateStore) ListTargets(ctx context.Context) ([]Target, error) {
 		return nil, err
 	}
 	if len(unreadable) > 0 {
-		return nil, ErrUnreadableTargets{Keys: unreadable}
+		return nil, UnreadableTargetsError{Keys: unreadable}
 	}
 	return out, nil
 }

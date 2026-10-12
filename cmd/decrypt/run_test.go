@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,7 +227,8 @@ func TestBinaryExitStatusAndStampedVersion(t *testing.T) {
 		cmd.Stdout = &stdout
 		err := cmd.Run()
 		code := 0
-		if exit, ok := err.(*exec.ExitError); ok {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
 			code = exit.ExitCode()
 		} else if err != nil {
 			t.Fatalf("%v: %v", c.args, err)
