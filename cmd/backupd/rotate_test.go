@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"opencloud-backup-plugin/internal/cli"
-	"opencloud-backup-plugin/pkg/jobs"
-	"opencloud-backup-plugin/pkg/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cli"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/jobs"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
 )
 
 func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }

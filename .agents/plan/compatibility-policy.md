@@ -74,7 +74,7 @@ No MAJOR bump licenses dropping them:
 - **TW-wrapped credential blob** and **state-Space record layouts**: newer
   versions read older layouts (as R1 does with the pre-versioned ones). The
   credential blob's shapes are frozen in
-  `pkg/targets/testdata/sealed-credentials-v1.json`.
+  `internal/targets/testdata/sealed-credentials-v1.json`.
 - **`decrypt`'s command line** (from 1.0.0): no flag is removed or renamed;
   a new name may be added as an alias. `decrypt` is run years after the
   instructions for it were written down, by someone who cannot ask.
@@ -124,7 +124,7 @@ oldest leg up to the newest, plus every patch release of the current
 Production line.** The channel a release came out on does not matter inside
 the range.
 
-**Tested** (CI legs, all blocking, `pkg/ocversion/versions.yaml`):
+**Tested** (CI legs, all blocking, `internal/ocversion/versions.yaml`):
 
 | Leg | Pins | Why |
 |---|---|---|

@@ -35,7 +35,7 @@ func TestPackageDepsListsTransitiveImports(t *testing.T) {
 	deps := PackageDeps(t, ".")
 	// This package imports os/exec, which imports os: both direct and
 	// transitive dependencies are reported, and the package itself.
-	for _, want := range []string{"os/exec", "os", "opencloud-backup-plugin/internal/testutil"} {
+	for _, want := range []string{"os/exec", "os", "github.com/knoppiks/opencloud-backup-plugin/internal/testutil"} {
 		if !deps[want] {
 			t.Errorf("PackageDeps(.) is missing %s", want)
 		}
@@ -45,7 +45,7 @@ func TestPackageDepsListsTransitiveImports(t *testing.T) {
 func TestModuleDepsListsModulesWithoutTheStandardLibrary(t *testing.T) {
 	// internal/cli imports only the standard library, so its own module is
 	// the only one; decrypt links kopia, so kopia's module is among its.
-	if got, want := ModuleDeps(t, "../cli"), []string{"opencloud-backup-plugin"}; !slices.Equal(got, want) {
+	if got, want := ModuleDeps(t, "../cli"), []string{"github.com/knoppiks/opencloud-backup-plugin"}; !slices.Equal(got, want) {
 		t.Fatalf("ModuleDeps(../cli) = %v, want %v", got, want)
 	}
 	if got := ModuleDeps(t, "../../cmd/decrypt"); !slices.Contains(got, "github.com/kopia/kopia") {

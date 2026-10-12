@@ -25,14 +25,14 @@ import (
 
 	"github.com/kopia/kopia/repo/blob/throttling"
 
-	"opencloud-backup-plugin/internal/config"
-	"opencloud-backup-plugin/pkg/api"
-	"opencloud-backup-plugin/pkg/cs3"
-	"opencloud-backup-plugin/pkg/cs3state"
-	"opencloud-backup-plugin/pkg/keys"
-	"opencloud-backup-plugin/pkg/notify"
-	"opencloud-backup-plugin/pkg/scheduler"
-	"opencloud-backup-plugin/pkg/targets"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/api"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/notify"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/scheduler"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/targets"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
 )
 
 // serviceEnv is the configuration of the service and its operator commands:

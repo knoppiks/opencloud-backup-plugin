@@ -1,6 +1,6 @@
 package main
 
-import envconfig "opencloud-backup-plugin/internal/config"
+import envconfig "github.com/knoppiks/opencloud-backup-plugin/internal/config"
 
 // takeoutEnv is the environment the extractor reads. Everything else it takes
 // as flags; the credentials come from the environment because command lines

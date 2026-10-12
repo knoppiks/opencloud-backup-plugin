@@ -30,7 +30,7 @@ concurrency:
 
 env:
   # Keep in sync with ci.yml.
-  GO_VERSION: "1.26.0"
+  GO_VERSION: "1.26.9"
 
 jobs:
   fuzz:

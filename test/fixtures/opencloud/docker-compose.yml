@@ -6,7 +6,7 @@
 # server starts. up.sh handles init + start + secret extraction.
 #
 # Images: OpenCloud from OC_IMAGE, which up.sh writes to ./.env from the leg it
-# picked in pkg/ocversion/versions.yaml (the only place OpenCloud is pinned);
+# picked in internal/ocversion/versions.yaml (the only place OpenCloud is pinned);
 # caddy:2.10-alpine.
 # Exposed:
 #   9200 -> HTTPS single origin, served by the proxy below: OpenCloud plus

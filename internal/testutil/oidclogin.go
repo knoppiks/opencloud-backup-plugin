@@ -4,7 +4,7 @@ package testutil
 //
 // Every API test before this used a fake validator, and the fakes agreed with
 // the code about what a token's subject is. A real token disagreed: its `sub`
-// is not the OpenCloud user id (pkg/api/users.go). This helper walks the same
+// is not the OpenCloud user id (internal/api/users.go). This helper walks the same
 // authorization-code + PKCE flow the web client does, through the IdP's
 // identifier API, so a test can hold exactly what the browser would send.
 

@@ -1,4 +1,4 @@
 # Frozen fixtures are compared byte for byte (phase-10-hardening.md §10.4):
 # no line-ending conversion, ever.
 pkg/takeout/testdata/takeout-*/** -text
-pkg/targets/testdata/sealed-credentials-*.json -text
+internal/targets/testdata/sealed-credentials-*.json -text

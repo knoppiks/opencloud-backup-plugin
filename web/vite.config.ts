@@ -10,7 +10,7 @@
 // every `oc-*` component at runtime (`import: false` singletons), so one
 // bundle serves every OpenCloud in the support window — 7.2 hosts included.
 // That is a claim CI checks, not an assumption: the browser E2E runs on every
-// leg of pkg/ocversion/versions.yaml. The SDK version here governs types, the
+// leg of internal/ocversion/versions.yaml. The SDK version here governs types, the
 // build plugin and the unit tests only.
 import { defineConfig } from '@opencloud-eu/extension-sdk'
 

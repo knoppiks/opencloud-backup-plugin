@@ -41,11 +41,11 @@ import (
 	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/repo/content"
 
-	"opencloud-backup-plugin/pkg/keys"
-	"opencloud-backup-plugin/pkg/objstore"
-	"opencloud-backup-plugin/pkg/snapshot"
-	"opencloud-backup-plugin/pkg/takeout"
-	"opencloud-backup-plugin/pkg/takeout/remote"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/objstore"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/takeout/remote"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/keys"
+	"github.com/knoppiks/opencloud-backup-plugin/pkg/takeout"
 )
 
 // frozenTakeOuts lists every fixture ever frozen. Append only: removing a

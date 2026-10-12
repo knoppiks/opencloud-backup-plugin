@@ -140,3 +140,31 @@ type Wrapper interface {
 type ErrNotFound struct{ SpaceID string }
 
 func (e ErrNotFound) Error() string { return "keys: no envelope for space " + e.SpaceID }
+
+// Clone returns a deep copy of the envelope, so a Store can hand one out (or
+// take one in) without the caller reaching into what it keeps.
+func (w WrappedDK) Clone() WrappedDK {
+	out := w
+	if w.Blob != nil {
+		out.Blob = make([]byte, len(w.Blob))
+		copy(out.Blob, w.Blob)
+	}
+	return out
+}
+
+// Status derives the key-material-free summary of a record. Every Store
+// reports it this way, so they agree on what "configured" means.
+func (k SpaceKeys) Status() Status {
+	hasRK := k.RK.Kind == WrapRK
+	hasSRW := k.SRW.Kind == WrapSRW
+	return Status{
+		SpaceID:    k.SpaceID,
+		Configured: hasRK && hasSRW,
+		HasRK:      hasRK,
+		HasSRW:     hasSRW,
+		RKVersion:  k.RK.Version,
+		SRWVersion: k.SRW.Version,
+		CreatedAt:  k.CreatedAt,
+		UpdatedAt:  k.UpdatedAt,
+	}
+}

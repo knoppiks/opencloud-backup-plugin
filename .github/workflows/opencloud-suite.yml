@@ -1,7 +1,7 @@
 name: OpenCloud suite
 
 # Everything that runs against a real OpenCloud, for one leg of
-# pkg/ocversion/versions.yaml. Called by ci.yml once per supported leg
+# internal/ocversion/versions.yaml. Called by ci.yml once per supported leg
 # (blocking) and by canary.yml for the canary (not blocking). A version is
 # supported if and only if this passes on it (compatibility-policy.md §3).
 
@@ -9,7 +9,7 @@ on:
   workflow_call:
     inputs:
       leg:
-        description: A leg name from pkg/ocversion/versions.yaml, or "canary".
+        description: A leg name from internal/ocversion/versions.yaml, or "canary".
         type: string
         required: true
       go-version:
@@ -58,18 +58,18 @@ jobs:
         OPENCLOUD_FIXTURE_REQUIRED: "1"
       run: |
         set -a; . test/fixtures/opencloud/fixture.env; set +a
-        go test -tags integration -count=1 ./pkg/cs3/... ./pkg/cs3state/... ./pkg/api/... ./pkg/ocversion/...
+        go test -tags integration -count=1 ./internal/cs3/... ./internal/cs3state/... ./internal/api/... ./internal/ocversion/...
 
     - name: restore Path B against real reva
       env:
         OPENCLOUD_FIXTURE_REQUIRED: "1"
       run: |
         set -a; . test/fixtures/opencloud/fixture.env; set +a
-        go test -tags integration -count=1 -run OpenCloud ./pkg/restore/...
+        go test -tags integration -count=1 -run OpenCloud ./internal/restore/...
 
     # The Phase-6 exit criteria, over both durable stores (each is a subtest:
     # memory, opencloud). Named explicitly rather than by package: the rest of
-    # pkg/backup's integration tests are Garage-only and run in ci.yml's
+    # internal/backup's integration tests are Garage-only and run in ci.yml's
     # `integration` job.
     - name: phase-6 criteria over the real state store
       env:
@@ -78,11 +78,11 @@ jobs:
         set -a; . test/fixtures/opencloud/fixture.env; set +a
         go test -tags integration -count=1 \
           -run 'TestIntegration_Scheduled|TestIntegration_Crashed|TestIntegration_Stale' \
-          ./pkg/backup/...
+          ./internal/backup/...
 
     # Last, deliberately: OC_FIXTURE_DOWN_CMD makes the Path A acceptance test
     # stop OpenCloud for real, which is the criterion ("with OpenCloud down") and
-    # also the end of the fixture's usefulness in this job. Within pkg/backup the
+    # also the end of the fixture's usefulness in this job. Within internal/backup the
     # end-to-end test is defined above it in the same file, so it runs first.
     - name: backup and Path A, with OpenCloud stopped
       env:
@@ -92,7 +92,7 @@ jobs:
         OC_FIXTURE_DOWN_CMD: ${{ github.workspace }}/test/fixtures/opencloud/down.sh
       run: |
         set -a; . test/fixtures/opencloud/fixture.env; set +a
-        go test -tags integration -count=1 -run TestIntegration_OpenCloud ./pkg/backup/...
+        go test -tags integration -count=1 -run TestIntegration_OpenCloud ./internal/backup/...
 
     - name: fixture logs on failure
       if: failure()

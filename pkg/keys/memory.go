@@ -56,7 +56,7 @@ func (m *MemoryStore) PutSRW(ctx context.Context, spaceID string, w WrappedDK) e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec := m.record(spaceID)
-	rec.SRW = cloneWrapped(w)
+	rec.SRW = w.Clone()
 	rec.UpdatedAt = m.clock.Now().UTC()
 	return nil
 }
@@ -72,7 +72,7 @@ func (m *MemoryStore) GetSRW(ctx context.Context, spaceID string) (WrappedDK, er
 	if !ok || rec.SRW.Kind != WrapSRW {
 		return WrappedDK{}, ErrNotFound{SpaceID: spaceID}
 	}
-	return cloneWrapped(rec.SRW), nil
+	return rec.SRW.Clone(), nil
 }
 
 // PutRK stores the RK-wrapped DK for a space.
@@ -86,7 +86,7 @@ func (m *MemoryStore) PutRK(ctx context.Context, spaceID string, w WrappedDK) er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec := m.record(spaceID)
-	rec.RK = cloneWrapped(w)
+	rec.RK = w.Clone()
 	rec.UpdatedAt = m.clock.Now().UTC()
 	return nil
 }
@@ -102,7 +102,7 @@ func (m *MemoryStore) GetRK(ctx context.Context, spaceID string) (WrappedDK, err
 	if !ok || rec.RK.Kind != WrapRK {
 		return WrappedDK{}, ErrNotFound{SpaceID: spaceID}
 	}
-	return cloneWrapped(rec.RK), nil
+	return rec.RK.Clone(), nil
 }
 
 // Status reports setup state for a space without revealing key material.
@@ -116,7 +116,7 @@ func (m *MemoryStore) Status(ctx context.Context, spaceID string) (Status, error
 	if !ok {
 		return Status{SpaceID: spaceID}, nil
 	}
-	return statusOf(*rec), nil
+	return rec.Status(), nil
 }
 
 // Spaces returns the ids of every space holding an envelope, in order.
@@ -141,14 +141,4 @@ func (m *MemoryStore) Delete(spaceID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.byID, spaceID)
-}
-
-// cloneWrapped copies an envelope so callers cannot mutate stored state.
-func cloneWrapped(w WrappedDK) WrappedDK {
-	out := w
-	if w.Blob != nil {
-		out.Blob = make([]byte, len(w.Blob))
-		copy(out.Blob, w.Blob)
-	}
-	return out
 }
