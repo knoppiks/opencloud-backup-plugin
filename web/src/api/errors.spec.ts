@@ -13,6 +13,7 @@ describe('mayHaveLanded', () => {
     expect(mayHaveLanded(new ApiError('bad_request', 'x', 400))).toBe(false)
     expect(mayHaveLanded(new ApiError('forbidden', 'x', 403))).toBe(false)
     expect(mayHaveLanded(new ApiError('conflict', 'x', 409))).toBe(false)
+    expect(mayHaveLanded(new ApiError('payload_too_large', 'x', 413))).toBe(false)
   })
 })
 

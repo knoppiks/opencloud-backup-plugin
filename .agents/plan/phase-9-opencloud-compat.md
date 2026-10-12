@@ -201,8 +201,8 @@ added the 8.x upgrade note (search reindex, `CS3_DATA_SERVER_URL` across
 7.5); #67 adds the Production 7.2.x line to it, filled in the window table,
 and extended the decisions.md amendment with the 9.3 measurements. #67 also
 carries the owner's rewrite of the window rule (policy §3, #25 amended). §2
-(drop = MINOR) stays **proposed, owner to confirm**; §3's 90-day grace is
-superseded by the new rule (proposed, owner to confirm).
+(drop = MINOR) and §3's 90-day grace being superseded by the new rule were
+both confirmed by the owner on 2026-10-12.
 
 ## Exit criteria
 

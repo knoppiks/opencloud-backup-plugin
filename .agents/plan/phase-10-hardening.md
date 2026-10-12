@@ -35,11 +35,11 @@ old code. Where it differs from the table:
   shares one state store across two `buildService` calls (an injected
   `startupDeps.openState`, not a fake guard), which is the restarted pod
   finding the same state Space.
-- **F2.** *Proposed, owner to confirm:* any read error other than not-found
+- **F2.** *Confirmed (owner, 2026-10-12):* any read error other than not-found
   or malformed **fails the listing** (`Versions.Latest` and `Documents.All`,
   one helper), rather than being collected next to `unreadable`. A failed
   tick is logged and the next tick retries; collecting would have reported a
-  blinking backend as "corrupt record". *Also proposed:* the targets store's
+  blinking backend as "corrupt record". *Also confirmed:* the targets store's
   `ListTargets` now returns `ErrUnreadableTargets` when a record cannot be
   decoded, instead of dropping it — its callers are TW rotation (would leave
   that target sealed under the retiring key) and bootstrap (would take a
@@ -88,7 +88,7 @@ old code. Where it differs from the table:
   holds by construction. A source-scan test
   (`TestServerErrorsGoThroughServerError`) fails if any 5xx is answered
   without a cause; "not configured" 503s log their message as the cause.
-- **Levels, *proposed, owner to confirm*:** 503 is WARN ("not now": a
+- **Levels, *confirmed (owner, 2026-10-12)*:** 503 is WARN ("not now": a
   dependency not wired or not up yet, shutting down); every other 5xx and
   every panic is ERROR; the health probes log at DEBUG while they pass, since
   the kubelet calls them every few seconds; everything else INFO.
@@ -157,12 +157,12 @@ old code. Where it differs from the table:
   collected and reported together, so one restart shows them all. An
   unreplaced placeholder is reported alone, as before, because everything
   after it is a symptom.
-- **Strictness, *proposed, owner to confirm*:** booleans are exactly `true`
+- **Strictness, *confirmed (owner, 2026-10-12)*:** booleans are exactly `true`
   or `false` (not `1`, `yes`, `True`); `STATE_BACKEND` refuses anything but
   `memory` (case-insensitive, as before) instead of reading a typo as
   "durable". Both used to be silently accepted. The shipped manifests only
   use `"true"`/`"false"`.
-- **Redaction by type, *proposed, owner to confirm*:** `config.Secret`
+- **Redaction by type, *confirmed (owner, 2026-10-12)*:** `config.Secret`
   holds its value behind an unexported pointer and prints `[redacted]` (or
   nothing when unset) through `String`, `GoString`, `LogValue` and
   `MarshalText`, so even `%d` or reflection over the struct shows no value.
@@ -175,12 +175,13 @@ old code. Where it differs from the table:
   under `config`, keyed by the lower-cased variable name, unset ones
   included so defaults are visible. Logged by `serve` before anything can
   fail; the commands do not log it.
-- **Service account, *proposed, owner to confirm*:** required whenever
+- **Service account, *confirmed (owner, 2026-10-12)*:** required whenever
   `CS3_GATEWAY_ADDR` is set, in every mode (service, rotation, provision),
   since every CS3 call is made as it.
 - **Checked at load:** the base-path rules, the TLS pair, the OIDC
   prerequisites, the timezone, the wrapping keys' shape and SRW ≠ TW (the
-  `_OLD` keys too), `CS3_DATA_SERVER_URL`, and, *proposed*, an enabled
+  `_OLD` keys too), `CS3_DATA_SERVER_URL`, and, *confirmed (owner,
+  2026-10-12)*, an enabled
   bootstrap's completeness and its need for `TW_KEY`. **Left at startup:**
   "`STATE_SPACE_ID` required" (the provisioning command needs it *unset*)
   and the work directory's filesystem.
@@ -257,12 +258,12 @@ old code. Where it differs from the table:
   (`takeout-v<N>/`, `takeout-v<N>.json`, `sealed-credentials-v<N>.json`)
   with the reason; the rest of `testdata/` (fuzz corpora included) is
   scanned as usual.
-- *Proposed, owner to confirm:* a new fixture is required per Take-Out
+- *Confirmed (owner, 2026-10-12):* a new fixture is required per Take-Out
   **format** (manifest version, envelope version, or kopia's on-disk
   repository format), not per kopia release: the existing one is what
   proves a kopia upgrade still reads old repositories, and a kopia that
   starts writing a new repository format gets a fixture of its own. *Also
-  proposed:* the manifest and state-key tightening above (no `takeout` ever
+  confirmed:* the manifest and state-key tightening above (no `takeout` ever
   wrote a version below 1 or a blob id with a separator; `EscapeSegment`
   has only ever written the canonical form), and the nightly fuzz run
   opening an issue.
@@ -296,7 +297,7 @@ old code. Where it differs from the table:
   usage, the same for all three; documented in each `-h` and in README
   ("Versions, help and exit status"). One `cli.Parse` for every flag set:
   help goes to **stdout** (it is the output asked for), parse errors and
-  usage to stderr. *Proposed, owner to confirm:* what counts as usage (2) is
+  usage to stderr. *Confirmed (owner, 2026-10-12):* what counts as usage (2) is
   anything decidable from the command line alone: unknown flag or command,
   a missing required flag (`-in`, `-out`, `-bucket`, `-space`), a **stray
   positional argument** (silently ignored by `takeout` and `decrypt`
@@ -312,8 +313,8 @@ old code. Where it differs from the table:
 - **`-plain-http`**, with `-insecure` removed outright rather than
   deprecated (the plan said one MINOR of warning): nothing has been
   released, so the deprecation would protect no one (policy §1, 0.x).
-  `-insecure` is now an unknown flag (exit 2). *Proposed, owner to
-  confirm,* together with policy §2's new flag rules from 1.0.0: `decrypt`
+  `-insecure` is now an unknown flag (exit 2). *Confirmed (owner,
+  2026-10-12),* together with policy §2's new flag rules from 1.0.0: `decrypt`
   flags are permanent, `takeout`/`backupd` flags get one MINOR of
   deprecation. README and the E2E helper use the new name.
 - **Coverage** (unit, `go test -cover`): `cmd/decrypt` 92.8 %, `cmd/takeout`
@@ -468,6 +469,39 @@ asserted by a dependency-graph test like the existing one for `takeout`.
 - One JSON-decode helper for the API (size limit, `DisallowUnknownFields`,
   no trailing data) replacing the seven copies; `Cache-Control: no-store` and
   `X-Content-Type-Options: nosniff` on every API response.
+
+Split into three PRs (owner, 2026-10-12), in this order: C (API decode
+helper and headers), A (linters and trust boundaries), B (CI plumbing).
+
+**Outcome (10.8 C, #90).** Done. Where it differs from the plan:
+
+- **Eight copies, not seven:** setup, recovery-key rotation, PUT and PATCH
+  backup config, PUT schedule, restore, the admin target body (create,
+  check, update share one) and admin grants. `decodeJSONBody` in
+  `internal/api/decode.go` replaces them; each endpoint keeps its own limit.
+  An oversized body is **413 `payload_too_large`**, anything else 400
+  "malformed request body"; neither echoes the input (owner).
+- **Tests:** the helper's table (unknown field at depth, second value,
+  trailing garbage, empty, over the limit by value and by trailing bytes,
+  no echo); every body route driven through the full handler with each
+  refusal, the message telling the helper's answer from the handler's own
+  400; a test that the route table lists every POST/PUT/PATCH route that
+  takes a body; a source scan that nothing but `decode.go` reads `r.Body`.
+  Three tests that asserted an extra field was *ignored* (a client-chosen
+  target id, a grant naming another target, a restore destination) now
+  assert it is refused and nothing happens.
+- **Headers on every response of `backupd` (owner):**
+  `api.WithResponseHeaders` is outermost on `Server.Handler`, so a
+  recovered panic's 500 carries them, and wraps `mountBasePath`'s mux, whose
+  own 404 for a path outside the prefix is not the API's.
+- **Grants (owner):** a grants body without the list, or with `null`, is
+  refused; only an explicit `[]` revokes the target from everyone. `{}` used
+  to do that.
+- **Web (owner):** `payload_too_large` is a known code with its own title
+  and advice (German included); a 413 without the envelope maps to it too,
+  since an ingress may refuse the body first. Not "may have landed".
+- **Not done here:** requiring `Content-Type: application/json` (owner: own
+  PR).
 
 ## Exit criteria
 

@@ -50,13 +50,13 @@ From 1.0.0:
 | **MINOR** | New features; a newly supported OpenCloud version; an OpenCloud version dropped **because it left the window**; a new env var; a deprecation (with warning). |
 | **PATCH** | Fixes, dependency updates, documentation. |
 
-**DECISION NEEDED (proposal above):** dropping an OpenCloud version that has
+**Decision:** dropping an OpenCloud version that has
 left the support window is MINOR. The window is announced, so the operator
 already knows; burning a MAJOR every few months on it (§3: a major leaves
 whenever OpenCloud ships a new one) would make MAJOR meaningless. The alternative is to treat every drop as MAJOR.
-**Status (2026-10-07, #67): proposed, owner to confirm** — MINOR is applied
-as the working rule until then. It binds nothing yet: the plugin is 0.x, and
-the only drop so far (7.2.x) happened before any release.
+**Status: confirmed (owner, 2026-10-12)**; proposed 2026-10-07 (#67). It
+binds nothing yet: the plugin is 0.x, and the only drop so far (7.2.x)
+happened before any release.
 
 ### Things that never break, at any version bump
 
@@ -158,8 +158,8 @@ The previous grace-period proposal (keep the previous Production line 90
 days) is **superseded** by this rule: a release leaves only when the second
 major after its own ships, with OpenCloud's cadence roughly 4–6 months after
 its own major appeared, and a current Production line never leaves.
-**Status (2026-10-08, owner): rule decided; dropping the grace period is
-proposed, owner to confirm.**
+**Status (2026-10-08, owner): rule decided; dropping the grace period
+confirmed (owner, 2026-10-12).**
 
 Rationale: the old rule ("the current Production line plus every Rolling
 release since it was cut") restarted the window at every Production cut, so

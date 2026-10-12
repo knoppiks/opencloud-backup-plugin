@@ -70,6 +70,8 @@ const de: Record<string, string> = {
   'Your session has expired': 'Ihre Sitzung ist abgelaufen',
   'You do not have access to this': 'Sie haben darauf keinen Zugriff',
   'This is not available': 'Das ist nicht verfügbar',
+  'This request is too large for the backup service':
+    'Diese Anfrage ist zu groß für den Sicherungsdienst',
   'Backups are not set up for this space yet':
     'Für diesen Space ist noch keine Sicherung eingerichtet',
   'A backup is already running for this space': 'Für diesen Space läuft bereits eine Sicherung',
@@ -89,6 +91,8 @@ const de: Record<string, string> = {
     'Fragen Sie eine verwaltende Person dieses Spaces, wenn Sie Zugriff benötigen.',
   'This usually clears up on its own. Try again in a moment.':
     'Das erledigt sich meist von selbst. Versuchen Sie es in einem Moment erneut.',
+  'Nothing was changed. Ask whoever runs the backup service.':
+    'Es wurde nichts geändert. Wenden Sie sich an die Person, die den Sicherungsdienst betreibt.',
 
   // Dates (format/format.ts).
   'Today, %{time}': 'Heute, %{time}',
