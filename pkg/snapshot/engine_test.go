@@ -1095,15 +1095,6 @@ func TestFilesystemOpener_Validation(t *testing.T) {
 	}
 }
 
-func TestS3Opener_Validation(t *testing.T) {
-	ctx := context.Background()
-	r := testRepo(t, "space-1")
-	r.Location.Bucket = ""
-	if _, err := (S3Opener{}).Open(ctx, r, false); err == nil {
-		t.Fatal("missing bucket must be rejected")
-	}
-}
-
 func TestLocationRedacted(t *testing.T) {
 	loc := Location{
 		Endpoint:        "garage:3900",
@@ -1120,19 +1111,6 @@ func TestLocationRedacted(t *testing.T) {
 	}
 	if loc.SecretAccessKey == "" {
 		t.Fatal("Redacted must not mutate the receiver")
-	}
-}
-
-func TestStripScheme(t *testing.T) {
-	for in, want := range map[string]string{
-		"http://garage:3900":   "garage:3900",
-		"https://garage:3900":  "garage:3900",
-		"garage:3900":          "garage:3900",
-		"https://garage:3900/": "garage:3900",
-	} {
-		if got := stripScheme(in); got != want {
-			t.Fatalf("stripScheme(%q) = %q, want %q", in, got, want)
-		}
 	}
 }
 

@@ -54,9 +54,10 @@ import (
 	"opencloud-backup-plugin/pkg/restore"
 	"opencloud-backup-plugin/pkg/scheduler"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/snapshot/s3repo"
 	"opencloud-backup-plugin/pkg/spacecfg"
 	"opencloud-backup-plugin/pkg/state"
-	"opencloud-backup-plugin/pkg/takeout"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -547,7 +548,7 @@ func buildService(ctx context.Context, cfg serviceEnv, logger *slog.Logger, deps
 
 	if spaceReader != nil && srwWrapper != nil && credSealer != nil {
 		parallelism := cfg.Backup.Parallelism
-		engine, err := snapshot.NewEngine(snapshot.S3Opener{Limits: cfg.Backup.limits()}, snapshot.EngineOptions{
+		engine, err := snapshot.NewEngine(s3repo.Opener{Limits: cfg.Backup.limits()}, snapshot.EngineOptions{
 			Parallelism: parallelism,
 			WorkDir:     workDir,
 		})
@@ -569,7 +570,7 @@ func buildService(ctx context.Context, cfg serviceEnv, logger *slog.Logger, deps
 			// Publishing the RK-wrapped envelope to the target is what makes an
 			// admin Take-Out self-contained, so Path A works with OpenCloud
 			// down. It is ciphertext the server cannot open (Phase 5).
-			Envelopes: takeout.S3Publisher{},
+			Envelopes: remote.S3Publisher{},
 			// Asked on prune runs only: what this target can actually enforce,
 			// observed rather than assumed from the version it claims to be
 			// (decisions.md #8).

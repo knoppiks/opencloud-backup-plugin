@@ -13,7 +13,6 @@ package snapshot
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -21,8 +20,6 @@ import (
 
 	"github.com/kopia/kopia/repo/blob"
 	"github.com/kopia/kopia/repo/blob/filesystem"
-	kopias3 "github.com/kopia/kopia/repo/blob/s3"
-	"github.com/kopia/kopia/repo/blob/throttling"
 )
 
 const (
@@ -91,63 +88,9 @@ type StorageOpener interface {
 	Open(ctx context.Context, repo Repo, createIfMissing bool) (blob.Storage, error)
 }
 
-// ErrMissingCredentials means a target was opened without both halves of its
-// static S3 credential.
-var ErrMissingCredentials = errors.New(
-	"snapshot: target S3 access key id and secret access key are both required")
-
-// S3Opener is the production StorageOpener: kopia's S3 driver pointed at the
-// resolved target. Credentials come from the Repo's Location, i.e. from the
-// TW-unwrapped target credentials held in worker memory (decisions.md #14).
-type S3Opener struct {
-	// Limits optionally caps bandwidth and concurrency against the target.
-	Limits throttling.Limits
-}
-
-var _ StorageOpener = S3Opener{}
-
-// Open builds the S3 blob storage for a Space's repository.
-func (o S3Opener) Open(ctx context.Context, r Repo, createIfMissing bool) (blob.Storage, error) {
-	loc := r.Location
-	if loc.Bucket == "" {
-		return nil, fmt.Errorf("snapshot: target bucket not configured")
-	}
-	if r.Space.SpaceID == "" {
-		return nil, fmt.Errorf("snapshot: space id required")
-	}
-	// kopia's driver falls back to AWS environment variables and the cloud
-	// metadata service when handed empty credentials. A target with none is a
-	// misconfiguration to report, not a reason to go looking elsewhere
-	// (review-2026-10.md F5).
-	// Checked here rather than through objstore so the offline decrypt path,
-	// which uses this package, does not pick up the S3 SDK (phase 10.6).
-	if strings.TrimSpace(loc.AccessKeyID) == "" || strings.TrimSpace(loc.SecretAccessKey) == "" {
-		return nil, ErrMissingCredentials
-	}
-
-	st, err := kopias3.New(ctx, &kopias3.Options{
-		BucketName: loc.Bucket,
-		Prefix:     RepoPrefix(loc, r.Space),
-		// kopia's S3 driver wants host:port without a scheme
-		// (phase-0-findings.md Spike 2).
-		Endpoint:        stripScheme(loc.Endpoint),
-		DoNotUseTLS:     loc.DisableTLS,
-		AccessKeyID:     loc.AccessKeyID,
-		SecretAccessKey: loc.SecretAccessKey,
-		Region:          loc.Region,
-		Limits:          o.Limits,
-	}, createIfMissing)
-	if err != nil {
-		// Never echo the endpoint's credentials; the driver error may mention
-		// the bucket, which is not secret.
-		return nil, fmt.Errorf("snapshot: open target storage: %w", err)
-	}
-	return st, nil
-}
-
 // FilesystemOpener stores repositories under a local directory using the same
 // per-Space layout. It exists for unit tests and local development; production
-// deployments always use S3Opener.
+// deployments always use s3repo.Opener.
 type FilesystemOpener struct {
 	// Root is the directory that plays the role of the bucket.
 	Root string
@@ -209,12 +152,4 @@ func (o DirOpener) Open(ctx context.Context, _ Repo, createIfMissing bool) (blob
 		return nil, fmt.Errorf("snapshot: open local storage: %w", err)
 	}
 	return st, nil
-}
-
-// stripScheme removes an http/https prefix; kopia's S3 driver expects a bare
-// host:port.
-func stripScheme(endpoint string) string {
-	endpoint = strings.TrimPrefix(endpoint, "http://")
-	endpoint = strings.TrimPrefix(endpoint, "https://")
-	return strings.TrimSuffix(endpoint, "/")
 }

@@ -37,9 +37,11 @@ import (
 	"opencloud-backup-plugin/pkg/keys"
 	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
+	"opencloud-backup-plugin/pkg/snapshot/s3repo"
 	"opencloud-backup-plugin/pkg/spacecfg"
 	"opencloud-backup-plugin/pkg/takeout"
 	takeoutdecrypt "opencloud-backup-plugin/pkg/takeout/decrypt"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -76,7 +78,7 @@ func TestIntegration_OpenCloudEndToEnd(t *testing.T) {
 	// --- real target ------------------------------------------------------
 	garage := testutil.StartGarage(ctx, t)
 
-	engine, err := snapshot.NewEngine(snapshot.S3Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
+	engine, err := snapshot.NewEngine(s3repo.Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -189,7 +191,7 @@ func TestIntegration_OpenCloudPathAWithDeploymentStopped(t *testing.T) {
 	space := findSeededSpace(ctx, t, reader, ownerUID)
 
 	garage := testutil.StartGarage(ctx, t)
-	engine, err := snapshot.NewEngine(snapshot.S3Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
+	engine, err := snapshot.NewEngine(s3repo.Opener{}, snapshot.EngineOptions{WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -209,7 +211,7 @@ func TestIntegration_OpenCloudPathAWithDeploymentStopped(t *testing.T) {
 	runner, err := NewRunner(Deps{
 		Spaces: reader, Configs: configs, Targets: targetStore, Sealer: sealer,
 		Keys: keyStore, Unwrap: wrapper, Engine: engine, Jobs: jobStore, Locks: jobStore,
-		Envelopes: takeout.S3Publisher{},
+		Envelopes: remote.S3Publisher{},
 		Logger:    slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	})
 	if err != nil {
@@ -240,8 +242,8 @@ func TestIntegration_OpenCloudPathAWithDeploymentStopped(t *testing.T) {
 	}
 
 	takeoutDir := filepath.Join(t.TempDir(), "takeout")
-	if _, err := takeout.Extract(ctx, takeout.ExtractOptions{
-		Repos:    snapshot.S3Opener{},
+	if _, err := remote.Extract(ctx, remote.ExtractOptions{
+		Repos:    s3repo.Opener{},
 		Objects:  objects,
 		Location: location,
 		SpaceID:  space.ID,

@@ -37,7 +37,7 @@ import (
 	"opencloud-backup-plugin/pkg/objstore"
 	"opencloud-backup-plugin/pkg/snapshot"
 	"opencloud-backup-plugin/pkg/spacecfg"
-	"opencloud-backup-plugin/pkg/takeout"
+	"opencloud-backup-plugin/pkg/takeout/remote"
 	"opencloud-backup-plugin/pkg/targets"
 )
 
@@ -77,7 +77,7 @@ type Deps struct {
 	// target, so an admin Take-Out is self-contained and Path A works with
 	// OpenCloud down. Optional: when nil, publication is skipped and Path A
 	// depends on the envelope being exported some other way.
-	Envelopes takeout.Publisher
+	Envelopes remote.Publisher
 	// Immutability observes what a target can actually enforce, so the answer is
 	// something this deployment saw rather than something a planning document
 	// assumed (decisions.md #8). It is read on prune runs only. Optional: when
@@ -501,7 +501,7 @@ func (r *Runner) publishEnvelope(
 		return
 	}
 
-	if err := r.deps.Envelopes.Publish(ctx, takeout.PublishTarget{
+	if err := r.deps.Envelopes.Publish(ctx, remote.PublishTarget{
 		S3:     target.s3,
 		Prefix: target.prefix,
 	}, spaceID, wrapped.Blob); err != nil {
