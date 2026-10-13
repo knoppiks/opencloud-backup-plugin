@@ -31,6 +31,8 @@ export function errorTitle(code: ApiFailureCode, $gettext: Gettext): string {
       return $gettext('This is not available')
     case 'payload_too_large':
       return $gettext('This request is too large for the backup service')
+    case 'unsupported_media_type':
+      return $gettext('The backup service did not accept this request')
     case 'not_configured':
       return $gettext('Backups are not set up for this space yet')
     case 'run_in_progress':
@@ -63,6 +65,13 @@ export function errorAdvice(code: ApiFailureCode, $gettext: Gettext): string {
       return $gettext('This usually clears up on its own. Try again in a moment.')
     case 'payload_too_large':
       return $gettext('Nothing was changed. Ask whoever runs the backup service.')
+    case 'unsupported_media_type':
+      // This bundle always declares its bodies as JSON; a refusal means it
+      // and the service disagree (a stale bundle) or something in between
+      // rewrote the request.
+      return $gettext(
+        'Nothing was changed. Reload the page; if it happens again, ask whoever runs the backup service.'
+      )
     default:
       return ''
   }

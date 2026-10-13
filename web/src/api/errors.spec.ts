@@ -14,6 +14,7 @@ describe('mayHaveLanded', () => {
     expect(mayHaveLanded(new ApiError('forbidden', 'x', 403))).toBe(false)
     expect(mayHaveLanded(new ApiError('conflict', 'x', 409))).toBe(false)
     expect(mayHaveLanded(new ApiError('payload_too_large', 'x', 413))).toBe(false)
+    expect(mayHaveLanded(new ApiError('unsupported_media_type', 'x', 415))).toBe(false)
   })
 })
 

@@ -1605,6 +1605,21 @@ Amends one #94 amendment: integration runs under `-race` now set kopia's
 - **Proposed, owner to confirm:** a new depguard rule or forbidigo pattern
   is not complete without a probe in `test/lintprobe/lint-probe.sh`, the
   same way a backup path is not complete without its restore test.
+- **`integration (release key derivation)` is a required check (owner,
+  2026-10-13)** in ruleset `Default`, beside `integration (Garage
+  fixture)`, so no merge skips the release derivation.
+
+### Amendments from Phase 10.8 follow-up (request content type, #92)
+
+- **Request bodies must be declared as JSON (owner, 2026-10-13):** a body
+  route answers 415 `unsupported_media_type` unless the request carries
+  exactly one `Content-Type` of `application/json`, without a charset or
+  with `charset=utf-8`; the body is not read. The web bundle knows the
+  code.
+- **Proposed, owner to confirm:** parameters other than `charset` are
+  ignored rather than refused (`application/json` defines none);
+  `application/*+json` types are refused; the web advice for the code is
+  "nothing was changed, reload the page".
 
 ---
 

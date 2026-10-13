@@ -501,7 +501,7 @@ helper and headers), A (linters and trust boundaries), B (CI plumbing).
   and advice (German included); a 413 without the envelope maps to it too,
   since an ingress may refuse the body first. Not "may have landed".
 - **Not done here:** requiring `Content-Type: application/json` (owner: own
-  PR, #92).
+  PR, #92; see below).
 
 **Outcome (10.8, unit test speed, #94).** Not in the plan; added by the
 owner before A, because every later PR waits on the unit job.
@@ -576,8 +576,14 @@ overnight WIP (`wip/10.8-lint`). Where it differs from the plan:
     without `-race`, plus `TestFrozenTakeOutsCoverTheReleaseKeyDerivation`
     (decisions.md amends #94).
   `-timeout 20m` and `timeout-minutes: 30` on both Garage jobs as margin.
-  Run times from the next CI run: (to fill in). Baseline on main: Garage
-  job 6m07s, OpenCloud integration legs 3m36s–4m06s.
+  Run times on the PR's green run (baseline on main before #93 in
+  brackets): Garage job 6m59s (6m07s), with `internal/backup` 325 s;
+  `integration (release key derivation)` 5m54s, `internal/backup` 279 s;
+  OpenCloud integration legs 4m00s–4m04s (3m36s–4m06s); unit job 2m59s
+  (3m06s). So scrypt was not what the integration tests themselves spend
+  their time on: `internal/backup`'s 24 tests run one after another, ~12 s
+  each, which points at a Garage container per test. Not pursued here
+  (parallel tests or one Garage per package would be a follow-up).
   A local measurement of the integration tests was not possible: Docker's
   port publishing is broken on the development machine (a plain busybox
   container's port resets too).
@@ -605,8 +611,29 @@ overnight WIP (`wip/10.8-lint`). Where it differs from the plan:
   per run got results back under an earlier run's deleted paths; hence a
   fixed directory and a cache of its own (`dist/lint-probe/cache`, ~24 s
   cold, ~5 s warm).
-- **Job names unchanged**; the new `integration (release key derivation)`
-  is not a required check unless the owner adds it to ruleset `Default`.
+- **Job names unchanged.** The new `integration (release key derivation)`
+  was added to the required checks of ruleset `Default` after the merge
+  (owner, 2026-10-13).
+
+**Outcome (10.8 follow-up, #92).** Every body the API reads must be
+declared as JSON; anything else is answered **415
+`unsupported_media_type`** before a byte of it is read (owner).
+
+- `decodeJSONBody` checks first, so every body route gets it (the
+  existing source scan and route table keep it that way); routes without a
+  body are untouched.
+- Accepted: exactly one `Content-Type`, `application/json` in any case,
+  without a charset or with `charset=utf-8` (owner: UTF-8 is the default).
+  Refused: any other type (including `application/*+json`), another
+  charset, a malformed header, no header, two headers. Other parameters
+  are ignored: `application/json` defines none.
+- Tests: the header table; the refusal does not read the body; every body
+  route answers 415 to a well-formed `{}` sent as `text/plain`, as a form
+  or without a type. Removing the check fails both.
+- Web: `unsupported_media_type` is a known code, mapped from a bare 415
+  as well, with its own title and advice (German included): nothing was
+  changed; reload, since the bundle always sends JSON and a refusal points
+  at a stale bundle or something rewriting the request.
 
 ## Exit criteria
 
@@ -628,7 +655,6 @@ overnight WIP (`wip/10.8-lint`). Where it differs from the plan:
 - [x] Module renamed; only `pkg/keys`, `pkg/takeout`, `pkg/takeout/decrypt`
       public; `go install …/cmd/decrypt` works; AGENTS.md and phase-1 updated.
       (10.7, #82)
-- [ ] Extended lint set clean; depguard boundaries in place; integration
+- [x] Extended lint set clean; depguard boundaries in place; integration
       tests under `-race`. (Lint and boundaries: 10.8 A, #84, with
-      `make lint-probe` in B. `-race`: B, #93; tick once its CI run is
-      green.)
+      `make lint-probe` in B. `-race`: B, #93.)

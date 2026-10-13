@@ -176,6 +176,7 @@ describe('BackupApi failures', () => {
     [404, 'not_found'],
     [409, 'conflict'],
     [413, 'payload_too_large'],
+    [415, 'unsupported_media_type'],
     [502, 'upstream_error'],
     [503, 'unavailable'],
     [500, 'internal_error']
