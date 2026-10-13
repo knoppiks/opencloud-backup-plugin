@@ -16,4 +16,14 @@ describe('error wording', () => {
   it('does not suggest that waiting fixes a too-large request', () => {
     expect(errorAdvice('payload_too_large', $gettext)).not.toContain('moment')
   })
+
+  // The bundle declares every body as JSON, so a 415 means it and the service
+  // disagree; reloading fetches the matching bundle (#92).
+  it('names a refused request, says nothing was changed and suggests a reload', () => {
+    expect(errorTitle('unsupported_media_type', $gettext)).toBe(
+      'The backup service did not accept this request'
+    )
+    expect(errorAdvice('unsupported_media_type', $gettext)).toContain('Nothing was changed')
+    expect(errorAdvice('unsupported_media_type', $gettext)).toContain('Reload the page')
+  })
 })

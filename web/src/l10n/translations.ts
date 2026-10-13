@@ -72,6 +72,8 @@ const de: Record<string, string> = {
   'This is not available': 'Das ist nicht verfügbar',
   'This request is too large for the backup service':
     'Diese Anfrage ist zu groß für den Sicherungsdienst',
+  'The backup service did not accept this request':
+    'Der Sicherungsdienst hat diese Anfrage nicht angenommen',
   'Backups are not set up for this space yet':
     'Für diesen Space ist noch keine Sicherung eingerichtet',
   'A backup is already running for this space': 'Für diesen Space läuft bereits eine Sicherung',
@@ -93,6 +95,8 @@ const de: Record<string, string> = {
     'Das erledigt sich meist von selbst. Versuchen Sie es in einem Moment erneut.',
   'Nothing was changed. Ask whoever runs the backup service.':
     'Es wurde nichts geändert. Wenden Sie sich an die Person, die den Sicherungsdienst betreibt.',
+  'Nothing was changed. Reload the page; if it happens again, ask whoever runs the backup service.':
+    'Es wurde nichts geändert. Laden Sie die Seite neu; wenn es erneut passiert, wenden Sie sich an die Person, die den Sicherungsdienst betreibt.',
 
   // Dates (format/format.ts).
   'Today, %{time}': 'Heute, %{time}',

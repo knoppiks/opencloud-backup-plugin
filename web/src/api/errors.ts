@@ -20,6 +20,7 @@
 export type ApiErrorCode =
   | 'bad_request'
   | 'payload_too_large'
+  | 'unsupported_media_type'
   | 'unauthorized'
   | 'forbidden'
   | 'not_found'
@@ -35,6 +36,7 @@ export type ApiErrorCode =
 const KNOWN_CODES: readonly string[] = [
   'bad_request',
   'payload_too_large',
+  'unsupported_media_type',
   'unauthorized',
   'forbidden',
   'not_found',
@@ -187,6 +189,8 @@ function codeFromStatus(status: number): string {
       // An ingress in front of the service may refuse a body with its own
       // page before the service sees it; it means the same thing.
       return 'payload_too_large'
+    case 415:
+      return 'unsupported_media_type'
     case 502:
       return 'upstream_error'
     case 503:

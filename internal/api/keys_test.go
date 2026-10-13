@@ -89,13 +89,24 @@ func clientSetup(t *testing.T) (body []byte, dk []byte, rkSecret []byte) {
 }
 
 func doJSON(srv *Server, method, path, token string, body []byte) *httptest.ResponseRecorder {
+	contentType := ""
+	if body != nil {
+		contentType = "application/json"
+	}
+	return doBody(srv, method, path, token, contentType, body)
+}
+
+// doBody sends body as declared by contentType; "" sends no Content-Type.
+func doBody(srv *Server, method, path, token, contentType string, body []byte) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	var r *http.Request
 	if body != nil {
 		r = httptest.NewRequest(method, path, bytes.NewReader(body))
-		r.Header.Set("Content-Type", "application/json")
 	} else {
 		r = httptest.NewRequest(method, path, nil)
+	}
+	if contentType != "" {
+		r.Header.Set("Content-Type", contentType)
 	}
 	if token != "" {
 		r.Header.Set("Authorization", "Bearer "+token)

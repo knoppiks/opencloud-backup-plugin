@@ -2,11 +2,13 @@ package api
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -23,11 +25,78 @@ const decodeTestLimit = 64
 
 func decodeForTest(t *testing.T, body string) (*httptest.ResponseRecorder, decodeTarget, bool) {
 	t.Helper()
-	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	return decodeRequestForTest(req)
+}
+
+func decodeRequestForTest(req *http.Request) (*httptest.ResponseRecorder, decodeTarget, bool) {
+	rec := httptest.NewRecorder()
 	var got decodeTarget
 	ok := decodeJSONBody(rec, req, decodeTestLimit, &got)
 	return rec, got, ok
+}
+
+func TestDeclaresJSON(t *testing.T) {
+	cases := []struct {
+		contentType []string
+		want        bool
+	}{
+		{[]string{"application/json"}, true},
+		{[]string{"application/json; charset=utf-8"}, true},
+		{[]string{"Application/JSON; Charset=UTF-8"}, true},
+		{[]string{`application/json;charset="utf-8"`}, true},
+		// application/json defines no parameters; an unknown one changes nothing.
+		{[]string{"application/json; version=1"}, true},
+
+		{nil, false},
+		{[]string{""}, false},
+		{[]string{"text/plain"}, false},
+		{[]string{"text/plain; charset=utf-8"}, false},
+		{[]string{"application/x-www-form-urlencoded"}, false},
+		{[]string{"multipart/form-data; boundary=x"}, false},
+		{[]string{"application/json; charset=iso-8859-1"}, false},
+		{[]string{"application/json; charset=utf-16"}, false},
+		{[]string{"application/merge-patch+json"}, false},
+		{[]string{"application/jsonp"}, false},
+		{[]string{"application/json; charset"}, false},
+		{[]string{"application/json", "application/json"}, false},
+		{[]string{"application/json", "text/plain"}, false},
+	}
+	for _, tc := range cases {
+		h := http.Header{}
+		for _, v := range tc.contentType {
+			h.Add("Content-Type", v)
+		}
+		if got := declaresJSON(h); got != tc.want {
+			t.Errorf("declaresJSON(%q) = %v, want %v", tc.contentType, got, tc.want)
+		}
+	}
+}
+
+// failingReader fails the test when the body is read at all.
+type failingReader struct{ t *testing.T }
+
+func (f failingReader) Read([]byte) (int, error) {
+	f.t.Error("the body was read although its type was refused")
+	return 0, io.EOF
+}
+
+// A body not declared as JSON is refused before a byte of it is read (#92).
+func TestDecodeJSONBody_RefusesBodiesNotDeclaredAsJSON(t *testing.T) {
+	for _, contentType := range []string{"", "text/plain", "application/x-www-form-urlencoded", "application/json; charset=iso-8859-1"} {
+		t.Run(contentType, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", failingReader{t})
+			if contentType != "" {
+				req.Header.Set("Content-Type", contentType)
+			}
+			rec, _, ok := decodeRequestForTest(req)
+			if ok {
+				t.Fatal("accepted")
+			}
+			assertRefusal(t, rec, http.StatusUnsupportedMediaType, "unsupported_media_type", msgBodyNotJSON)
+		})
+	}
 }
 
 func TestDecodeJSONBody_AcceptsOneKnownValue(t *testing.T) {
@@ -214,6 +283,14 @@ func TestBodyRoutesReadTheirBodyStrictly(t *testing.T) {
 				srv := route.server(t)
 				rec := doJSON(srv, route.method, route.path, route.token, tc.body)
 				assertRefusal(t, rec, tc.status, tc.code, tc.message)
+			})
+		}
+		// A well-formed body that is not declared as JSON (#92).
+		for _, contentType := range []string{"", "text/plain", "application/x-www-form-urlencoded"} {
+			t.Run(name+"/declared as "+strconv.Quote(contentType), func(t *testing.T) {
+				srv := route.server(t)
+				rec := doBody(srv, route.method, route.path, route.token, contentType, []byte(`{}`))
+				assertRefusal(t, rec, http.StatusUnsupportedMediaType, "unsupported_media_type", msgBodyNotJSON)
 			})
 		}
 	}
