@@ -552,6 +552,62 @@ squashes). 57 findings fixed; `golangci-lint run ./...` is clean.
 - **`-race` on the integration jobs** moved to B (#93) with the rest of the
   CI plumbing.
 
+**Outcome (10.8 B, #93).** Done; Makefile targets adapted by hand from the
+overnight WIP (`wip/10.8-lint`). Where it differs from the plan:
+
+- **`-race` on every integration run:** the Garage job and all four steps
+  of `opencloud-suite.yml`'s `integration` job (every supported leg and the
+  canary); `make test-integration` and `make test-opencloud` match.
+- **The first CI run timed out** (no race, no failing test): the Garage job
+  ran `go test -race -tags integration ./...`, i.e. every unit test again,
+  without kopia's `testing` tag, beside the integration tests on a 4-vCPU
+  runner. `internal/snapshot`, which has no integration test, took 378 s;
+  `internal/backup` passed go test's 10-minute limit (288 s without
+  `-race`). Locally, `internal/snapshot` under `-race` takes 8 s with the
+  tag and 253 s without; coverage adds ~2 %. scrypt is pure Go and
+  race-instrumented; kopia's AES/BLAKE2 assembly is not. OpenCloud legs:
+  +1.5 min each. Two changes (owner):
+  - the integration runs select the integration tests only, by name, from
+    the files built only with the `integration` tag (`INTEGRATION_RUN`,
+    `INTEGRATION_PKGS`; `make integration-list` prints them; 46 today);
+  - the `-race` runs set kopia's `testing` tag; a new job,
+    `integration (release key derivation)` (`make
+    test-integration-release`), runs the same tests without the tag and
+    without `-race`, plus `TestFrozenTakeOutsCoverTheReleaseKeyDerivation`
+    (decisions.md amends #94).
+  `-timeout 20m` and `timeout-minutes: 30` on both Garage jobs as margin.
+  Run times from the next CI run: (to fill in). Baseline on main: Garage
+  job 6m07s, OpenCloud integration legs 3m36s–4m06s.
+  A local measurement of the integration tests was not possible: Docker's
+  port publishing is broken on the development machine (a plain busybox
+  container's port resets too).
+- **Coverage (`make cover`, `make cover-integration`, `make
+  cover-summary`):** module-wide (`-coverpkg=./...`), in the job summary,
+  no gate. The unit job runs `make cover` instead of `make test`: the same
+  run plus a profile, ~7 s more locally (39 s vs 32 s); unit coverage today
+  85.1 %. The Garage job reports the integration tests' coverage on its
+  own. The OpenCloud legs and the release-derivation job report none
+  (owner). The per-package table counts a block once, as covered if any
+  test binary reached it.
+- **`make mod-check`** (`go mod tidy -diff`, `go mod verify`) runs first in
+  `build / vet / lint`.
+- **`make lint-probe`, beyond the plan (owner, added to #93):**
+  `test/lintprobe/lint-probe.sh` copies the Go sources to
+  `dist/lint-probe/src`, adds one violating file per depguard rule (3) and
+  per forbidigo pattern (7), each in a package the rule covers, runs
+  golangci-lint there and fails unless each file is reported by the
+  expected linter. It runs in `build / vet / lint` after the lint step,
+  with the binary the action put on PATH. Verified by narrowing a depguard
+  scope, narrowing the ciphertext-only scope and dropping the `os.Exit`
+  pattern: each was reported missing. Two pitfalls it handles: golangci-lint
+  reports one issue per line by default (`unused` hid forbidigo on the same
+  line), and its cache keys on package content, so a fresh temp directory
+  per run got results back under an earlier run's deleted paths; hence a
+  fixed directory and a cache of its own (`dist/lint-probe/cache`, ~24 s
+  cold, ~5 s warm).
+- **Job names unchanged**; the new `integration (release key derivation)`
+  is not a required check unless the owner adds it to ruleset `Default`.
+
 ## Exit criteria
 
 - [x] F1–F7 fixed, each with a test that fails on the old code.
@@ -573,4 +629,6 @@ squashes). 57 findings fixed; `golangci-lint run ./...` is clean.
       public; `go install …/cmd/decrypt` works; AGENTS.md and phase-1 updated.
       (10.7, #82)
 - [ ] Extended lint set clean; depguard boundaries in place; integration
-      tests under `-race`.
+      tests under `-race`. (Lint and boundaries: 10.8 A, #84, with
+      `make lint-probe` in B. `-race`: B, #93; tick once its CI run is
+      green.)

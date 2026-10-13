@@ -50,6 +50,10 @@ jobs:
         ./up.sh
         ./seed.sh
 
+    # Every step runs under the race detector (phase-10-hardening.md §10.8),
+    # with kopia's `testing` tag for its fast test key derivation, which the
+    # race detector would otherwise slow most (#93). ci.yml's `integration
+    # (release key derivation)` covers the release derivation.
     # OPENCLOUD_FIXTURE_REQUIRED turns "no fixture, skip" into "no fixture,
     # fail". Without it this job could pass having run nothing at all, which is
     # precisely what used to happen (review-2026-09.md F7).
@@ -58,14 +62,14 @@ jobs:
         OPENCLOUD_FIXTURE_REQUIRED: "1"
       run: |
         set -a; . test/fixtures/opencloud/fixture.env; set +a
-        go test -tags integration -count=1 ./internal/cs3/... ./internal/cs3state/... ./internal/api/... ./internal/ocversion/...
+        go test -race -tags integration,testing -count=1 ./internal/cs3/... ./internal/cs3state/... ./internal/api/... ./internal/ocversion/...
 
     - name: restore Path B against real reva
       env:
         OPENCLOUD_FIXTURE_REQUIRED: "1"
       run: |
         set -a; . test/fixtures/opencloud/fixture.env; set +a
-        go test -tags integration -count=1 -run OpenCloud ./internal/restore/...
+        go test -race -tags integration,testing -count=1 -run OpenCloud ./internal/restore/...
 
     # The Phase-6 exit criteria, over both durable stores (each is a subtest:
     # memory, opencloud). Named explicitly rather than by package: the rest of
@@ -76,7 +80,7 @@ jobs:
         OPENCLOUD_FIXTURE_REQUIRED: "1"
       run: |
         set -a; . test/fixtures/opencloud/fixture.env; set +a
-        go test -tags integration -count=1 \
+        go test -race -tags integration,testing -count=1 \
           -run 'TestIntegration_Scheduled|TestIntegration_Crashed|TestIntegration_Stale' \
           ./internal/backup/...
 
@@ -92,7 +96,7 @@ jobs:
         OC_FIXTURE_DOWN_CMD: ${{ github.workspace }}/test/fixtures/opencloud/down.sh
       run: |
         set -a; . test/fixtures/opencloud/fixture.env; set +a
-        go test -tags integration -count=1 -run TestIntegration_OpenCloud ./internal/backup/...
+        go test -race -tags integration,testing -count=1 -run TestIntegration_OpenCloud ./internal/backup/...
 
     - name: fixture logs on failure
       if: failure()

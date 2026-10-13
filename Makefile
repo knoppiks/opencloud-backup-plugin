@@ -47,15 +47,85 @@ decrypt-release: ## Cross-build the offline decrypt CLI for every supported OS.
 
 # Unit tests build with kopia's own `testing` tag: repositories they create
 # derive their key with kopia's fast test derivation instead of scrypt, which
-# was most of the run under -race (#94). The release derivation stays covered:
-# the frozen Take-Out uses it and is opened by every run, and the integration
-# tests, built without the tag, create repositories with it. Never set this
-# tag on a build that ships.
+# was most of the run under -race (#94). The integration runs under -race set
+# it too (#93): scrypt is pure Go, so the race detector multiplies its cost.
+# The release derivation stays covered by `make test-integration-release`,
+# built without the tag and without -race, and by the frozen Take-Out every
+# run opens. Never set this tag on a build that ships.
 UNIT_TEST_TAGS := testing
 
 .PHONY: test
 test: ## Run unit tests with the race detector (kopia's fast test key derivation).
 	$(GO) test -race -tags $(UNIT_TEST_TAGS) ./...
+
+# Integration tests are the Test functions in files built only with the
+# `integration` tag. The unit tests in the same packages already ran in
+# `make test`, so the integration runs select these by name. Derived from the
+# sources: a new integration test joins by being written.
+INTEGRATION_FILES = grep -rlE --include='*_test.go' '^//go:build integration$$' pkg internal cmd
+# Plus the tests only a build without kopia's `testing` tag compiles.
+RELEASE_KDF_FILES = grep -rlE --include='*_test.go' '^//go:build (integration|!testing)$$' pkg internal cmd
+test_names = $(shell $(1) | xargs grep -hoE '^func Test[A-Za-z0-9_]*' | sed 's/^func //' | sort -u | paste -sd'|' -)
+test_pkgs  = $(shell $(1) | xargs -n1 dirname | sort -u | sed 's|^|./|')
+INTEGRATION_RUN  = ^($(call test_names,$(INTEGRATION_FILES)))$$
+INTEGRATION_PKGS = $(call test_pkgs,$(INTEGRATION_FILES))
+RELEASE_KDF_RUN  = ^($(call test_names,$(RELEASE_KDF_FILES)))$$
+RELEASE_KDF_PKGS = $(call test_pkgs,$(RELEASE_KDF_FILES))
+INTEGRATION_TIMEOUT ?= 20m
+
+# Coverage is measured across the whole module (-coverpkg=./...), so code
+# exercised only through another package's tests counts. Reported, not gated
+# (phase-10-hardening.md §10.8; the gate is Phase 14's).
+COVERPROFILE             ?= $(DIST)/coverage.out
+INTEGRATION_COVERPROFILE ?= $(DIST)/coverage-integration.out
+COVERTITLE               ?= unit tests
+GO_TEST_COVER = $(GO) test -race -covermode=atomic -coverpkg=./...
+
+.PHONY: cover
+cover: ## `make test` with module-wide coverage written to COVERPROFILE.
+	@mkdir -p $(dir $(COVERPROFILE))
+	$(GO_TEST_COVER) -tags $(UNIT_TEST_TAGS) -coverprofile=$(COVERPROFILE) ./...
+	@$(GO) tool cover -func=$(COVERPROFILE) | tail -n 1
+
+.PHONY: cover-integration
+cover-integration: ## `make test-integration` with module-wide coverage written to INTEGRATION_COVERPROFILE.
+	@mkdir -p $(dir $(INTEGRATION_COVERPROFILE))
+	$(GO_TEST_COVER) -tags integration,$(UNIT_TEST_TAGS) -timeout $(INTEGRATION_TIMEOUT) \
+		-run '$(INTEGRATION_RUN)' -coverprofile=$(INTEGRATION_COVERPROFILE) $(INTEGRATION_PKGS)
+	@$(GO) tool cover -func=$(INTEGRATION_COVERPROFILE) | tail -n 1
+
+.PHONY: integration-list
+integration-list: ## List the packages and tests the integration targets select.
+	@echo "integration packages: $(INTEGRATION_PKGS)"
+	@echo "integration tests:    $(INTEGRATION_RUN)"
+	@echo "release-KDF packages: $(RELEASE_KDF_PKGS)"
+	@echo "release-KDF tests:    $(RELEASE_KDF_RUN)"
+
+# Markdown for a CI job summary: the total, then statement coverage per
+# package. Every test binary reports the blocks it was built with, so a block
+# appears once per binary; it counts once, as covered if any binary reached it.
+.PHONY: cover-summary
+cover-summary: ## Print COVERPROFILE as a Markdown summary (total and per package).
+	@echo "### Go coverage ($(COVERTITLE))"; echo; \
+	echo "Total: **$$($(GO) tool cover -func=$(COVERPROFILE) | awk '/^total:/ {print $$NF}')** of statements, \
+	module-wide (\`-coverpkg=./...\`). Reported only; no gate yet."; echo; \
+	echo "<details><summary>Per package</summary>"; echo; \
+	echo "| Package | Coverage |"; echo "|---|---:|"; \
+	LC_ALL=C awk 'NR > 1 { \
+		pkg = $$1; sub(/:.*/, "", pkg); sub(/\/[^\/]*$$/, "", pkg); \
+		sub(/^github\.com\/knoppiks\/opencloud-backup-plugin\/?/, "", pkg); \
+		if (pkg == "") pkg = "."; \
+		if (!($$1 in stmts)) { stmts[$$1] = $$2; owner[$$1] = pkg } \
+		if ($$3 > 0) hit[$$1] = 1 } \
+	END { for (b in stmts) { total[owner[b]] += stmts[b]; if (b in hit) covered[owner[b]] += stmts[b] } \
+		for (p in total) if (total[p] > 0) printf "| `%s` | %.1f %% |\n", p, 100 * covered[p] / total[p] }' \
+		$(COVERPROFILE) | sort; \
+	echo; echo "</details>"
+
+.PHONY: mod-check
+mod-check: ## Fail when go.mod/go.sum are not tidy or a downloaded module does not verify.
+	$(GO) mod tidy -diff
+	$(GO) mod verify
 
 # Fuzz targets are found by name, so a new one joins `make fuzz` (and CI) by
 # being written. `go test -fuzz` takes one target in one package per run.
@@ -89,15 +159,24 @@ fuzz-crashers: ## Copy the failing inputs `make fuzz` found to FUZZ_CRASHERS, ke
 	done
 
 .PHONY: test-integration
-test-integration: ## Run integration tests (Garage fixture; needs Docker).
-	$(GO) test -tags integration ./...
+test-integration: ## Run the integration tests under -race (Garage fixture; needs Docker).
+	$(GO) test -race -tags integration,$(UNIT_TEST_TAGS) -timeout $(INTEGRATION_TIMEOUT) \
+		-run '$(INTEGRATION_RUN)' $(INTEGRATION_PKGS)
+
+# The same tests without kopia's `testing` tag, so every repository they
+# create derives its key with the release default (scrypt), plus the tests
+# only such a build compiles. Without -race: under it scrypt dominates.
+.PHONY: test-integration-release
+test-integration-release: ## Run the integration tests with kopia's release key derivation (no -race; needs Docker).
+	$(GO) test -tags integration -timeout $(INTEGRATION_TIMEOUT) \
+		-run '$(RELEASE_KDF_RUN)' $(RELEASE_KDF_PKGS)
 
 .PHONY: test-opencloud
 test-opencloud: ## Run the OpenCloud-fixture tests (run dev-up first; failures, not skips).
 	@test -f $(OPENCLOUD_DIR)/fixture.env || \
 		{ echo "no $(OPENCLOUD_DIR)/fixture.env — run 'make dev-up' and $(OPENCLOUD_DIR)/seed.sh first" >&2; exit 1; }
 	set -a; . $(OPENCLOUD_DIR)/fixture.env; set +a; \
-	OPENCLOUD_FIXTURE_REQUIRED=1 $(GO) test -tags integration -count=1 \
+	OPENCLOUD_FIXTURE_REQUIRED=1 $(GO) test -race -tags integration,$(UNIT_TEST_TAGS) -count=1 \
 		./internal/cs3/... ./internal/cs3state/... ./internal/api/... ./internal/ocversion/... ./internal/restore/... ./internal/backup/...
 
 .PHONY: web-install
@@ -149,6 +228,13 @@ generate: ## Regenerate checked-in generated files (environment references).
 .PHONY: lint
 lint: ## Run golangci-lint.
 	golangci-lint run ./...
+
+# A weakened depguard or forbidigo rule does not fail `make lint`; it just
+# stops reporting. This breaks each trust-boundary rule in a copy of the
+# sources and fails unless lint reports every one (#93).
+.PHONY: lint-probe
+lint-probe: ## Prove the trust-boundary lint rules still fire (one violation per rule).
+	test/lintprobe/lint-probe.sh
 
 .PHONY: vet
 vet: ## Run go vet.

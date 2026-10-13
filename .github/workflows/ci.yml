@@ -48,6 +48,11 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
         cache: true
 
+    # The module files must be what `go mod tidy` would write, and every
+    # downloaded module must match go.sum (phase-10-hardening.md §10.8).
+    - name: go.mod tidy, modules verified
+      run: make mod-check
+
     - name: go build
       run: go build ./...
 
@@ -59,10 +64,19 @@ jobs:
       with:
         version: ${{ env.GOLANGCI_LINT_VERSION }}
 
+    # A weakened depguard or forbidigo rule passes the step above by
+    # reporting nothing. This breaks each trust-boundary rule in a copy of
+    # the sources and fails unless every violation is reported. It uses the
+    # golangci-lint the action just put on PATH.
+    - name: trust-boundary rules still fire
+      run: make lint-probe
+
   # `make test` is the one definition of the unit run: -race, with kopia's
   # `testing` tag for its fast test key derivation (see the Makefile). The
-  # integration job runs without the tag, so the release derivation is still
-  # exercised end to end.
+  # release derivation is exercised end to end by `integration (release key
+  # derivation)`, built without the tag. `make cover` is that same run with a module-wide
+  # coverage profile (-coverpkg=./...), reported in the job summary. No gate
+  # yet: Phase 14 sets one once the number is stable.
   unit-test:
     name: unit tests (race)
     runs-on: ubuntu-latest
@@ -74,8 +88,12 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
         cache: true
 
-    - name: make test
-      run: make test
+    - name: make cover (unit tests, race)
+      run: make cover
+
+    - name: coverage summary
+      if: ${{ !cancelled() && hashFiles('dist/coverage.out') != '' }}
+      run: make --no-print-directory cover-summary >> "$GITHUB_STEP_SUMMARY"
 
   # The parsers of the formats read forever, and of outside input, for a few
   # seconds each (phase-10-hardening.md §10.4). The seed corpora already run
@@ -161,9 +179,15 @@ jobs:
         path: web/dist
         if-no-files-found: error
 
+  # The integration tests only (the unit tests ran in unit-test), under the
+  # race detector: this is where the concurrency is (scheduler, background
+  # runs, leases, shutdown, kopia uploads). With kopia's `testing` tag, like
+  # the unit tests: scrypt is pure Go, the race detector multiplies its cost,
+  # and without the tag this job outgrew go test's 10-minute limit (#93).
   integration:
     name: integration (Garage fixture)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
 
@@ -173,8 +197,35 @@ jobs:
         cache: true
 
     # testcontainers-go drives Docker, which is preinstalled on ubuntu-latest.
-    - name: go test -tags integration
-      run: go test -tags integration ./...
+    - name: go test -race (integration tests, coverage)
+      run: make cover-integration
+
+    - name: coverage summary
+      if: ${{ !cancelled() && hashFiles('dist/coverage-integration.out') != '' }}
+      run: >-
+        make --no-print-directory cover-summary
+        COVERPROFILE=dist/coverage-integration.out
+        COVERTITLE="integration tests, Garage fixture"
+        >> "$GITHUB_STEP_SUMMARY"
+
+  # The same integration tests built without kopia's `testing` tag, so every
+  # repository they create derives its key with the release default, plus
+  # the tests only such a build compiles (the frozen Take-Out uses the
+  # release default). Without -race, which the job above covers.
+  integration-release-kdf:
+    name: integration (release key derivation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: go test (integration tests, release key derivation)
+      run: make test-integration-release
 
   static-binary:
     name: static binary artifact
