@@ -1530,7 +1530,8 @@ None reopens a locked decision.
   definition and CI runs it.
 - **The release derivation stays covered:** the frozen Take-Out was written
   with it and is opened by every run; the integration jobs build without the
-  tag and create repositories with it; and a test compiled only without the
+  tag and create repositories with it (since #93: the job `integration
+  (release key derivation)`; the `-race` runs set the tag); and a test compiled only without the
   tag fails when no frozen fixture uses kopia's release default (a kopia
   upgrade that changes it). The fixture generator refuses to run under the
   tag. No build that ships sets it.
@@ -1560,11 +1561,50 @@ dependency tests that already pinned them.
   caller's context instead of `context.Background()`, which keeps its values
   and still outlives it; tests prove a release after the caller's context
   ended still lands.
-- **Proposed, owner to confirm:** the test-support packages
-  (`internal/testutil`, `internal/config/configtest`,
-  `internal/state/statetest`) may be imported from `_test.go` files only
-  (depguard), and are therefore linted like tests. No binary imports them
-  today.
+- **Test-support packages are test-only (owner, 2026-10-13):**
+  `internal/testutil`, `internal/config/configtest` and
+  `internal/state/statetest` may be imported from `_test.go` files only
+  (depguard `test-support-in-tests-only`), and are therefore linted like
+  tests. No binary imports them.
+
+### Amendments from Phase 10.8 B (CI plumbing, #93)
+
+Amends one #94 amendment: integration runs under `-race` now set kopia's
+`testing` tag too; the release derivation moves to its own job.
+
+- **Integration tests run under `-race` everywhere (owner, 2026-10-13):**
+  the Garage job and every step of the OpenCloud suite, on every leg and
+  the canary.
+- **Integration runs select the integration tests only (owner,
+  2026-10-13):** the test functions in files built only with the
+  `integration` tag, derived from the sources by the Makefile. The unit
+  tests in those packages, and the unit-only packages, ran in the unit job
+  already; re-running them without the `testing` tag and under `-race`
+  (`internal/snapshot` 378 s) was most of the Garage job's time.
+- **Race-instrumented integration runs use kopia's `testing` tag (owner,
+  2026-10-13), amending #94's "the integration jobs build without the
+  tag":** scrypt is pure Go, the race detector multiplies its cost, and the
+  Garage job outgrew go test's 10-minute limit (`internal/backup` ~620 s,
+  288 s before `-race`). The release derivation is covered by a separate
+  job, `integration (release key derivation)` (`make
+  test-integration-release`): the same integration tests without the tag
+  and without `-race`, plus the tests only such a build compiles
+  (`TestFrozenTakeOutsCoverTheReleaseKeyDerivation`). Every repository
+  those tests create uses scrypt. The frozen Take-Out is still opened by
+  every run.
+- **Coverage is reported, not gated (owner, 2026-10-13):** module-wide
+  (`-coverpkg=./...`) in the job summary of the unit job, which runs
+  `make cover` in place of `make test` (same flags plus a profile), and of
+  the Garage job (integration tests only). The OpenCloud legs and the
+  release-derivation job report none. The gate stays Phase 14's.
+- **Module files are checked in CI (owner, 2026-10-13):** `go mod tidy
+  -diff` and `go mod verify` (`make mod-check`).
+- **The trust-boundary lint rules are probed in CI (owner, 2026-10-13):**
+  `make lint-probe` breaks each depguard rule and forbidigo pattern in a
+  copy of the sources and fails unless lint reports each violation.
+- **Proposed, owner to confirm:** a new depguard rule or forbidigo pattern
+  is not complete without a probe in `test/lintprobe/lint-probe.sh`, the
+  same way a backup path is not complete without its restore test.
 
 ---
 

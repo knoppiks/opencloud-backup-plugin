@@ -18,9 +18,10 @@ const kopiaTestingTag = false
 // The unit tests run with kopia's `testing` tag, so the repositories they
 // create skip the release key derivation (#94). What keeps that derivation
 // covered is a frozen Take-Out written with it, opened by every run; this
-// test, which only a build without the tag can make (the integration jobs,
-// a plain `go test`), fails when no fixture uses it, e.g. after a kopia
-// upgrade that changed the default.
+// test, which only a build without the tag can make (CI's `integration
+// (release key derivation)` job via `make test-integration-release`, a plain
+// `go test`), fails when no fixture uses it, e.g. after a kopia upgrade that
+// changed the default.
 func TestFrozenTakeOutsCoverTheReleaseKeyDerivation(t *testing.T) {
 	var used []string
 	for _, name := range frozenTakeOuts {
