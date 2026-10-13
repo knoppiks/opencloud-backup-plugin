@@ -19,7 +19,7 @@ func TestFixtureRequiredFlag(t *testing.T) {
 		"TRUE":  true,
 		"yes":   true,
 		"on":    true,
-		" 1 ":   true,
+		" 1 ":   true, //nolint:gocritic // mapKey: the whitespace is what this case tests
 		"maybe": false,
 	}
 	for value, want := range cases {

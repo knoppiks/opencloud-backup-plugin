@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -125,7 +126,7 @@ func TestServe_LogsTheEffectiveConfigurationWithoutSecrets(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 
-	failing := startupDeps{openState: func(stateEnv, *cs3.Client, string, *slog.Logger) (state.Store, error) {
+	failing := startupDeps{openState: func(context.Context, stateEnv, *cs3.Client, string, *slog.Logger) (state.Store, error) {
 		return nil, errors.New("no state for this test")
 	}}
 	if err := serve(cfg, logger, failing); err == nil {

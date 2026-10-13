@@ -59,7 +59,7 @@ const (
 // beneath, so the operator's log says why (review-2026-10.md F3): it names a
 // document key and a transport failure, never a document's contents — the
 // state store does not quote what it read, and a malformed document is
-// reported by key alone (state.ErrMalformed).
+// reported by key alone (state.MalformedError).
 var (
 	errReadRecord  = errors.New("keystore: could not read the key record")
 	errListRecords = errors.New("keystore: could not list the key records")
@@ -123,7 +123,7 @@ func (s *Store) Status(ctx context.Context, spaceID string) (keys.Status, error)
 
 	rec, err := s.read(ctx, spaceID)
 	if err != nil {
-		var notFound keys.ErrNotFound
+		var notFound keys.NotFoundError
 		if errors.As(err, &notFound) {
 			// "No keys yet" is a normal answer for a Space that has not been
 			// set up, not an error.
@@ -165,7 +165,7 @@ func (s *Store) newest(ctx context.Context, spaceID, kind string, want keys.Wrap
 		return keys.WrappedDK{}, err
 	}
 	if w.Kind != want {
-		return keys.WrappedDK{}, keys.ErrNotFound{SpaceID: spaceID}
+		return keys.WrappedDK{}, keys.NotFoundError{SpaceID: spaceID}
 	}
 	return w.Clone(), nil
 }
@@ -242,7 +242,7 @@ func (s *Store) legacyRecord(ctx context.Context, spaceID string) (keys.SpaceKey
 	rec, err := s.legacy.Get(ctx, spaceID)
 	if err != nil {
 		if state.IsNotFound(err) {
-			return keys.SpaceKeys{}, keys.ErrNotFound{SpaceID: spaceID}
+			return keys.SpaceKeys{}, keys.NotFoundError{SpaceID: spaceID}
 		}
 		return keys.SpaceKeys{}, fmt.Errorf("%w: %w", errReadRecord, err)
 	}

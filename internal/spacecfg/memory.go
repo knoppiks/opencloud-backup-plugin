@@ -48,7 +48,7 @@ func (m *MemoryStore) Get(_ context.Context, spaceID string) (Config, error) {
 	defer m.mu.RUnlock()
 	c, ok := m.configs[spaceID]
 	if !ok {
-		return Config{}, ErrNotFound{SpaceID: spaceID}
+		return Config{}, NotFoundError{SpaceID: spaceID}
 	}
 	return c, nil
 }
@@ -78,7 +78,7 @@ func (m *MemoryStore) Delete(_ context.Context, spaceID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.configs[spaceID]; !ok {
-		return ErrNotFound{SpaceID: spaceID}
+		return NotFoundError{SpaceID: spaceID}
 	}
 	delete(m.configs, spaceID)
 	return nil

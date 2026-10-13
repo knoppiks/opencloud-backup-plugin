@@ -378,7 +378,7 @@ func (r *Runner) runTimeout() time.Duration {
 func (r *Runner) openRepo(ctx context.Context, spaceID string) (snapshot.Repo, error) {
 	cfg, err := r.deps.Configs.Get(ctx, spaceID)
 	if err != nil {
-		var notFound spacecfg.ErrNotFound
+		var notFound spacecfg.NotFoundError
 		if errors.As(err, &notFound) {
 			return snapshot.Repo{}, ErrNotConfigured
 		}
@@ -428,7 +428,7 @@ func (r *Runner) resolveTarget(ctx context.Context, targetID string) (snapshot.L
 
 	target, err := r.deps.Targets.GetTarget(ctx, targetID)
 	if err != nil {
-		var notFound targets.ErrNotFound
+		var notFound targets.NotFoundError
 		if errors.As(err, &notFound) {
 			return snapshot.Location{}, ErrTargetUnavailable
 		}
@@ -459,7 +459,7 @@ func (r *Runner) resolveTarget(ctx context.Context, targetID string) (snapshot.L
 func (r *Runner) unwrapDataKey(ctx context.Context, spaceID string) ([]byte, error) {
 	wrapped, err := r.deps.Keys.GetSRW(ctx, spaceID)
 	if err != nil {
-		var notFound keys.ErrNotFound
+		var notFound keys.NotFoundError
 		if errors.As(err, &notFound) {
 			return nil, ErrNotConfigured
 		}

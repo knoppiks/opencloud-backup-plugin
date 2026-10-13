@@ -45,11 +45,13 @@ const (
 	// the decrypt tool must keep reading every version.
 	ManifestVersion = 1
 
-	// ManifestFile, EnvelopeFile and RepoDir are the fixed names inside a
-	// Take-Out directory.
+	// ManifestFile is the manifest's name inside a Take-Out directory.
 	ManifestFile = "manifest.json"
+	// EnvelopeFile is the RK-wrapped Data Key envelope's name inside a
+	// Take-Out directory.
 	EnvelopeFile = "recovery.ocbke"
-	RepoDir      = "repo"
+	// RepoDir is the kopia repository's directory inside a Take-Out.
+	RepoDir = "repo"
 )
 
 // Errors surfaced to operators and users. They stay coarse on purpose: an
@@ -133,7 +135,8 @@ func WriteManifest(dir string, m Manifest) error {
 
 // ReadManifest loads the manifest of a Take-Out directory.
 func ReadManifest(dir string) (Manifest, error) {
-	data, err := os.ReadFile(filepath.Join(dir, ManifestFile))
+	// dir is the Take-Out the caller chose to read; that is the point.
+	data, err := os.ReadFile(filepath.Join(dir, ManifestFile)) //nolint:gosec // G304: caller-chosen Take-Out
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Manifest{}, ErrNoTakeOut

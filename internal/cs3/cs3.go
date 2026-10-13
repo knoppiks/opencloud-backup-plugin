@@ -10,6 +10,7 @@ package cs3
 import (
 	"context"
 	"io"
+	"math"
 )
 
 // ResourceID mirrors the CS3 provider.ResourceId triple. The space root's
@@ -77,4 +78,14 @@ type SpaceReader interface {
 	// OpenFile streams the bytes of one space-relative file starting at offset.
 	// The caller closes the returned reader.
 	OpenFile(ctx context.Context, space Space, relPath string, offset int64) (io.ReadCloser, error)
+}
+
+// clampInt64 converts a CS3 unsigned quantity (a size, seconds since the
+// epoch) to the int64 the rest of the service uses. A value no real file or
+// clock reaches is pinned to the maximum instead of wrapping to a negative.
+func clampInt64(v uint64) int64 {
+	if v > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(v)
 }

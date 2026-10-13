@@ -85,7 +85,7 @@ func TestRecordOutcome_DoesNotRetryWhatCannotSucceed(t *testing.T) {
 		err error
 		out Outcome
 	}{
-		"unknown job":  {err: ErrNotFound{ID: "gone"}, out: Outcome{State: StateSucceeded}},
+		"unknown job":  {err: NotFoundError{ID: "gone"}, out: Outcome{State: StateSucceeded}},
 		"not terminal": {err: ErrNotTerminal, out: Outcome{State: StateRunning}},
 	} {
 		t.Run(name, func(t *testing.T) {

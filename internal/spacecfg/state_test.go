@@ -33,7 +33,7 @@ func TestStoreContract(t *testing.T) {
 			clock := testutil.NewFakeClock(epoch)
 			store := newImpl(clock)
 
-			var nf ErrNotFound
+			var nf NotFoundError
 			if _, err := store.Get(ctx, "absent"); !errors.As(err, &nf) {
 				t.Fatalf("Get absent: %v", err)
 			}
@@ -179,7 +179,7 @@ func TestStateStore_ReadsPreVersionedConfigurations(t *testing.T) {
 	if err := store.Delete(ctx, "s1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	var nf ErrNotFound
+	var nf NotFoundError
 	if _, err := store.Get(ctx, "s1"); !errors.As(err, &nf) {
 		t.Fatalf("Get after delete: %v", err)
 	}

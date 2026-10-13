@@ -52,7 +52,7 @@ func (s *StateStore) Get(ctx context.Context, spaceID string) (Config, error) {
 	c, err := s.configs.Newest(ctx, spaceID)
 	if err != nil {
 		if state.IsNotFound(err) {
-			return Config{}, ErrNotFound{SpaceID: spaceID}
+			return Config{}, NotFoundError{SpaceID: spaceID}
 		}
 		return Config{}, fmt.Errorf("spacecfg: read configuration: %w", err)
 	}
@@ -91,7 +91,7 @@ func (s *StateStore) Delete(ctx context.Context, spaceID string) error {
 		return fmt.Errorf("spacecfg: delete configuration: %w", err)
 	}
 	if !removed {
-		return ErrNotFound{SpaceID: spaceID}
+		return NotFoundError{SpaceID: spaceID}
 	}
 	return nil
 }

@@ -31,7 +31,7 @@ func (m *MemoryStore) Get(_ context.Context, key string) ([]byte, error) {
 	defer m.mu.RUnlock()
 	v, ok := m.values[key]
 	if !ok {
-		return nil, ErrNotFound{Key: key}
+		return nil, NotFoundError{Key: key}
 	}
 	return append([]byte(nil), v...), nil
 }
@@ -41,7 +41,7 @@ func (m *MemoryStore) Create(_ context.Context, key string, value []byte) error 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.values[key]; exists {
-		return ErrExists{Key: key}
+		return ExistsError{Key: key}
 	}
 	m.values[key] = append([]byte(nil), value...)
 	return nil
@@ -60,7 +60,7 @@ func (m *MemoryStore) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.values[key]; !ok {
-		return ErrNotFound{Key: key}
+		return NotFoundError{Key: key}
 	}
 	delete(m.values, key)
 	return nil

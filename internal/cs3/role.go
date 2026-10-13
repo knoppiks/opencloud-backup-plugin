@@ -188,5 +188,5 @@ func timestampToTime(ts *types.Timestamp) time.Time {
 	if ts == nil || (ts.GetSeconds() == 0 && ts.GetNanos() == 0) {
 		return time.Time{}
 	}
-	return time.Unix(int64(ts.GetSeconds()), int64(ts.GetNanos())).UTC()
+	return time.Unix(clampInt64(ts.GetSeconds()), int64(ts.GetNanos())).UTC()
 }

@@ -528,6 +528,30 @@ owner before A, because every later PR waits on the unit job.
   did: draw until a caught typo is found, or assert that nearly all typos
   are caught and none decodes to the mistyped key.
 
+**Outcome (10.8 A, #84).** Done; started from the overnight WIP's
+`.golangci.yml` (tag `wip/10.8-lint`, not rebased: it predated the 10.4–10.7
+squashes). 57 findings fixed; `golangci-lint run ./...` is clean.
+
+- **Linters** as planned. gocognit 40: `buildService` (50) split into
+  `authOptions`, `buildCustody` and `buildPipelines` (`cmd/backupd/wiring.go`),
+  order and conditions unchanged. gosec runs with defaults; G115 kept (see
+  decisions.md). `buildStateStore` takes the caller's context.
+- **Trust boundaries:** depguard `decrypt-is-offline-only` (only
+  `cmd/decrypt` links `pkg/takeout/decrypt`), `decrypt-path-has-no-network`
+  (the packages `cmd/decrypt` is built from may not import `net`, gRPC,
+  CS3, S3 clients, kopia's network drivers or the target-facing packages),
+  and, beyond the plan, `test-support-in-tests-only`. forbidigo: no
+  `keys.UnwrapRK`/`UnwrapSRW`, `SRWWrapper.UnwrapSRW`, `TWSealer.Open` or
+  `targets.CredSealer.Open` under `internal/api`, `internal/takeout` or
+  `cmd/takeout`; no `fmt.Print*`, `os.Exit`, `log.*` under `internal/`.
+  Each rule was checked by adding a violating file and seeing the build
+  fail; there is no permanent test of the lint config itself.
+- **revive `exported`** on `pkg/` only: two undocumented constants in
+  `pkg/takeout` fixed.
+- **Renames:** error types `Err*` → `*Error` (decisions.md).
+- **`-race` on the integration jobs** moved to B (#93) with the rest of the
+  CI plumbing.
+
 ## Exit criteria
 
 - [x] F1–F7 fixed, each with a test that fails on the old code.

@@ -91,7 +91,7 @@ func RecordOutcome(ctx context.Context, store Store, id string, out Outcome, opt
 
 // permanent reports whether retrying an outcome write is pointless.
 func permanent(err error) bool {
-	var notFound ErrNotFound
+	var notFound NotFoundError
 	return errors.Is(err, ErrNotTerminal) || errors.As(err, &notFound)
 }
 

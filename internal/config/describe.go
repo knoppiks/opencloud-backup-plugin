@@ -91,12 +91,14 @@ func typeName(v variable) string {
 func defaultOf(v variable) string {
 	switch {
 	case v.typ == secretType:
-		if v.value.Interface().(Secret).IsSet() {
+		secret, _ := v.value.Interface().(Secret) // the case is the type check
+		if secret.IsSet() {
 			panic(fmt.Sprintf("config: %s is a secret with a default", v.env))
 		}
 		return ""
 	case v.typ == stringSliceType:
-		return strings.Join(v.value.Interface().([]string), ",")
+		values, _ := v.value.Interface().([]string) // the case is the type check
+		return strings.Join(values, ",")
 	case v.typ.Kind() == reflect.Bool:
 		return strconv.FormatBool(v.value.Bool())
 	case v.typ.Kind() == reflect.Int:

@@ -83,7 +83,7 @@ func SRW(ctx context.Context, store EnvelopeStore, oldKey, newKey []byte) (Resul
 	for _, spaceID := range spaces {
 		current, err := store.GetSRW(ctx, spaceID)
 		if err != nil {
-			var notFound keys.ErrNotFound
+			var notFound keys.NotFoundError
 			if errors.As(err, &notFound) {
 				out.Skipped++
 				continue

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state/statetest"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/testutil"
 )
 
@@ -399,5 +400,27 @@ func TestLeaseLocker_Busy(t *testing.T) {
 	release()
 	if busy, err := locker.Busy(ctx, "s1"); err != nil || busy {
 		t.Fatalf("Busy after release = %v (%v)", busy, err)
+	}
+}
+
+// A manual run's lease is taken with the request's context, which ends long
+// before the run does. Releasing it must not depend on that context, or the
+// Space stays locked until the lease expires.
+func TestLeaseLocker_ReleaseOutlivesTheAcquireContext(t *testing.T) {
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+	locker, _ := newLocker(t, statetest.HonoursContext(backing), clock, time.Minute)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	release, err := locker.Acquire(ctx, "s1")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	cancel()
+	release()
+
+	keys, err := backing.List(context.Background(), leasePrefix)
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("lease keys after release = %v (%v), want none", keys, err)
 	}
 }

@@ -132,7 +132,7 @@ func (s *Server) handlePutSchedule(w http.ResponseWriter, r *http.Request) {
 	// schedule must not become a second, unchecked way to configure backup.
 	cfg, err := s.spaceConfigs.Get(r.Context(), spaceID)
 	if err != nil {
-		var notFound spacecfg.ErrNotFound
+		var notFound spacecfg.NotFoundError
 		if errors.As(err, &notFound) {
 			writeError(w, http.StatusConflict, "not_configured", "backup is not configured for this space")
 			return
@@ -164,7 +164,7 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := s.spaceConfigs.Get(r.Context(), spaceID)
 	if err != nil {
-		var notFound spacecfg.ErrNotFound
+		var notFound spacecfg.NotFoundError
 		if errors.As(err, &notFound) {
 			writeError(w, http.StatusNotFound, "not_found", "backup is not configured for this space")
 			return
@@ -378,6 +378,6 @@ func (s *Server) scheduleTimezone() string {
 }
 
 func isConfigNotFound(err error) bool {
-	var notFound spacecfg.ErrNotFound
+	var notFound spacecfg.NotFoundError
 	return errors.As(err, &notFound)
 }

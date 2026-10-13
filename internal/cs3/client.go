@@ -219,8 +219,8 @@ func (c *Client) listDir(ctx context.Context, space Space, relDir string) ([]Ent
 		entries = append(entries, Entry{
 			Path:      path.Join(relDir, name),
 			IsDir:     info.GetType() == provider.ResourceType_RESOURCE_TYPE_CONTAINER,
-			Size:      int64(info.GetSize()),
-			MTimeUnix: int64(info.GetMtime().GetSeconds()),
+			Size:      clampInt64(info.GetSize()),
+			MTimeUnix: clampInt64(info.GetMtime().GetSeconds()),
 		})
 	}
 	return entries, nil
@@ -427,12 +427,12 @@ func spaceRootID(space Space) *provider.ResourceId {
 // back to the space id itself, which is what a single-segment id means.
 func splitSpaceID(id string) (storageID, spaceID, opaqueID string) {
 	storageID, spaceID = id, id
-	if i := strings.Index(id, "$"); i >= 0 {
-		storageID, spaceID = id[:i], id[i+1:]
+	if before, after, ok := strings.Cut(id, "$"); ok {
+		storageID, spaceID = before, after
 	}
 	opaqueID = spaceID
-	if i := strings.Index(spaceID, "!"); i >= 0 {
-		spaceID, opaqueID = spaceID[:i], spaceID[i+1:]
+	if before, after, ok := strings.Cut(spaceID, "!"); ok {
+		spaceID, opaqueID = before, after
 	}
 	return storageID, spaceID, opaqueID
 }

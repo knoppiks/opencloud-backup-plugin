@@ -1,5 +1,6 @@
-# golangci-lint config (schema v2). Conservative set for a young codebase;
-# tighten per phase.
+# golangci-lint config (schema v2). Extended in phase 10.8 (#84)
+# (phase-10-hardening.md): correctness linters, and the project's trust
+# boundaries as rules that fail the build (depguard, forbidigo).
 version: "2"
 
 run:
@@ -9,13 +10,152 @@ run:
 linters:
   enable:
   - bodyclose
+  - contextcheck
+  - depguard
+  - errname
+  - errorlint
+  - exhaustive
+  - forbidigo
+  - forcetypeassert
+  - gocognit
+  - gocritic
+  - gosec
   - misspell
+  - nilerr
+  - noctx
   - revive
+  - sloglint
+  - unparam
+  - usestdlibvars
   settings:
+    depguard:
+      rules:
+        # decisions.md: the server and the admin handle ciphertext only. The
+        # offline decrypt library turns a Take-Out plus a Recovery Key into
+        # plaintext; only the family's own decrypt CLI may link it. Tests act
+        # as the family member and may use it to prove what they wrote opens.
+        decrypt-is-offline-only:
+          files:
+          - $all
+          - "!$test"
+          - "!**/cmd/decrypt/**"
+          - "!**/pkg/takeout/decrypt/**"
+          deny:
+          - pkg: github.com/knoppiks/opencloud-backup-plugin/pkg/takeout/decrypt
+            desc: only cmd/decrypt may link the offline decrypt library (ciphertext-only server and admin path)
+        # decrypt runs offline on a family member's machine (phase 10.6). The
+        # packages it is built from (cmd/decrypt's ownPackages) must not reach
+        # a network. cmd/decrypt/deps_test.go checks the transitive graph; this
+        # rule names the cause at the import that would add it.
+        # Test support (fixtures, contract suites, golden-file helpers) is
+        # imported by tests only, so it never reaches a binary. That is also
+        # why the exclusions below treat it like a _test.go file.
+        test-support-in-tests-only:
+          files:
+          - $all
+          - "!$test"
+          - "!**/internal/testutil/**"
+          - "!**/internal/config/configtest/**"
+          - "!**/internal/state/statetest/**"
+          deny:
+          - pkg: github.com/knoppiks/opencloud-backup-plugin/internal/testutil
+            desc: test support; import it from _test.go files only
+          - pkg: github.com/knoppiks/opencloud-backup-plugin/internal/config/configtest
+            desc: test support; import it from _test.go files only
+          - pkg: github.com/knoppiks/opencloud-backup-plugin/internal/state/statetest
+            desc: test support; import it from _test.go files only
+        decrypt-path-has-no-network:
+          files:
+          - "!$test"
+          - "**/cmd/decrypt/**"
+          - "**/pkg/**"
+          - "**/internal/buildinfo/**"
+          - "**/internal/cli/**"
+          - "**/internal/state/**"
+          - "**/internal/snapshot/**"
+          - "!**/internal/snapshot/s3repo/**"
+          deny:
+          - pkg: net
+            desc: the decrypt path works offline
+          - pkg: google.golang.org/grpc
+            desc: the decrypt path works offline
+          - pkg: github.com/cs3org
+            desc: the decrypt path does not talk to OpenCloud
+          - pkg: github.com/aws
+            desc: the decrypt path reads a local Take-Out, never a storage target
+          - pkg: github.com/minio
+            desc: the decrypt path reads a local Take-Out, never a storage target
+          - pkg: github.com/kopia/kopia/repo/blob/s3
+            desc: the decrypt path opens filesystem repositories only
+          - pkg: github.com/kopia/kopia/repo/blob/azure
+            desc: the decrypt path opens filesystem repositories only
+          - pkg: github.com/kopia/kopia/repo/blob/gcs
+            desc: the decrypt path opens filesystem repositories only
+          - pkg: github.com/kopia/kopia/repo/blob/b2
+            desc: the decrypt path opens filesystem repositories only
+          - pkg: github.com/kopia/kopia/repo/blob/gdrive
+            desc: the decrypt path opens filesystem repositories only
+          - pkg: github.com/kopia/kopia/repo/blob/sftp
+            desc: the decrypt path opens filesystem repositories only
+          - pkg: github.com/kopia/kopia/repo/blob/webdav
+            desc: the decrypt path opens filesystem repositories only
+          - pkg: github.com/kopia/kopia/repo/blob/rclone
+            desc: the decrypt path opens filesystem repositories only
+          - pkg: github.com/knoppiks/opencloud-backup-plugin/internal/objstore
+            desc: target-facing; the decrypt path reads a local Take-Out
+          - pkg: github.com/knoppiks/opencloud-backup-plugin/internal/snapshot/s3repo
+            desc: target-facing; the decrypt path reads a local Take-Out
+          - pkg: github.com/knoppiks/opencloud-backup-plugin/internal/takeout/remote
+            desc: target-facing; the decrypt path reads a local Take-Out
+          - pkg: github.com/knoppiks/opencloud-backup-plugin/internal/cs3
+            desc: the decrypt path does not talk to OpenCloud
+    exhaustive:
+      default-signifies-exhaustive: true
+    forbidigo:
+      analyze-types: true
+      forbid:
+      # Ciphertext-only boundary (decisions.md, AGENTS.md hard constraints):
+      # the API (member and admin routes) and the admin's Take-Out tool never
+      # open a Data Key or a target credential. Scoped by the exclusion below
+      # that matches "ciphertext-only".
+      - pattern: ^keys\.Unwrap(RK|SRW)$
+        pkg: ^github\.com/knoppiks/opencloud-backup-plugin/pkg/keys$
+        msg: ciphertext-only path; Data Keys are unwrapped by the backup worker or the offline decrypt CLI
+      - pattern: ^keys\.SRWWrapper\.UnwrapSRW$
+        pkg: ^github\.com/knoppiks/opencloud-backup-plugin/pkg/keys$
+        msg: ciphertext-only path; Data Keys are unwrapped by the backup worker only
+      - pattern: ^keys\.TWSealer\.Open$
+        pkg: ^github\.com/knoppiks/opencloud-backup-plugin/pkg/keys$
+        msg: ciphertext-only path; target credentials are opened in worker memory only (decisions.md #14)
+      - pattern: ^targets\.CredSealer\.Open$
+        pkg: ^github\.com/knoppiks/opencloud-backup-plugin/internal/targets$
+        msg: ciphertext-only path; target credentials are opened in worker memory only (decisions.md #14)
+      # Library code reports through return values and *slog.Logger; only a
+      # program's main decides what reaches stdout and when the process ends.
+      # Scoped to internal/ by the exclusion that matches "library code".
+      - pattern: ^fmt\.Print(f|ln)?$
+        pkg: ^fmt$
+        msg: library code does not write to stdout; return the value or take an io.Writer
+      - pattern: ^os\.Exit$
+        pkg: ^os$
+        msg: library code does not end the process; return an error
+      - pattern: ^log\.
+        pkg: ^log$
+        msg: library code logs through an injected *slog.Logger
+    gocognit:
+      # buildService (cmd/backupd) was 57; split to get under this.
+      min-complexity: 40
+    # gosec runs with its defaults. G115 (integer conversion overflow) stays
+    # on: each conversion it flags is either clamped (cs3.clampInt64) or
+    # carries a nolint that says why the value is in range.
     revive:
       rules:
+      # Scoped to pkg/ (the public format packages, decision #26) by the
+      # exclusion that matches "exported".
       - name: exported
-        disabled: true
+    sloglint:
+      kv-only: true
+      key-naming-case: snake
   exclusions:
     rules:
     # Phase-0 Garage fixture uses the classic s3/manager uploader; migrating to
@@ -24,6 +164,42 @@ linters:
       text: "manager.NewUploader|manager.Uploader|uploader.Upload"
       linters:
       - staticcheck
+    # Tests read fixtures from temporary directories, start fake servers with
+    # the plain constructors, pass context.Background, assert types they just
+    # built, and keep helper parameters for readability. A failing assertion
+    # fails the test, which is what these linters guard against elsewhere.
+    # The test-support packages are held to the same rules (depguard keeps
+    # them out of every binary).
+    - path: (_test\.go$|^internal/testutil/|^internal/config/configtest/|^internal/state/statetest/)
+      linters:
+      - contextcheck
+      - forcetypeassert
+      - gocognit
+      - gosec
+      - noctx
+      - unparam
+    # Tests play the family member (they open what the server wrote).
+    - path: _test\.go$
+      linters:
+      - forbidigo
+      text: ciphertext-only
+    - path-except: ^(internal/api|internal/takeout|cmd/takeout)/
+      linters:
+      - forbidigo
+      text: ciphertext-only
+    - path-except: ^internal/
+      linters:
+      - forbidigo
+      text: library code
+    # A go:generate program, not library code.
+    - path: ^internal/config/gen/
+      linters:
+      - forbidigo
+      text: library code
+    - path-except: ^pkg/
+      linters:
+      - revive
+      text: "^exported:"
 
 formatters:
   enable:

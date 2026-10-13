@@ -83,7 +83,7 @@ func (c Config) EffectiveSchedule() string {
 
 // Store persists per-Space backup configuration.
 type Store interface {
-	// Get returns a Space's configuration or ErrNotFound.
+	// Get returns a Space's configuration or NotFoundError.
 	Get(ctx context.Context, spaceID string) (Config, error)
 	// Put creates or replaces a Space's configuration.
 	Put(ctx context.Context, c Config) (Config, error)
@@ -101,9 +101,9 @@ type Store interface {
 	List(ctx context.Context) (configs []Config, unreadable []string, err error)
 }
 
-// ErrNotFound is returned when a Space has no backup configuration.
-type ErrNotFound struct{ SpaceID string }
+// NotFoundError is returned when a Space has no backup configuration.
+type NotFoundError struct{ SpaceID string }
 
-func (e ErrNotFound) Error() string {
+func (e NotFoundError) Error() string {
 	return "spacecfg: no backup configuration for space " + e.SpaceID
 }

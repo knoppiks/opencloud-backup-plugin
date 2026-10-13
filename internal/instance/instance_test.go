@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/state/statetest"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/testutil"
 )
 
@@ -156,5 +157,27 @@ func waitForExpiry(t *testing.T, backing state.Store, id string, want time.Time)
 			t.Fatalf("record for %s was not renewed to %v (last err %v)", id, want, err)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Standing down runs at shutdown, after the context the record was claimed
+// with is gone. Withdrawing the record must not depend on it, or every restart
+// waits out the TTL behind "another instance is running".
+func TestGuard_StandsDownAfterTheClaimContextEnded(t *testing.T) {
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+	g, _ := newGuard(t, statetest.HonoursContext(backing), clock, "instance-a", time.Minute)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	standDown, err := g.Claim(ctx)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	cancel()
+	standDown()
+
+	ids, err := state.NewDocuments[record](backing, prefix).IDs(context.Background())
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("instance records after standing down = %v (%v), want none", ids, err)
 	}
 }

@@ -1538,6 +1538,34 @@ None reopens a locked decision.
   `unit tests (race)` (owner, 2026-10-12). The required check
   `build / vet / lint / test` in the `Default` ruleset is replaced by those two.
 
+### Amendments from Phase 10.8 A (lint set and trust boundaries, #84)
+
+None reopens a locked decision; the ciphertext-only admin path and the
+offline decrypt path are now lint rules (depguard, forbidigo) on top of the
+dependency tests that already pinned them.
+
+- **Error types are named `XxxError` (owner, 2026-10-12):** `NotFoundError`
+  (`state`, `jobs`, `spacecfg`, `targets`, public `pkg/keys`),
+  `MalformedError`, `ExistsError`, `UnreadableTargetsError`; sentinel values
+  stay `ErrXxx`. `pkg/keys.ErrNotFound` → `NotFoundError` changes the public
+  API, which 0.x allows (compatibility-policy §1); nothing was released.
+- **gosec G115 stays on (owner, 2026-10-12):** CS3 sizes and timestamps
+  (unsigned on the wire) are clamped to `math.MaxInt64` instead of wrapping
+  negative; every other conversion carries a `//nolint:gosec` naming why it
+  is in range.
+- **Targeted `//nolint` with a reason, not global exclusions (owner,
+  2026-10-12):** G704 (SSRF) on the OIDC discovery and JWKS fetch, whose
+  URLs are the operator's issuer. G118 needed none: the instance record and
+  the run lease are renewed and released with `context.WithoutCancel` of the
+  caller's context instead of `context.Background()`, which keeps its values
+  and still outlives it; tests prove a release after the caller's context
+  ended still lands.
+- **Proposed, owner to confirm:** the test-support packages
+  (`internal/testutil`, `internal/config/configtest`,
+  `internal/state/statetest`) may be imported from `_test.go` files only
+  (depguard), and are therefore linted like tests. No binary imports them
+  today.
+
 ---
 
 ## Trust & key model

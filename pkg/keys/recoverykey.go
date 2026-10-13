@@ -174,7 +174,7 @@ func base32Decode(s string) ([]byte, error) {
 		if idx < 0 {
 			return nil, fmt.Errorf("%w: illegal character", ErrBadRecoveryKey)
 		}
-		acc = acc<<5 | uint32(idx)
+		acc = acc<<5 | uint32(idx) //nolint:gosec // G115: an index into the 32-letter alphabet
 		bits += 5
 		if bits >= 8 {
 			bits -= 8

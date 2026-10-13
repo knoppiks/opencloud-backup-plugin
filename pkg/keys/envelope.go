@@ -218,13 +218,16 @@ type envelopeHeader struct {
 func buildHeader(version int, kind WrapKind, kdf kdfID, params ArgonParams, salt []byte) []byte {
 	h := make([]byte, envelopeHeaderMin+len(salt))
 	copy(h[0:envelopeMagicLen], envelopeMagic)
-	h[5] = byte(version)
-	h[6] = byte(kind)
+	// version and kind are this package's constants, all below 256; the
+	// salt is at most ArgonParams.SaltLen (a uint8) long. parseEnvelope reads
+	// each back as the one byte written here.
+	h[5] = byte(version) //nolint:gosec // G115: a package constant below 256
+	h[6] = byte(kind)    //nolint:gosec // G115: a package constant below 256
 	h[7] = byte(kdf)
 	binary.BigEndian.PutUint32(h[8:12], params.Time)
 	binary.BigEndian.PutUint32(h[12:16], params.MemoryKiB)
 	h[16] = params.Lanes
-	h[17] = byte(len(salt))
+	h[17] = byte(len(salt)) //nolint:gosec // G115: at most SaltLen, a uint8
 	copy(h[envelopeHeaderMin:], salt)
 	return h
 }

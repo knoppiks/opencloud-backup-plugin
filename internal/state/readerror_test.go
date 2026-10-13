@@ -90,7 +90,7 @@ func TestVersionsLatestSkipsARecordDeletedUnderneathIt(t *testing.T) {
 	}
 	key := listed(t, backing, "records/b")
 
-	flaky := flakyStore{Store: backing, failGet: map[string]error{key: state.ErrNotFound{Key: key}}}
+	flaky := flakyStore{Store: backing, failGet: map[string]error{key: state.NotFoundError{Key: key}}}
 	got, unreadable, err := state.NewVersions[doc](flaky, "records").Latest(ctx)
 	if err != nil {
 		t.Fatalf("Latest: %v", err)

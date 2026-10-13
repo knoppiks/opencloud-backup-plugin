@@ -29,7 +29,7 @@ func (d DirStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(p)
+	f, err := os.Open(p) //nolint:gosec // G304: resolve keeps every key inside Root
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, key)

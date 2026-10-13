@@ -245,7 +245,7 @@ func TestRestore_RunnerErrorsMapToStatusCodes(t *testing.T) {
 			t.Fatalf("%v: error code = %q, want %q", tc.err, body.Error.Code, tc.code)
 		}
 		// Internal detail must never reach the client.
-		if body.Error.Message == tc.err.Error() && tc.err == errUnexpected {
+		if body.Error.Message == tc.err.Error() && errors.Is(tc.err, errUnexpected) {
 			t.Fatalf("internal error text leaked: %q", body.Error.Message)
 		}
 	}

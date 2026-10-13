@@ -70,7 +70,7 @@ func (m *MemoryStore) GetSRW(ctx context.Context, spaceID string) (WrappedDK, er
 	defer m.mu.RUnlock()
 	rec, ok := m.byID[spaceID]
 	if !ok || rec.SRW.Kind != WrapSRW {
-		return WrappedDK{}, ErrNotFound{SpaceID: spaceID}
+		return WrappedDK{}, NotFoundError{SpaceID: spaceID}
 	}
 	return rec.SRW.Clone(), nil
 }
@@ -100,7 +100,7 @@ func (m *MemoryStore) GetRK(ctx context.Context, spaceID string) (WrappedDK, err
 	defer m.mu.RUnlock()
 	rec, ok := m.byID[spaceID]
 	if !ok || rec.RK.Kind != WrapRK {
-		return WrappedDK{}, ErrNotFound{SpaceID: spaceID}
+		return WrappedDK{}, NotFoundError{SpaceID: spaceID}
 	}
 	return rec.RK.Clone(), nil
 }

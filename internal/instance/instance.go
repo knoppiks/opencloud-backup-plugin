@@ -139,14 +139,17 @@ func (g *Guard) Claim(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 
+	// Renewing and withdrawing the record outlive ctx, which is startup's:
+	// they keep its values and drop its cancellation.
+	detached := context.WithoutCancel(ctx)
 	stop := make(chan struct{})
-	go g.renewUntil(stop)
+	go g.renewUntil(detached, stop)
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			close(stop)
-			g.release()
+			g.release(detached)
 		})
 	}, nil
 }
@@ -192,7 +195,7 @@ func (g *Guard) write(ctx context.Context) error {
 }
 
 // renewUntil keeps the record live for as long as this process is.
-func (g *Guard) renewUntil(stop <-chan struct{}) {
+func (g *Guard) renewUntil(ctx context.Context, stop <-chan struct{}) {
 	interval := g.ttl / 3
 	if interval <= 0 {
 		interval = g.ttl
@@ -202,8 +205,8 @@ func (g *Guard) renewUntil(stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-g.after(interval):
-			ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
-			err := g.write(ctx)
+			writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+			err := g.write(writeCtx)
 			cancel()
 			if err != nil {
 				// Best effort: a record that stops being renewed expires, and
@@ -217,8 +220,8 @@ func (g *Guard) renewUntil(stop <-chan struct{}) {
 
 // release drops this instance's record so a replacement can start immediately
 // instead of waiting out the TTL.
-func (g *Guard) release() {
-	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+func (g *Guard) release(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	if err := g.docs.Delete(ctx, g.id); err != nil && !state.IsNotFound(err) {
 		g.logger.Warn("could not clear this instance's record", "err", err)

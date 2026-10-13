@@ -36,7 +36,7 @@ func TestStoreContract(t *testing.T) {
 				t.Fatalf("status of an unconfigured space: %+v", status)
 			}
 
-			var nf keys.ErrNotFound
+			var nf keys.NotFoundError
 			if _, err := store.GetSRW(context.Background(), "space$a!a"); !errors.As(err, &nf) {
 				t.Fatalf("GetSRW absent: %v", err)
 			}
