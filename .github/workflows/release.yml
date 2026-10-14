@@ -32,9 +32,11 @@ jobs:
       matrix:
         include:
         - image: opencloud-backupd
-          context: .
+          file: Dockerfile
+        # Built from the repository root too: its entrypoint is a Go
+        # program (web/Dockerfile.dockerignore keeps the context small).
         - image: opencloud-backup-vault-web
-          context: web
+          file: web/Dockerfile
     steps:
     - uses: actions/checkout@v7
 
@@ -63,7 +65,8 @@ jobs:
     # stage is per-architecture, so arm64 costs no emulated compile.
     - uses: docker/build-push-action@v6
       with:
-        context: ${{ matrix.context }}
+        context: .
+        file: ${{ matrix.file }}
         platforms: linux/amd64,linux/arm64
         push: true
         tags: ${{ steps.meta.outputs.tags }}

@@ -38,6 +38,11 @@ ENV CGO_ENABLED=0
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/backupd ./cmd/backupd && \
     GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/takeout ./cmd/takeout
 
+# The third-party notices for exactly these two programs on this platform,
+# after the check that refuses a dependency under a license outside the
+# allow-list (scripts/third-party-notices.sh, phase-11 §11.1).
+RUN scripts/third-party-notices.sh -o /out/THIRD_PARTY_NOTICES -p "$TARGETOS/$TARGETARCH" ./cmd/backupd ./cmd/takeout
+
 # --- runtime ----------------------------------------------------------------
 # distroless/static, not scratch: the service makes outbound HTTPS calls (JWKS
 # discovery, the OpenCloud graph API, S3 targets), so it needs CA roots. It does
@@ -50,6 +55,8 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 
 COPY --from=build /out/backupd /backupd
 COPY --from=build /out/takeout /takeout
+COPY LICENSE /licenses/LICENSE
+COPY --from=build /out/THIRD_PARTY_NOTICES /licenses/THIRD_PARTY_NOTICES
 
 USER 65532:65532
 EXPOSE 8080

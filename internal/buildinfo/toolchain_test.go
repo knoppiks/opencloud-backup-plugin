@@ -7,9 +7,10 @@ import (
 	"testing"
 )
 
-// The Go toolchain is named in four places: go.mod (what `go` itself switches
-// to), the image's build stage, and the workflows' GO_VERSION. What CI tests
-// has to be what the image ships, so they must name the same patch release
+// The Go toolchain is named in several places: go.mod (what `go` itself
+// switches to), the images' build stages, and the workflows' GO_VERSION.
+// What CI tests has to be what the images ship, so they must name the same
+// patch release
 // (phase 10.7, review G3). Renovate bumps them together from Phase 11; this
 // test catches a bump that missed one.
 
@@ -21,6 +22,7 @@ var toolchainSources = []struct {
 }{
 	{"go.mod", regexp.MustCompile(`(?m)^toolchain go(\d+\.\d+\.\d+)$`)},
 	{"Dockerfile", regexp.MustCompile(`(?m)^FROM .*\bgolang:(\d+\.\d+\.\d+)-`)},
+	{"web/Dockerfile", regexp.MustCompile(`(?m)^FROM .*\bgolang:(\d+\.\d+\.\d+)-`)},
 	{".github/workflows/ci.yml", regexp.MustCompile(`(?m)^\s*GO_VERSION: "(\d+\.\d+\.\d+)"$`)},
 	{".github/workflows/fuzz.yml", regexp.MustCompile(`(?m)^\s*GO_VERSION: "(\d+\.\d+\.\d+)"$`)},
 	{".github/workflows/canary.yml", regexp.MustCompile(`(?m)^\s*GO_VERSION: "(\d+\.\d+\.\d+)"$`)},

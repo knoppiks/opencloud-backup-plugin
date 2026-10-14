@@ -1,5 +1,6 @@
-// Package cli holds what the three command-line programs (backupd, takeout,
-// decrypt) agree on: how flags are parsed and what the exit status means.
+// Package cli holds what the command-line programs (backupd, takeout,
+// decrypt, install-bundle) agree on: how flags are parsed and what the exit
+// status means.
 //
 // Exit status:
 //

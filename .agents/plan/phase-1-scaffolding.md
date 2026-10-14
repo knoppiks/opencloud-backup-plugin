@@ -13,6 +13,7 @@ layout does not depend on spike outcomes; the `/internal/snapshot` internals do)
    /cmd/backupd/              # main service (API + worker + scheduler)
    /cmd/takeout/              # admin Take-Out extractor CLI   (Phase 5)
    /cmd/decrypt/              # user-side standalone decrypt CLI (Phase 5)
+   /cmd/install-bundle/       # web image entrypoint: copies the bundle (11.1)
 
    # Public: the reference implementations of the long-term formats.
    /pkg/keys/                 # envelope, Recovery Key, TW blob; DK/RK/SRW key service
@@ -43,6 +44,7 @@ layout does not depend on spike outcomes; the `/internal/snapshot` internals do)
    /internal/config/          # the environment, parsed and validated (10.3)
    /internal/buildinfo/       # version reporting (10.5)
    /internal/cli/             # shared flag parsing and exit status (10.5)
+   /internal/bundleinstall/   # the web bundle copy behind install-bundle (11.1)
    /internal/testutil/        # Garage fixture, clock, dependency audits
    /internal/publicapi/       # test: no pkg/ API names an internal type (10.7)
    ```

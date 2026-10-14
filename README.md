@@ -239,6 +239,12 @@ initContainers:
 # <OC_DATA_DIR>/web/assets/apps/ (default /var/lib/opencloud/web/assets/apps/).
 ```
 
+**Do not set `command` or `args` on this container.** OpenCloud's own
+`web-extensions` images are usually run with a shell one-liner,
+`sh -c "mkdir -p /extensions/… && cp -R …"`. This image has no shell, so that
+command fails. The image's entrypoint does the same copy by itself, and an
+argument it does not know stops it with an error.
+
 OpenCloud scans the apps directory **at startup only**, which an initContainer
 gets for free. Copying into a running pod does nothing until it restarts.
 
@@ -720,4 +726,26 @@ Playwright's.
 
 ## License
 
-TBD.
+Apache License 2.0; see [`LICENSE`](LICENSE). Source files carry no
+per-file license headers: `LICENSE` at the root covers them all.
+
+What ships includes other people's software, whose licenses are reproduced
+alongside it, generated where it is built:
+
+- **Images:** `/licenses/` holds `LICENSE` and `THIRD_PARTY_NOTICES` for the
+  programs in the image. The web image also has the bundle's notices in
+  `/licenses/backup-vault/`.
+- **The web bundle:** `THIRD_PARTY_NOTICES` next to `manifest.json`, so the
+  notices are copied into OpenCloud's apps directory with the bundle.
+- **`make licenses`** writes the notices for every Go program on every
+  platform to `dist/THIRD_PARTY_NOTICES`.
+
+Builds fail on a dependency whose license is not on the allow-list
+(Apache-2.0, BSD-2/3-Clause, MIT, ISC, CC0-1.0). Two named exceptions:
+
+- `github.com/mxk/go-vss` (MPL-2.0) is linked into the Windows `decrypt` only.
+  Its notice says where its source is published.
+- The web bundle's stylesheet is compiled from the OpenCloud extension SDK's
+  theme, which is AGPL-3.0. That part of the bundle is AGPL-3.0 material, and
+  the bundle runs as part of OpenCloud Web, itself AGPL-3.0. The project's
+  sources remain Apache-2.0, which may be combined with AGPL-3.0 code.

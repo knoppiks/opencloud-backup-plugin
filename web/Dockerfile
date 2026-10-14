@@ -2,42 +2,77 @@
 #
 # This image serves nothing. It exists to put the built extension into
 # OpenCloud's apps directory, the way OpenCloud's own `web-extensions` images
-# do: the bundle sits at the same path those images use, so the copy step an
-# operator already has for them works unchanged:
+# do: the bundle sits at the same path those images use,
+# /usr/share/nginx/html/backup-vault/, and the image's entrypoint copies it to
+# /extensions/backup-vault, as the documented initContainer expects. From
+# there it goes into `<OC_DATA_DIR>/web/assets/apps/backup-vault/`. OpenCloud
+# scans that directory at startup only, so the pod must restart after the
+# copy, which an initContainer gets for free.
 #
-#   mkdir -p /extensions/backup-vault && \
-#     cp -R /usr/share/nginx/html/backup-vault/ /extensions/
+# There is no shell in the image (phase-11 §11.1, #99): the copy is
+# cmd/install-bundle, a static Go program, on distroless. An initContainer
+# must therefore not override the command with the `sh -c "mkdir … && cp …"`
+# one-liner OpenCloud's own images are run with; the default does that job.
 #
-# and from there into `<OC_DATA_DIR>/web/assets/apps/backup-vault/`. OpenCloud
-# scans that directory at startup only, so the pod must restart after the copy,
-# which an initContainer gets for free.
+# Build context is the repository root, for the Go program:
 #
-# Build context is `web/` (see web/.dockerignore). Base images are pinned by
-# digest (AGENTS.md: pin external versions).
+#   docker build -f web/Dockerfile .
+#
+# (see web/Dockerfile.dockerignore). Base images are pinned by digest
+# (AGENTS.md: pin external versions).
 
-# --- build ------------------------------------------------------------------
+# --- bundle -----------------------------------------------------------------
 # Keep the Node version in step with CI's NODE_VERSION. The bundle is the same
-# on every platform, so it is built once, on the builder's own.
-FROM --platform=$BUILDPLATFORM node:24.17.0-bookworm-slim@sha256:862263c612aa437e3037674b85419622a9d93bff80aa1eee5398dfe686375532 AS build
+# on every platform, so it is built once, on the builder's own. The build
+# checks the bundle's third-party licenses and writes THIRD_PARTY_NOTICES
+# into it (web/build/third-party-licenses.ts).
+FROM --platform=$BUILDPLATFORM node:24.17.0-bookworm-slim@sha256:862263c612aa437e3037674b85419622a9d93bff80aa1eee5398dfe686375532 AS bundle
 
-WORKDIR /src
+WORKDIR /src/web
 
 # pnpm at the version pinned in package.json's packageManager, via Corepack.
 RUN corepack enable
 
 # Dependencies first: a source-only change then reuses this layer.
-COPY package.json pnpm-lock.yaml ./
+COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-COPY . .
+COPY web/ ./
 RUN pnpm build
 
-# --- runtime ----------------------------------------------------------------
-# busybox, not scratch: the initContainer needs `sh` and `cp`. Nothing runs in
-# this image beyond that copy.
-FROM busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
+# --- install-bundle ---------------------------------------------------------
+# Keep the Go version in step with go.mod and CI's GO_VERSION
+# (internal/buildinfo/toolchain_test.go). Cross-compiled on the builder's
+# platform, like the service image.
+FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS installer
+ARG TARGETOS
+ARG TARGETARCH
 
-COPY --from=build /src/dist/ /usr/share/nginx/html/backup-vault/
+WORKDIR /src
+
+COPY go.mod go.sum ./
+COPY cmd/ cmd/
+COPY internal/ internal/
+COPY scripts/ scripts/
+
+ENV CGO_ENABLED=0
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/install-bundle ./cmd/install-bundle
+# The notices for the program itself: the Go standard library.
+RUN scripts/third-party-notices.sh -o /out/THIRD_PARTY_NOTICES -p "$TARGETOS/$TARGETARCH" ./cmd/install-bundle
+
+# --- runtime ----------------------------------------------------------------
+# distroless/static: no shell, no package manager, no GPL-licensed busybox.
+# The :nonroot variant runs as uid 65532.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+
+COPY --from=bundle /src/web/dist/ /usr/share/nginx/html/backup-vault/
+COPY --from=installer /out/install-bundle /install-bundle
+
+# Licenses: the project's, the program's third-party notices, and the
+# bundle's (which also travel inside the bundle).
+COPY LICENSE /licenses/LICENSE
+COPY --from=installer /out/THIRD_PARTY_NOTICES /licenses/THIRD_PARTY_NOTICES
+COPY --from=bundle /src/web/dist/THIRD_PARTY_NOTICES /licenses/backup-vault/THIRD_PARTY_NOTICES
 
 USER 65532:65532
-CMD ["sh", "-c", "mkdir -p /extensions/backup-vault && cp -R /usr/share/nginx/html/backup-vault/ /extensions/"]
+ENTRYPOINT ["/install-bundle"]

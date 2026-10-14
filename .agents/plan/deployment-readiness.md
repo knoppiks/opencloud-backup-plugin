@@ -66,7 +66,9 @@ Blockers found between "8d is done" and "it runs somewhere real":
   `/usr/share/nginx/html/backup-vault/`, with a default command that copies it
   to `/extensions/backup-vault`. Both Dockerfiles build on `$BUILDPLATFORM`, and
   the Go one cross-compiles. An arm64 build was checked locally. All four base
-  digests are multi-arch indexes. `make web-image` builds it.
+  digests are multi-arch indexes. `make web-image` builds it. (Since 11.1,
+  #99: distroless with a Go copy program instead of busybox, built from the
+  repository root.)
 - **Release.** `.github/workflows/release.yml` runs the whole of `ci.yml` (now
   `workflow_call`-able) against the tag, then pushes both images for amd64 and
   arm64, tagged `X.Y.Z` and `X.Y`, with no `latest`. The CI `image` job builds

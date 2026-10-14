@@ -38,6 +38,36 @@ starting point, not the audit.
    per-file headers; `LICENSE` + `NOTICE` at root suffices for Apache-2.0),
    README license section, `web/package.json` already says Apache-2.0.
 
+### Outcome (11.1, #99)
+
+- `LICENSE` (Apache-2.0) at the root; README "License" section; no per-file
+  headers, no NOTICE of our own.
+- **Go:** `scripts/third-party-notices.sh` runs go-licenses v2.0.1 per
+  platform (`check` against the allow-list, `save` for license and NOTICE
+  files), adds the Go standard library's license, and writes the union.
+  `make licenses` runs it over `./cmd/...` on all five `decrypt` platforms
+  (CI job `third-party licenses`, artifact `third-party-notices`). Each image
+  runs it for its own programs and platform. `make license-probe` proves the
+  check still refuses a dependency without a license and one under GPL-3.0.
+  Measured: 84 libraries, ten NOTICE files (AWS SDK, smithy-go, minio-go,
+  Prometheus ×4, grpc, yaml ×2), CC0-1.0 for blake3, and one MPL-2.0 module,
+  `go-vss`, in the Windows `decrypt` only (named exception, follow-up to
+  remove it).
+- **Web:** `pnpm licenses --prod` was the wrong tool: it sees 3 packages, the
+  bundle holds 8 (the Module Federation runtime comes from the SDK, a
+  devDependency). `web/build/third-party-licenses.ts`, a Vite plugin, traces
+  every bundled module to its package and fails the build on a disallowed
+  license, a missing license file, an untraceable module or a host-provided
+  package; it writes `THIRD_PARTY_NOTICES` into the bundle. No `vue` or
+  `@opencloud-eu/web-*` code is bundled: verified on every build now. Found:
+  the SDK (AGPL-3.0) stylesheet is compiled into the bundle's CSS (standing
+  named exception; the bundle runs inside AGPL-3.0 OpenCloud Web anyway).
+- **Busybox decided: replaced.** `cmd/install-bundle` (logic in
+  `internal/bundleinstall`) on distroless static; 4.7 MB image, no shell.
+  The web image now builds from the repository root (`-f web/Dockerfile .`).
+  CI runs the image without arguments and checks the bundle lands.
+- Decisions: see decisions.md, "Amendments from Phase 11.1".
+
 ## 11.2 Version in every artifact (decision #24)
 
 - Go: `-ldflags "-X …/internal/buildinfo.Version=… Commit=… Date=…"` in
@@ -167,8 +197,8 @@ prefix-parsing tools do not apply. Instead:
 
 ## Exit criteria
 
-- [ ] `LICENSE`, `THIRD_PARTY_NOTICES`, license check in CI; busybox question
-      decided.
+- [x] `LICENSE`, `THIRD_PARTY_NOTICES`, license check in CI; busybox question
+      decided (#99).
 - [ ] Every artifact reports the same version; mismatch banner tested (unit +
       E2E with a faked server version).
 - [ ] `v0.1.0` published with signed checksums, SBOMs, provenance, five

@@ -329,7 +329,16 @@ jobs:
       run: docker build -t opencloud-backupd:ci .
 
     - name: docker build (web bundle)
-      run: docker build -t opencloud-backup-vault-web:ci web
+      run: docker build -t opencloud-backup-vault-web:ci -f web/Dockerfile .
+
+    # The web image has no shell: its entrypoint must do the initContainer's
+    # copy by itself, run without arguments, as README documents it.
+    - name: web image installs the bundle
+      run: |
+        mkdir -m 777 "$RUNNER_TEMP/extensions"
+        docker run --rm --network none -v "$RUNNER_TEMP/extensions:/extensions" opencloud-backup-vault-web:ci
+        test -f "$RUNNER_TEMP/extensions/backup-vault/manifest.json"
+        test -f "$RUNNER_TEMP/extensions/backup-vault/THIRD_PARTY_NOTICES"
 
   manifests:
     name: k8s manifests (kubeconform)
@@ -348,6 +357,33 @@ jobs:
 
     - name: validate manifests
       run: kubeconform -strict -summary deploy/
+
+  # The Go side of the license audit (phase-11 §11.1): every program on every
+  # platform anything ships for, against the allow-list, and the probe that
+  # proves the check still refuses. The bundle is audited by its own build
+  # (web job); each image generates the notices for what it contains.
+  licenses:
+    name: third-party licenses
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: license check, notices
+      run: make licenses
+
+    - name: the check still refuses
+      run: make license-probe
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: third-party-notices
+        path: dist/THIRD_PARTY_NOTICES
+        if-no-files-found: error
 
   secret-scan:
     name: secret scan (gitleaks)

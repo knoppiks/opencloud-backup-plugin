@@ -12,8 +12,14 @@
 // That is a claim CI checks, not an assumption: the browser E2E runs on every
 // leg of internal/ocversion/versions.yaml. The SDK version here governs types, the
 // build plugin and the unit tests only.
+//
+// The one plugin of our own audits the licenses of what the bundle contains
+// and writes THIRD_PARTY_NOTICES beside manifest.json (build/, #99). The SDK
+// merges `plugins` after its own.
 import { defineConfig } from '@opencloud-eu/extension-sdk'
+import { thirdPartyLicenses } from './build/third-party-licenses.ts'
 
 export default defineConfig({
-  name: 'backup-vault'
+  name: 'backup-vault',
+  plugins: [thirdPartyLicenses()]
 })
