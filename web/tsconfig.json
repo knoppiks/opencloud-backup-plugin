@@ -9,6 +9,7 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -20,5 +21,5 @@
 
     "types": ["vitest/globals"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts", "eslint.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.vue", "build/**/*.ts", "vite.config.ts", "eslint.config.ts"]
 }

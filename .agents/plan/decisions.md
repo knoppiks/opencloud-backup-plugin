@@ -1602,9 +1602,9 @@ Amends one #94 amendment: integration runs under `-race` now set kopia's
 - **The trust-boundary lint rules are probed in CI (owner, 2026-10-13):**
   `make lint-probe` breaks each depguard rule and forbidigo pattern in a
   copy of the sources and fails unless lint reports each violation.
-- **Proposed, owner to confirm:** a new depguard rule or forbidigo pattern
-  is not complete without a probe in `test/lintprobe/lint-probe.sh`, the
-  same way a backup path is not complete without its restore test.
+- **A new depguard rule or forbidigo pattern is not complete without a
+  probe (owner, 2026-10-13)** in `test/lintprobe/lint-probe.sh`, the same
+  way a backup path is not complete without its restore test.
 - **`integration (release key derivation)` is a required check (owner,
   2026-10-13)** in ruleset `Default`, beside `integration (Garage
   fixture)`, so no merge skips the release derivation.
@@ -1616,10 +1616,94 @@ Amends one #94 amendment: integration runs under `-race` now set kopia's
   exactly one `Content-Type` of `application/json`, without a charset or
   with `charset=utf-8`; the body is not read. The web bundle knows the
   code.
-- **Proposed, owner to confirm:** parameters other than `charset` are
+- **Confirmed (owner, 2026-10-13):** parameters other than `charset` are
   ignored rather than refused (`application/json` defines none);
   `application/*+json` types are refused; the web advice for the code is
   "nothing was changed, reload the page".
+
+### Amendments from Phase 11.1 (licensing, #99)
+
+The audit #23 was conditional on is done; Apache-2.0 stands. Two findings
+needed exceptions: MPL-2.0 until `decrypt` is slimmed further, AGPL-3.0 for
+good.
+
+- **Correction to #23's rationale:** "matches OpenCloud and its web
+  extensions" is half true. The OpenCloud server is Apache-2.0; OpenCloud
+  Web, its extension SDK (`@opencloud-eu/extension-sdk`, `web-pkg`,
+  `web-client`) and `opencloud-eu/web-extensions` are AGPL-3.0. Apache-2.0
+  code may be combined with AGPL-3.0 code (the compatibility runs that way),
+  so the decision is unaffected.
+- **`LICENSE` is the Apache-2.0 text; no per-file headers and no NOTICE of
+  our own (owner, 2026-10-13).**
+- **License allow-list (owner, 2026-10-13):** Apache-2.0, BSD-2-Clause,
+  BSD-3-Clause, MIT, ISC, CC0-1.0. CC0-1.0 is needed for `zeebo/blake3`
+  (through kopia). MPL-2.0 and anything else only as a named exception.
+- **Exception: MPL-2.0 for `github.com/mxk/go-vss` (owner, 2026-10-13).**
+  kopia's upload path links it (and `go-ole`) into the Windows `decrypt`
+  only, because `decrypt` reaches `internal/snapshot`, which holds the
+  backup side as well. Its notice links the module's source on
+  proxy.golang.org. The license is not the problem (file-level copyleft,
+  met by the link); the offline recovery tool linking backup code it never
+  runs is. Follow-up: `decrypt` stops linking kopia's upload path,
+  continuing 10.6; MPL-2.0 then leaves the allow-list.
+- **Standing exception: AGPL-3.0 for the extension SDK's stylesheet
+  (owner, 2026-10-13),** and only that file (`dist/tailwind.css`): Tailwind
+  compiles its theme into the bundle's CSS, so that part of the bundle is
+  AGPL-3.0 material. Any other SDK module in the bundle fails the build. The
+  notices link the SDK's npm tarball and repository. Not to be removed:
+  the bundle runs inside OpenCloud Web (AGPL-3.0) and shares the host's
+  `web-pkg`, `web-client` and Vue at runtime, so dropping the stylesheet
+  would remove AGPL bytes from the artifact without changing what the
+  extension is part of, at the cost of a stylesheet of our own and drift
+  from the host's design tokens. Stated plainly instead: our sources are
+  Apache-2.0; the distributed bundle contains AGPL-3.0 material and runs as
+  part of an AGPL-3.0 application.
+- **The web audit reads the bundle, not a dependency list (owner,
+  2026-10-13).** `pnpm licenses --prod` sees three packages; the bundle
+  holds eight, including the Module Federation runtime (from the SDK, a
+  devDependency). A Vite plugin traces every bundled module to its package
+  and fails the build on a license outside the list, a missing license
+  file, a module it cannot trace, or a host-provided package (Vue,
+  `web-pkg`, …), which proves the "not bundled" claim on every build.
+- **Notices are generated where they ship, never committed (owner,
+  2026-10-13):** the image builds and, from 11.3, the release.
+- **The web image drops busybox (owner, 2026-10-13):** a static Go
+  program, `cmd/install-bundle`, on distroless does the copy. No shell, no
+  GPL-2.0 source offer. The default command keeps the documented
+  initContainer working; an initContainer that overrides the command with
+  `sh -c "mkdir … && cp …"` breaks, and the README says so. The owner's
+  deployment (knoppiks-home) runs the default command.
+- **The web image builds from the repository root (owner, 2026-10-13)**
+  (`-f web/Dockerfile .`), with `web/Dockerfile.dockerignore` admitting only
+  the web sources and install-bundle's packages.
+- **Where the notices sit (owner, 2026-10-13):** Images:
+  `/licenses/LICENSE` and `/licenses/THIRD_PARTY_NOTICES` (the image's Go
+  programs, for its platform); the web image also
+  `/licenses/backup-vault/THIRD_PARTY_NOTICES`. The bundle carries its own
+  `THIRD_PARTY_NOTICES` beside `manifest.json`, so the notices reach
+  OpenCloud's apps directory with it.
+- **What the notices contain (owner, 2026-10-13)** beyond each
+  dependency's license and NOTICE files: the Go standard library's license
+  (every Go binary embeds it; go-licenses does not report it); code that
+  build plugins generate into the bundle, attributed to the plugin
+  (`@module-federation/vite`, `vite`, `tailwindcss`); and a supplement for
+  `hash-wasm`, whose embedded argon2 derives from `golang.org/x/crypto`
+  (BSD-3-Clause) and whose blake2b is used under CC0-1.0.
+- **`install-bundle` behaves like `cp -R` (owner, 2026-10-13):**
+  the bundle's files are replaced, others in the volume are left alone. It
+  refuses a symlink in the bundle, writes through an `os.Root` so nothing
+  already in the volume redirects a write, and refuses positional
+  arguments, so a leftover one-liner in `args` fails instead of being
+  ignored.
+- **The license check is probed like the lint rules (owner,
+  2026-10-13):** `make license-probe` (CI) feeds it a stand-in dependency without a
+  license and one under GPL-3.0 and fails unless both are refused. A change
+  to the allow-list or the script is not complete with the probe failing.
+- **`third-party licenses` is a required check (owner, 2026-10-13)** in
+  ruleset `Default`.
+- **go-licenses is pinned (v2.0.1) (owner, 2026-10-13)** in
+  `scripts/third-party-notices.sh` only, the one place that runs it, until
+  11.7 settles how tool versions are shared.
 
 ---
 

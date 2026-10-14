@@ -1,0 +1,29 @@
+# Context for web/Dockerfile, which is built from the repository root
+# (`docker build -f web/Dockerfile .`) because the image's entrypoint is a Go
+# program. Everything is excluded except what the two build stages read:
+# the web sources, and the Go module with the packages install-bundle needs.
+
+*
+
+!LICENSE
+!go.mod
+!go.sum
+!scripts/third-party-notices.sh
+!cmd/install-bundle
+!internal/bundleinstall
+!internal/buildinfo
+!internal/cli
+**/*_test.go
+
+!web
+# The image builds the bundle from source; nothing local belongs in it.
+web/node_modules
+web/dist
+web/.__mf__temp
+web/testdata
+web/Dockerfile
+web/Dockerfile.dockerignore
+web/e2e
+web/e2e-results
+web/playwright-report
+web/playwright.config.ts

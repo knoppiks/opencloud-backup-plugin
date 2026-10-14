@@ -4,7 +4,7 @@
 
 GO            ?= go
 DIST          ?= dist
-BINARIES      := backupd takeout decrypt
+BINARIES      := backupd takeout decrypt install-bundle
 IMAGE         ?= opencloud-backupd
 IMAGE_TAG     ?= dev
 WEB_IMAGE     ?= opencloud-backup-vault-web
@@ -236,6 +236,25 @@ lint: ## Run golangci-lint.
 lint-probe: ## Prove the trust-boundary lint rules still fire (one violation per rule).
 	test/lintprobe/lint-probe.sh
 
+# Every Go program on every platform anything ships for: the images carry
+# backupd and takeout (and install-bundle) for linux, the release carries
+# decrypt for DECRYPT_PLATFORMS. Checking all of ./cmd/... on all of them
+# is a superset, and a dependency only some platform links is still seen.
+# The images generate their own notices for what they contain.
+LICENSE_PLATFORMS := $(DECRYPT_PLATFORMS)
+
+.PHONY: licenses
+licenses: ## Check Go dependency licenses against the allow-list; write $(DIST)/THIRD_PARTY_NOTICES.
+	@mkdir -p $(DIST)
+	scripts/third-party-notices.sh -o $(DIST)/THIRD_PARTY_NOTICES -p "$(LICENSE_PLATFORMS)" ./cmd/...
+
+# A license check that stops refusing looks like a clean dependency tree.
+# This feeds it a stand-in dependency without a license and one under GPL-3.0
+# and fails unless both are refused (#99).
+.PHONY: license-probe
+license-probe: ## Prove the license check still refuses unlicensed and disallowed dependencies.
+	test/licenseprobe/license-probe.sh
+
 .PHONY: vet
 vet: ## Run go vet.
 	$(GO) vet ./...
@@ -250,7 +269,7 @@ image: ## Build the service container image ($(IMAGE):$(IMAGE_TAG)).
 
 .PHONY: web-image
 web-image: ## Build the web bundle image for an initContainer ($(WEB_IMAGE):$(IMAGE_TAG)).
-	docker build -t $(WEB_IMAGE):$(IMAGE_TAG) $(WEB_DIR)
+	docker build -t $(WEB_IMAGE):$(IMAGE_TAG) -f $(WEB_DIR)/Dockerfile .
 
 .PHONY: k8s-validate
 k8s-validate: ## Validate K8s manifests offline (kubeconform).
