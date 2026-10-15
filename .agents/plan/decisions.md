@@ -1744,6 +1744,58 @@ Implements #24's runtime check. None reopens a locked decision.
   by `serviceVersion`; the destinations page reads the OpenCloud check from
   the same single answer.
 
+### Amendments from Phase 11.3 (GitHub Releases, #104)
+
+None reopens a locked decision. Takes over the release-workflow parts of
+11.4.
+
+- **Publishing the draft is the approval, also for the images (owner,
+  2026-10-15).** The tag push pushes both images by digest only, signs and
+  attests them; `release-publish.yml` adds `X.Y.Z` (and `X.Y` while it is the
+  newest published patch of X.Y) when the draft is published. Pre-releases
+  get only `X.Y.Z-rc.N`. No `latest` (unchanged). Digests of a draft that is
+  never published stay untagged in GHCR and are deleted by hand.
+- **Signature (owner, 2026-10-15):** keyless cosign over `SHA256SUMS`, as
+  one `SHA256SUMS.sigstore.json` bundle; the identity is `release.yml` at
+  the tag. Plus GitHub build provenance for every asset `SHA256SUMS` lists.
+  `SHA256SUMS` covers every asset, including image SBOMs and `images.txt`
+  (the digests), so the publish step trusts the digests only through the
+  signature.
+- **Images (owner, 2026-10-15):** BuildKit's provenance and SBOM off; cosign
+  signature (recursive), `attest-build-provenance` pushed to the registry,
+  and a syft SPDX SBOM per platform image, attested on that image and
+  attached to the release.
+- **Archives (owner, 2026-10-15):** `<program>_<version>_<os>_<arch>` with
+  the version without its `v`; tar.gz, zip for Windows; one directory with
+  the program, `LICENSE` and the notices for that platform only (the
+  Windows `decrypt` names `go-vss`, the others do not). Archives and the
+  web bundle archive rebuild bit-identically from the same commit (fixed
+  times, owners, order); SBOMs do not (syft writes a timestamp and UUID).
+- **The web bundle is a release asset (owner, 2026-10-15):**
+  `backup-vault_<version>.tar.gz` (bundle, its notices, `LICENSE`), for
+  installs without the initContainer image. `web/package.json`'s version is
+  set in the release build only; the committed file stays 0.0.0.
+- **One build definition (owner, 2026-10-15):** `.goreleaser.yaml`, run
+  through make (`decrypt-release`, `release-snapshot`, `release`), which
+  passes the stamp. CI's `release assets (snapshot)` builds every asset on
+  every pull request and runs the same checks as the release
+  (`scripts/check-release-assets.sh`), plus a probe that the check still
+  refuses damaged assets. It replaces `decrypt-cross-build`. GoReleaser,
+  syft and Node are pinned in both `ci.yml` and `release.yml`; a Go test
+  fails when they differ.
+- **Release workflow guards (owner, 2026-10-15; from 11.4):** refuses a ref
+  that is not a `vX.Y.Z[-rc.N]` tag, a tag whose commit is not on `main`
+  (R5), and a tag whose release is already published. `concurrency` per
+  tag. Re-run = `workflow_dispatch` on the tag; it replaces the draft.
+  **No `release` environment** (solo maintainer; the draft gates).
+- **Release notes (owner, 2026-10-15):** GoReleaser's changelog off;
+  `scripts/release-notes.sh` writes the images by digest, the asset list and
+  the verification steps. Categorised notes are 11.5.
+- **Users verify with `scripts/verify-release.sh`** or the two commands it
+  wraps (README "Verifying a release"); it runs under macOS's bash 3.2.
+  macOS binaries stay un-notarised (backlog); the README says how to clear
+  the quarantine flag.
+
 ---
 
 ## Trust & key model

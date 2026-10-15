@@ -33,6 +33,9 @@ env:
   GOLANGCI_LINT_VERSION: "v2.12.2"
   GITLEAKS_VERSION: "8.30.1"
   KUBECONFORM_VERSION: "0.6.7"
+  # The release's tools; keep in step with release.yml.
+  GORELEASER_VERSION: "v2.18.3"
+  SYFT_VERSION: "v1.54.1"
 
 jobs:
   # Building, vetting and linting run beside the unit tests rather than in
@@ -258,26 +261,60 @@ jobs:
         path: dist/backupd
         if-no-files-found: error
 
-  decrypt-cross-build:
-    name: offline decrypt CLI (linux/darwin/windows)
+  # Everything a release builds, exactly as release.yml builds it (one
+  # definition, .goreleaser.yaml), nothing signed or published: the five
+  # decrypt builds the family's last resort needs (phase-5 exit criteria),
+  # takeout, the web bundle archive, notices per platform, SBOMs, SHA256SUMS.
+  # Then the checks the release runs on its own assets, and the tests of the
+  # release scripts, including that the asset check still refuses damage
+  # (phase-11 §11.3, #104).
+  release-snapshot:
+    name: release assets (snapshot)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v4
+    # The tags, for the stamp (`git describe`).
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
-    - uses: actions/setup-go@v5
+    - uses: actions/setup-go@v7
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
 
-    # Phase-5 exit criterion: the last-resort recovery tool must build for every
-    # desktop OS a family member might have.
-    - name: cross-build decrypt
-      run: make decrypt-release
+    - uses: actions/setup-node@v6
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: enable corepack
+      run: corepack enable
+
+    - name: install web dependencies
+      working-directory: web
+      run: pnpm install --frozen-lockfile
+
+    - uses: goreleaser/goreleaser-action@v7
+      with:
+        version: ${{ env.GORELEASER_VERSION }}
+        install-only: true
+
+    - uses: anchore/sbom-action/download-syft@v0
+      with:
+        syft-version: ${{ env.SYFT_VERSION }}
+
+    - name: make release-snapshot
+      run: make release-snapshot
 
     - uses: actions/upload-artifact@v7
       with:
-        name: decrypt-cli
-        path: dist/decrypt-*
+        name: release-snapshot
+        path: |
+          dist/release/*.tar.gz
+          dist/release/*.zip
+          dist/release/*.spdx.json
+          dist/release/SHA256SUMS
+          dist/release-assets/
         if-no-files-found: error
 
   # The supported OpenCloud versions, read from the one file that pins them

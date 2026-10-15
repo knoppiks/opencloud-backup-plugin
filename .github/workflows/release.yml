@@ -1,33 +1,144 @@
 name: Release
 
-# Publishes the two images a deployment needs, from a `v*` tag only:
+# A `v*` tag on main becomes a DRAFT GitHub Release (phase-11 §11.3, #104):
+#
+#   decrypt_<ver>_<os>_<arch>     the offline recovery CLI, five platforms
+#   takeout_<ver>_linux_<arch>    the admin Take-Out tool, outside the image
+#   backup-vault_<ver>.tar.gz     the web extension bundle
+#   *.spdx.json                   SBOMs: per archive, per image and platform
+#   images.txt                    both images, by digest
+#   SHA256SUMS                    every asset above
+#   SHA256SUMS.sigstore.json      its keyless cosign signature
+#
+# plus GitHub build provenance for every asset, and the two images
 #
 #   ghcr.io/<owner>/opencloud-backupd            the service (root Dockerfile)
 #   ghcr.io/<owner>/opencloud-backup-vault-web   the web bundle, for an
 #                                                initContainer (web/Dockerfile)
 #
-# Both carry the same version, because the extension and the API it calls are
-# released together; mixing versions is not a supported configuration.
+# pushed BY DIGEST ONLY, signed, with SBOM and provenance attestations. They
+# get their version tags when the owner publishes the draft
+# (release-publish.yml), so reviewing the draft gates everything. A draft
+# that is never published leaves untagged digests behind; delete them by
+# hand.
+#
+# All artifacts carry the same version (decision #24): the tag.
 on:
   push:
     tags: [ "v*" ]
+  # Re-runs a release without moving its tag (a flaky job, a fixed workflow
+  # secret): run this workflow ON THE TAG ("Use workflow from" -> Tags). The
+  # draft is replaced; a published release is never touched again.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# One run per tag at a time; a second waits instead of racing the first.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Keep in step with ci.yml (internal/buildinfo/toolchain_test.go).
+  GO_VERSION: "1.26.9"
+  NODE_VERSION: "24.17.0"
+  GORELEASER_VERSION: "v2.18.3"
+  SYFT_VERSION: "v1.54.1"
+
 jobs:
-  # The full CI suite, against the tagged commit. Nothing is published from a
+  # Nothing is built for a ref that is not a release tag of a commit on
+  # main (review R5: an rc was once tagged on an unmerged branch), nor for a
+  # tag whose release is already published.
+  guard:
+    name: release tag on main
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - id: tag
+      env:
+        REF_TYPE: ${{ github.ref_type }}
+        TAG: ${{ github.ref_name }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if [ "$REF_TYPE" != tag ]; then
+          echo "::error::run this workflow on a release tag, not on a $REF_TYPE"
+          exit 1
+        fi
+        if ! [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+          echo "::error::$TAG is not vX.Y.Z or vX.Y.Z-rc.N"
+          exit 1
+        fi
+        if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+          echo "::error::$TAG ($GITHUB_SHA) is not on main"
+          exit 1
+        fi
+        # A draft is not visible to this token; a published release is.
+        if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
+          echo "::error::the release $TAG is already published"
+          exit 1
+        fi
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  # The full CI suite, against the tagged commit. Nothing is pushed from a
   # commit that did not pass it, whatever passed on main before.
   ci:
+    needs: guard
     uses: ./.github/workflows/ci.yml
 
-  publish:
-    name: publish ${{ matrix.image }}
-    needs: ci
+  # Built beside CI: it publishes nothing by itself.
+  web-bundle:
+    name: web bundle archive
+    needs: guard
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - uses: actions/setup-node@v6
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: enable corepack
+      run: corepack enable
+
+    - name: install
+      working-directory: web
+      run: pnpm install --frozen-lockfile
+
+    # package.json carries the release's version in the build only; the
+    # committed file stays 0.0.0 (decision #24: the tag is the version).
+    - name: make web-archive
+      env:
+        TAG: ${{ needs.guard.outputs.tag }}
+      run: |
+        (cd web && npm pkg set version="${TAG#v}")
+        make web-archive VERSION="$TAG"
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: release-assets-web
+        path: dist/release-assets/
+        if-no-files-found: error
+
+  images:
+    name: image ${{ matrix.image }}
+    needs: [ guard, ci ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+      id-token: write     # cosign keyless, provenance
+      attestations: write
     strategy:
       matrix:
         include:
@@ -37,6 +148,9 @@ jobs:
         # program (web/Dockerfile.dockerignore keeps the context small).
         - image: opencloud-backup-vault-web
           file: web/Dockerfile
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+      TAG: ${{ needs.guard.outputs.tag }}
     steps:
     - uses: actions/checkout@v7
       with:
@@ -45,8 +159,6 @@ jobs:
     # The same stamp `make` uses, with the version set to the tag itself:
     # `git describe` may name another tag on the same commit (an -rc).
     - id: stamp
-      env:
-        TAG: ${{ github.ref_name }}
       run: make --no-print-directory stamp VERSION="$TAG" >> "$GITHUB_OUTPUT"
 
     - uses: docker/setup-qemu-action@v3
@@ -59,29 +171,132 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    # v1.2.3 -> 1.2.3 and 1.2. No `latest`: a deployment pins a version, and a
-    # moving tag would make "the image that was tested" unanswerable.
-    - id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
-        flavor: latest=false
-        tags: |
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
+    - uses: sigstore/cosign-installer@v4
 
-    # Both Dockerfiles build on the runner's platform and only the final
-    # stage is per-architecture, so arm64 costs no emulated compile.
-    - uses: docker/build-push-action@v6
+    - uses: anchore/sbom-action/download-syft@v0
+      with:
+        syft-version: ${{ env.SYFT_VERSION }}
+
+    # By digest, without a tag. BuildKit's own provenance and SBOM are off:
+    # each image gets one of each, from the steps below.
+    - id: build
+      uses: docker/build-push-action@v6
       with:
         context: .
         file: ${{ matrix.file }}
         platforms: linux/amd64,linux/arm64
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        # The OCI labels are the Dockerfiles' own, from this stamp; the
-        # metadata action's would replace `created` with the build time.
+        outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+        provenance: false
+        sbom: false
+        # The OCI labels are the Dockerfiles' own, from this stamp.
         build-args: |
           VERSION=${{ steps.stamp.outputs.version }}
           COMMIT=${{ steps.stamp.outputs.commit }}
           DATE=${{ steps.stamp.outputs.date }}
+
+    # The index and each platform's image.
+    - name: sign
+      env:
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: cosign sign --yes --recursive "$IMAGE@$DIGEST"
+
+    - uses: actions/attest-build-provenance@v4
+      with:
+        subject-name: ${{ env.IMAGE }}
+        subject-digest: ${{ steps.build.outputs.digest }}
+        push-to-registry: true
+
+    # One SPDX SBOM per platform image: a release asset, and an attestation
+    # on that image's digest.
+    - name: SBOMs
+      env:
+        DIGEST: ${{ steps.build.outputs.digest }}
+        NAME: ${{ matrix.image }}
+      run: |
+        mkdir -p dist/release-assets dist/images
+        manifest=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Manifest}}')
+        for platform in linux/amd64 linux/arm64; do
+          os=${platform%/*} arch=${platform#*/}
+          pdigest=$(jq -r --arg os "$os" --arg arch "$arch" \
+            '.manifests[] | select(.platform.os == $os and .platform.architecture == $arch) | .digest' <<<"$manifest")
+          [[ $pdigest == sha256:* ]] || { echo "::error::no $platform image in $IMAGE@$DIGEST"; exit 1; }
+          sbom="dist/release-assets/${NAME}_${TAG#v}_${os}_${arch}.spdx.json"
+          syft "registry:$IMAGE@$pdigest" -o "spdx-json=$sbom"
+          cosign attest --yes --type spdxjson --predicate "$sbom" "$IMAGE@$pdigest"
+        done
+        echo "$IMAGE@$DIGEST" > "dist/images/$NAME.txt"
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: release-assets-${{ matrix.image }}
+        path: dist/release-assets/
+        if-no-files-found: error
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: image-${{ matrix.image }}
+        path: dist/images/
+        if-no-files-found: error
+
+  # The CLI binaries, archives, binary SBOMs, SHA256SUMS over every asset,
+  # its signature, and the draft release (.goreleaser.yaml), then build
+  # provenance for every asset SHA256SUMS lists.
+  release:
+    name: draft release
+    needs: [ guard, ci, web-bundle, images ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write     # the draft release
+      id-token: write     # cosign keyless, provenance
+      attestations: write
+    env:
+      TAG: ${{ needs.guard.outputs.tag }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - uses: goreleaser/goreleaser-action@v7
+      with:
+        version: ${{ env.GORELEASER_VERSION }}
+        install-only: true
+
+    - uses: anchore/sbom-action/download-syft@v0
+      with:
+        syft-version: ${{ env.SYFT_VERSION }}
+
+    - uses: sigstore/cosign-installer@v4
+
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: release-assets-*
+        path: dist/release-assets
+        merge-multiple: true
+
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: image-*
+        path: dist/images
+        merge-multiple: true
+
+    - name: image list, release notes
+      run: |
+        LC_ALL=C sort dist/images/*.txt > dist/release-assets/images.txt
+        scripts/release-notes.sh "$TAG" dist/release-assets/images.txt > dist/release-notes.md
+
+    # GORELEASER_CURRENT_TAG: an rc and its release may tag the same commit.
+    - name: make release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GORELEASER_CURRENT_TAG: ${{ needs.guard.outputs.tag }}
+      run: make release VERSION="$TAG" RELEASE_NOTES=dist/release-notes.md
+
+    - uses: actions/attest-build-provenance@v4
+      with:
+        subject-checksums: dist/release/SHA256SUMS

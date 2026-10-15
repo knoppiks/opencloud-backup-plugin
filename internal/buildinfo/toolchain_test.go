@@ -26,6 +26,22 @@ var toolchainSources = []struct {
 	{".github/workflows/ci.yml", regexp.MustCompile(`(?m)^\s*GO_VERSION: "(\d+\.\d+\.\d+)"$`)},
 	{".github/workflows/fuzz.yml", regexp.MustCompile(`(?m)^\s*GO_VERSION: "(\d+\.\d+\.\d+)"$`)},
 	{".github/workflows/canary.yml", regexp.MustCompile(`(?m)^\s*GO_VERSION: "(\d+\.\d+\.\d+)"$`)},
+	{".github/workflows/release.yml", regexp.MustCompile(`(?m)^\s*GO_VERSION: "(\d+\.\d+\.\d+)"$`)},
+}
+
+// The release's other tools are pinned in ci.yml, which builds the release
+// snapshot on every pull request, and in release.yml, which builds the
+// release (#104). The snapshot proves only what the release will use if both
+// name the same versions.
+func TestReleaseToolsAreTheSameInCIAndRelease(t *testing.T) {
+	for _, name := range []string{"NODE_VERSION", "GORELEASER_VERSION", "SYFT_VERSION"} {
+		pattern := regexp.MustCompile(`(?m)^\s*` + name + `: "([^"]+)"$`)
+		ci := toolchainIn(t, ".github/workflows/ci.yml", pattern)
+		release := toolchainIn(t, ".github/workflows/release.yml", pattern)
+		if ci != release {
+			t.Errorf("%s: ci.yml pins %s, release.yml pins %s", name, ci, release)
+		}
+	}
 }
 
 func TestToolchainIsTheSameEverywhere(t *testing.T) {
