@@ -16,6 +16,7 @@ import {
 import AdminTargetEdit from './AdminTargetEdit.vue'
 import AdminTargetNew from './AdminTargetNew.vue'
 import AdminTargets from './AdminTargets.vue'
+import { forgetServiceVersion } from '../version/useServiceVersion'
 
 const host = vi.hoisted(() => ({
   api: undefined as unknown,
@@ -41,7 +42,12 @@ beforeEach(() => {
   host.admin = true
   host.router.replace = vi.fn(async () => undefined)
   host.modals = modalsDouble()
+  forgetServiceVersion()
 })
+
+function serviceVersion(opencloud: Record<string, unknown>, version = 'dev') {
+  return { version, api_level: 1, opencloud }
+}
 
 async function mounted<T>(component: T, props: Record<string, unknown> = {}) {
   const wrapper = mountWithHost(component as never, { props } as never)
@@ -111,13 +117,15 @@ describe('AdminTargets', () => {
   // compatibility-policy.md §3: warn, never block. The list stays usable.
   it('warns above the list when OpenCloud runs an untested version', async () => {
     api.listTargets.mockResolvedValue([adminTarget()])
-    api.openCloudVersion.mockResolvedValue({
-      known: true,
-      version: '9.0.0',
-      edition: 'rolling',
-      in_window: false,
-      supported: 'Rolling 7.3.0 to 8.1.0'
-    })
+    api.serviceVersion.mockResolvedValue(
+      serviceVersion({
+        known: true,
+        version: '9.0.0',
+        edition: 'rolling',
+        in_window: false,
+        supported: 'Rolling 7.3.0 to 8.1.0'
+      })
+    )
     const wrapper = await mounted(AdminTargets)
 
     const notice = wrapper.find('[data-testid="opencloud-untested"]')
@@ -129,16 +137,54 @@ describe('AdminTargets', () => {
   it.each([
     [
       'inside the window',
-      () => Promise.resolve({ known: true, version: '8.1.0', in_window: true, supported: 'x' })
+      () =>
+        Promise.resolve(
+          serviceVersion({ known: true, version: '8.1.0', in_window: true, supported: 'x' })
+        )
     ],
     ['the version route failing', () => Promise.reject(new ApiError('unavailable', 'x', 503))]
   ])('says nothing about OpenCloud with %s', async (_name, answer) => {
     api.listTargets.mockResolvedValue([adminTarget()])
-    api.openCloudVersion.mockImplementation(answer)
+    api.serviceVersion.mockImplementation(answer)
     const wrapper = await mounted(AdminTargets)
 
     expect(wrapper.find('[data-testid="opencloud-untested"]').exists()).toBe(false)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('asks the service its version once, for the notices and the footer', async () => {
+    api.listTargets.mockResolvedValue([adminTarget()])
+    api.serviceVersion.mockResolvedValue(
+      serviceVersion({ known: true, in_window: true, supported: 'x' }, 'v1.2.3')
+    )
+    const wrapper = await mounted(AdminTargets)
+
+    expect(api.serviceVersion).toHaveBeenCalledTimes(1)
+    // The bundle under test is unstamped ("dev"): only the API level counts.
+    expect(wrapper.find('[data-testid="version-mismatch"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="versions"]').text()).toBe(
+      'Backup Vault dev, backup service v1.2.3'
+    )
+  })
+
+  it('warns an admin when the service speaks another API level', async () => {
+    api.listTargets.mockResolvedValue([adminTarget()])
+    api.serviceVersion.mockResolvedValue({
+      ...serviceVersion({ known: true, in_window: true, supported: 'x' }, 'v9.0.0'),
+      api_level: 99
+    })
+    const wrapper = await mounted(AdminTargets)
+
+    const notice = wrapper.find('[data-testid="version-mismatch"]')
+    expect(notice.attributes('data-tone')).toBe('warning')
+    expect(notice.text()).toContain('the backup service is v9.0.0')
+    expect(wrapper.findAll('[data-testid="destinations"] tbody tr')).toHaveLength(1)
+  })
+
+  it('names only its own version when the service does not answer', async () => {
+    api.listTargets.mockResolvedValue([])
+    const wrapper = await mounted(AdminTargets)
+    expect(wrapper.find('[data-testid="versions"]').text()).toBe('Backup Vault dev')
   })
 })
 

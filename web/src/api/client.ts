@@ -19,6 +19,7 @@ import type {
   RunAccepted,
   Schedule,
   ScheduleRequest,
+  ServiceVersion,
   Snapshot,
   Space,
   Target
@@ -208,6 +209,17 @@ export class BackupApi {
   private space(spaceId: string, suffix: string): string {
     // Space ids contain "$" and "!" and are not URL-safe as-is.
     return `/spaces/${encodeURIComponent(spaceId)}${suffix}`
+  }
+
+  // --- the service itself -------------------------------------------------
+
+  /**
+   * serviceVersion reports the service's build and API level, for the
+   * comparison with this bundle (version/mismatch.ts). Any signed-in user may
+   * ask.
+   */
+  async serviceVersion(): Promise<ServiceVersion> {
+    return this.request<ServiceVersion>('/version')
   }
 
   private request<T>(path: string, options?: RequestOptions): Promise<T> {

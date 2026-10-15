@@ -15,6 +15,21 @@ WEB_DIR       := web
 # pinned by the same file CI uses rather than by whatever is on $PATH.
 PNPM          ?= corepack pnpm
 
+# The build stamp (internal/buildinfo, #102): every artifact of a build
+# reports the same version and commit. VERSION is `git describe` against the
+# release tags (v1.2.3 on a tag, v1.2.3-4-gabcdef012345 after it, -dirty for
+# uncommitted changes); DATE is the commit's time, not the build's, so the
+# same commit builds the same binary. Outside a git checkout all three are
+# empty and the binaries fall back to what the toolchain recorded ("dev").
+# The release overrides nothing: on the tag, describe is the tag.
+VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --abbrev=12 --always --dirty 2>/dev/null)
+COMMIT  ?= $(shell git rev-parse HEAD 2>/dev/null)
+DATE    ?= $(shell TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+BUILDINFO := github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo
+STAMP_LDFLAGS := -X $(BUILDINFO).Version=$(VERSION) -X $(BUILDINFO).Commit=$(COMMIT) -X $(BUILDINFO).Date=$(DATE)
+# The same stamp for an image build.
+DOCKER_STAMP := --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE)
+
 # Platforms the offline recovery CLI must build for. It is the family's last
 # resort, so it ships for every desktop OS (phase-5 exit criteria).
 DECRYPT_PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
@@ -31,8 +46,16 @@ build: ## Build all binaries into $(DIST).
 	@mkdir -p $(DIST)
 	@for b in $(BINARIES); do \
 		echo "building $$b"; \
-		CGO_ENABLED=0 $(GO) build -trimpath -o $(DIST)/$$b ./cmd/$$b || exit 1; \
+		CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(STAMP_LDFLAGS)" -o $(DIST)/$$b ./cmd/$$b || exit 1; \
 	done
+
+# KEY=value lines, for CI ($$GITHUB_OUTPUT) and anyone asking what a build
+# from this tree would report.
+.PHONY: stamp
+stamp: ## Print the build stamp (VERSION, COMMIT, DATE) this tree builds with.
+	@echo "version=$(VERSION)"
+	@echo "commit=$(COMMIT)"
+	@echo "date=$(DATE)"
 
 .PHONY: decrypt-release
 decrypt-release: ## Cross-build the offline decrypt CLI for every supported OS.
@@ -41,7 +64,7 @@ decrypt-release: ## Cross-build the offline decrypt CLI for every supported OS.
 		os=$${p%/*}; arch=$${p#*/}; \
 		ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
 		echo "building decrypt for $$os/$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w" \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w $(STAMP_LDFLAGS)" \
 			-o $(DIST)/decrypt-$$os-$$arch$$ext ./cmd/decrypt || exit 1; \
 	done
 
@@ -202,7 +225,7 @@ web-typecheck: ## Typecheck the web extension.
 
 .PHONY: web-build
 web-build: ## Build the web extension bundle into $(WEB_DIR)/dist.
-	cd $(WEB_DIR) && $(PNPM) build
+	cd $(WEB_DIR) && BACKUP_VAULT_VERSION=$(VERSION) $(PNPM) build
 
 .PHONY: web-install-fixture
 web-install-fixture: ## Build the extension into the OpenCloud fixture and verify it loaded.
@@ -265,11 +288,15 @@ fmt: ## Format code.
 
 .PHONY: image
 image: ## Build the service container image ($(IMAGE):$(IMAGE_TAG)).
-	docker build -t $(IMAGE):$(IMAGE_TAG) .
+	docker build $(DOCKER_STAMP) -t $(IMAGE):$(IMAGE_TAG) .
 
 .PHONY: web-image
 web-image: ## Build the web bundle image for an initContainer ($(WEB_IMAGE):$(IMAGE_TAG)).
-	docker build -t $(WEB_IMAGE):$(IMAGE_TAG) -f $(WEB_DIR)/Dockerfile .
+	docker build $(DOCKER_STAMP) -t $(WEB_IMAGE):$(IMAGE_TAG) -f $(WEB_DIR)/Dockerfile .
+
+.PHONY: image-stamp-check
+image-stamp-check: ## Check both images report this tree's version everywhere (after image, web-image).
+	scripts/check-image-stamp.sh $(IMAGE):$(IMAGE_TAG) $(WEB_IMAGE):$(IMAGE_TAG) "$(VERSION)" "$(COMMIT)"
 
 .PHONY: k8s-validate
 k8s-validate: ## Validate K8s manifests offline (kubeconform).

@@ -38,6 +38,8 @@ export default defineConfig({
   },
   projects: [
     { name: 'admin', testMatch: 'admin.e2e.ts' },
+    // Reads only; it plays a service of another release in the browser.
+    { name: 'version', testMatch: 'version.e2e.ts' },
     { name: 'journey', testMatch: 'journey.e2e.ts', dependencies: ['admin'] },
     // Last: it photographs the state the other two leave behind (8g).
     { name: 'screens', testMatch: 'screens.e2e.ts', dependencies: ['journey'] }

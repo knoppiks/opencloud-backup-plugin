@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/jobs"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/notify"
@@ -83,6 +84,8 @@ type Server struct {
 	// openCloud reports the OpenCloud version and whether this build was
 	// tested against it (compatibility-policy.md §3).
 	openCloud openCloudVersion
+	// buildInfo replaces buildinfo.Get() in tests (WithBuildInfo).
+	buildInfo *buildinfo.Info
 
 	// ready reports readiness for GET /readyz; defaults to always-ready.
 	ready func(context.Context) error

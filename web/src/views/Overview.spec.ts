@@ -5,6 +5,7 @@ import { translations } from '../l10n/translations'
 import { mountWithHost } from '../test/host'
 import { fakeApi, space, status, type FakeApi } from '../test/fixtures'
 import Overview from './Overview.vue'
+import { forgetServiceVersion } from '../version/useServiceVersion'
 
 const api = vi.hoisted(() => ({ current: undefined as unknown }))
 vi.mock('../composables/useBackupApi', () => ({ useBackupApi: () => api.current }))
@@ -17,6 +18,7 @@ beforeEach(() => {
   api.current = fake
   gate.admin = false
   fake.listTargets.mockResolvedValue([{ id: 't', name: 'Buddy' }])
+  forgetServiceVersion()
 })
 
 async function mountOverview(language?: string) {
@@ -191,5 +193,48 @@ describe('Overview', () => {
     fake.status.mockResolvedValue(status())
     const wrapper = await mountOverview('de')
     expect(wrapper.find('[data-testid="state-label"]').text()).toBe(translations.de!['Protected'])
+  })
+})
+
+describe('Overview and the service version', () => {
+  function serviceAt(version: string, apiLevel: number) {
+    fake.listSpaces.mockResolvedValue([])
+    fake.serviceVersion.mockResolvedValue({
+      version,
+      api_level: apiLevel,
+      opencloud: { known: true, in_window: true, supported: 'x' }
+    })
+  }
+
+  it('tells a member calmly when the service speaks another API level', async () => {
+    serviceAt('v9.0.0', 99)
+    const wrapper = await mountOverview()
+
+    const notice = wrapper.find('[data-testid="version-mismatch"]')
+    expect(notice.attributes('data-audience')).toBe('member')
+    expect(notice.attributes('data-tone')).toBe('info')
+    expect(notice.text()).toContain('reload the page')
+  })
+
+  it('warns an admin on the same page', async () => {
+    gate.admin = true
+    serviceAt('v9.0.0', 99)
+    const wrapper = await mountOverview()
+
+    const notice = wrapper.find('[data-testid="version-mismatch"]')
+    expect(notice.attributes('data-audience')).toBe('admin')
+    expect(notice.attributes('data-tone')).toBe('warning')
+  })
+
+  it('says nothing when the API level matches (the bundle under test is "dev")', async () => {
+    serviceAt('v9.0.0', 1)
+    const wrapper = await mountOverview()
+    expect(wrapper.find('[data-testid="version-mismatch"]').exists()).toBe(false)
+  })
+
+  it('says nothing when the service does not answer', async () => {
+    fake.listSpaces.mockResolvedValue([])
+    const wrapper = await mountOverview()
+    expect(wrapper.find('[data-testid="version-mismatch"]').exists()).toBe(false)
   })
 })

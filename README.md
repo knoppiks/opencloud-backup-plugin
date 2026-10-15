@@ -601,6 +601,19 @@ configuration. The exit status means the same in all three:
 | 1 | The program ran and failed: a wrong Recovery Key, a damaged Take-Out, an unreachable store, a configuration error in the environment. |
 | 2 | The command line was wrong: an unknown command or flag, a missing required flag, a stray argument. Nothing was attempted. |
 
+Every artifact of a build reports the same version and commit: the programs,
+both images (`org.opencontainers.image.version` and `.revision` labels), the
+web extension (shown under the list of backup destinations) and
+`GET /api/v1/version`. A release reports its tag; other builds report
+`git describe` (`make stamp` shows it). The build date is the commit's time,
+so the same commit builds the same binary.
+
+The web extension and the service must run at the same version. The extension
+compares itself with the service once per page load. Administrators are
+warned when the two speak different API levels, and told when only the
+versions differ. Members only see a short notice to reload the page if the
+API levels differ.
+
 ### Keep this in mind
 
 - **The Recovery Key is the whole story.** The server cannot reconstruct it. Lost

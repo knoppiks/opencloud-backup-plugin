@@ -9,7 +9,7 @@
 // one into an error, and neither does anything here.
 
 import { ApiTransport, type BackupApiOptions } from './transport'
-import type { AdminTarget, AdminTargetRequest, CheckResult, Grant, OpenCloudVersion } from './types'
+import type { AdminTarget, AdminTargetRequest, CheckResult, Grant, ServiceVersion } from './types'
 
 /** AdminApi is the typed surface of `/admin/targets`. */
 export class AdminApi {
@@ -86,14 +86,14 @@ export class AdminApi {
   }
 
   /**
-   * openCloudVersion reports the OpenCloud the service runs against and
-   * whether this release was tested with it. The route is open to every
-   * signed-in user; only the admin view asks for now, so it lives here
-   * rather than in every user's bundle.
+   * serviceVersion reports the service's build and API level, and the
+   * OpenCloud it runs against with whether this release was tested with it.
+   * The route is open to every signed-in user; BackupApi has the same method
+   * for the member pages. Callers go through version/useServiceVersion, which
+   * asks once per page load.
    */
-  async openCloudVersion(): Promise<OpenCloudVersion> {
-    const body = await this.transport.request<{ opencloud: OpenCloudVersion }>('/version')
-    return body.opencloud
+  async serviceVersion(): Promise<ServiceVersion> {
+    return this.transport.request<ServiceVersion>('/version')
   }
 
   private path(id: string, suffix = ''): string {

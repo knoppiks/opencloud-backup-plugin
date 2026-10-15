@@ -42,10 +42,11 @@ describe('AdminApi routes', () => {
     expect(await admin(fetchImpl).checkTarget(request())).toEqual([])
   })
 
-  it('reads the OpenCloud version from /version, unwrapping it', async () => {
+  it('reads the service version from /version', async () => {
     const opencloud = { known: true, version: '8.1.0', in_window: true, supported: 'x' }
-    const { calls, fetchImpl } = stubFetch(200, { opencloud })
-    expect(await admin(fetchImpl).openCloudVersion()).toEqual(opencloud)
+    const body = { version: 'v1.2.3', commit: 'abc', api_level: 1, opencloud }
+    const { calls, fetchImpl } = stubFetch(200, body)
+    expect(await admin(fetchImpl).serviceVersion()).toEqual(body)
     expect(calls[0]!.url).toBe(`${BASE}/version`)
   })
 

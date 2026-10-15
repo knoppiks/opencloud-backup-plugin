@@ -2,8 +2,12 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"regexp"
+	"strconv"
 	"testing"
 
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/ocversion"
 )
 
@@ -74,5 +78,45 @@ func TestVersion_UnknownWithoutMonitor(t *testing.T) {
 	}
 	if got.Supported != testWindow(t).String() {
 		t.Errorf("supported = %q", got.Supported)
+	}
+}
+
+func TestVersion_ReportsTheBuildAndAPILevel(t *testing.T) {
+	srv := NewServer(
+		WithTokenValidator(fakeValidator{tokens: map[string]string{"tok": "u"}}),
+		WithBuildInfo(buildinfo.Info{Version: "v1.2.3", Commit: "0123456789abcdef"}),
+	)
+	rec := authGet(srv, "/api/v1/version", "tok")
+	var got versionDTO
+	decodeBody(t, rec.Body, &got)
+	if got.Version != "v1.2.3" || got.Commit != "0123456789abcdef" || got.APILevel != APILevel {
+		t.Errorf("got %+v", got)
+	}
+}
+
+// The running binary reports what buildinfo says, "dev" when unstamped.
+func TestVersion_DefaultsToTheRunningBuild(t *testing.T) {
+	srv := NewServer(WithTokenValidator(fakeValidator{tokens: map[string]string{"tok": "u"}}))
+	rec := authGet(srv, "/api/v1/version", "tok")
+	var got versionDTO
+	decodeBody(t, rec.Body, &got)
+	if got.Version != buildinfo.Get().Version {
+		t.Errorf("version = %q, want %q", got.Version, buildinfo.Get().Version)
+	}
+}
+
+// The bundle carries the API level as a constant of its own. Both are
+// written by hand; this keeps them equal.
+func TestAPILevelMatchesTheWebBundle(t *testing.T) {
+	data, err := os.ReadFile("../../web/src/api/apilevel.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^export const API_LEVEL = (\d+)$`).FindAllSubmatch(data, -1)
+	if len(m) != 1 {
+		t.Fatalf("web/src/api/apilevel.ts: want exactly one `export const API_LEVEL = <n>`, found %d", len(m))
+	}
+	if got := string(m[0][1]); got != strconv.Itoa(APILevel) {
+		t.Errorf("web bundle API_LEVEL = %s, service APILevel = %d", got, APILevel)
 	}
 }

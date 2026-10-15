@@ -364,6 +364,17 @@ const de: Record<string, string> = {
   'Connection check': 'Verbindungstest',
   'Danger zone': 'Gefahrenbereich',
   // Untested OpenCloud version (admin/compat.ts).
+  'Backup Vault %{bundle}': 'Backup-Tresor %{bundle}',
+  'Backup Vault %{bundle}, backup service %{service}':
+    'Backup-Tresor %{bundle}, Sicherungsdienst %{service}',
+  'Backup Vault and its service do not match':
+    'Backup-Tresor und Sicherungsdienst passen nicht zusammen',
+  'Backup Vault is being updated. If something does not work, reload the page; if it still does not, ask your administrator.':
+    'Der Backup-Tresor wird gerade aktualisiert. Wenn etwas nicht funktioniert, laden Sie die Seite neu; hilft das nicht, wenden Sie sich an Ihre Administration.',
+  'This page is Backup Vault %{bundle}; the backup service is %{service}. Some actions may fail. Run the web extension and the service at the same version, then reload the page.':
+    'Diese Seite ist Backup-Tresor %{bundle}; der Sicherungsdienst ist %{service}. Manche Aktionen können fehlschlagen. Betreiben Sie Web-Erweiterung und Dienst in derselben Version und laden Sie die Seite dann neu.',
+  'This page is Backup Vault %{bundle}; the backup service is %{service}. They work together, but run them at the same version.':
+    'Diese Seite ist Backup-Tresor %{bundle}; der Sicherungsdienst ist %{service}. Beide arbeiten zusammen, sollten aber in derselben Version laufen.',
   'This OpenCloud version has not been tested with Backup Vault':
     'Diese OpenCloud-Version wurde nicht mit dem Backup-Tresor getestet',
   'OpenCloud %{version} is running; this release of Backup Vault was tested with %{supported}. Backups continue. Look for a newer release of Backup Vault before relying on them.':

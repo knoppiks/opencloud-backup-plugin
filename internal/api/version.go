@@ -3,8 +3,19 @@ package api
 import (
 	"net/http"
 
+	"github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/ocversion"
 )
+
+// APILevel is the version of /api/v1 that the service and the web bundle
+// agree on (compatibility-policy.md §2). Raise it with any change an older
+// or newer bundle would misread: a removed or renamed field or route, a
+// changed meaning. Additions an older bundle ignores do not raise it.
+//
+// The bundle carries the same number (web/src/api/apilevel.ts); a test
+// fails when the two differ. A bundle that finds a different level warns
+// its users, because its requests may fail.
+const APILevel = 1
 
 // openCloudVersion is what GET /api/v1/version reports about OpenCloud. It is
 // satisfied by *ocversion.Monitor.
@@ -19,8 +30,7 @@ func WithOpenCloudVersion(v openCloudVersion) Option {
 }
 
 // openCloudDTO is the `opencloud` member of GET /api/v1/version. The admin
-// view shows a notice when Known && !InWindow (compatibility-policy.md §3);
-// Phase 11 adds the plugin's own version and API level beside it.
+// view shows a notice when Known && !InWindow (compatibility-policy.md §3).
 type openCloudDTO struct {
 	Known    bool   `json:"known"`
 	Version  string `json:"version,omitempty"`
@@ -30,7 +40,12 @@ type openCloudDTO struct {
 	Supported string `json:"supported"`
 }
 
+// versionDTO is GET /api/v1/version: the service's own build, the API
+// level it speaks, and the OpenCloud it runs against.
 type versionDTO struct {
+	Version   string       `json:"version"`
+	Commit    string       `json:"commit,omitempty"`
+	APILevel  int          `json:"api_level"`
 	OpenCloud openCloudDTO `json:"opencloud"`
 }
 
@@ -40,13 +55,31 @@ type versionDTO struct {
 // content-free.
 func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 	st := s.openCloudStatus()
-	writeJSON(w, http.StatusOK, versionDTO{OpenCloud: openCloudDTO{
-		Known:     st.Known,
-		Version:   st.Version,
-		Edition:   st.Edition,
-		InWindow:  st.InWindow,
-		Supported: st.Window.String(),
-	}})
+	build := s.build()
+	writeJSON(w, http.StatusOK, versionDTO{
+		Version:  build.Version,
+		Commit:   build.Commit,
+		APILevel: APILevel,
+		OpenCloud: openCloudDTO{
+			Known:     st.Known,
+			Version:   st.Version,
+			Edition:   st.Edition,
+			InWindow:  st.InWindow,
+			Supported: st.Window.String(),
+		}})
+}
+
+// build is the running build, or the one a test set.
+func (s *Server) build() buildinfo.Info {
+	if s.buildInfo != nil {
+		return *s.buildInfo
+	}
+	return buildinfo.Get()
+}
+
+// WithBuildInfo replaces the running build's info, for tests.
+func WithBuildInfo(info buildinfo.Info) Option {
+	return func(s *Server) { s.buildInfo = &info }
 }
 
 // openCloudStatus is the monitor's answer, or — with no monitor wired — an

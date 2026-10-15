@@ -18,6 +18,7 @@ import NoticeBanner from '../components/NoticeBanner.vue'
 import PageLayout from '../components/PageLayout.vue'
 import RequestState from '../components/RequestState.vue'
 import StatusTag from '../components/StatusTag.vue'
+import VersionNotice from '../components/VersionNotice.vue'
 import { spacesCrumbs } from '../layout/breadcrumbs'
 import { ApiError, isApiError, type Space, type Target } from '../api'
 import { errorTitle } from '../api/errortext'
@@ -130,6 +131,7 @@ onMounted(load)
 
 <template>
   <PageLayout :crumbs="spacesCrumbs($gettext, true)">
+    <VersionNotice :api="api" :is-admin="isAdmin" />
     <RequestState :loading="loading" :error="error" @retry="load">
       <!--
         No granted target means setup cannot complete, however many Spaces

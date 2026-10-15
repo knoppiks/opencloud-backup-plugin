@@ -27,6 +27,9 @@
 # checks the bundle's third-party licenses and writes THIRD_PARTY_NOTICES
 # into it (web/build/third-party-licenses.ts).
 FROM --platform=$BUILDPLATFORM node:24.17.0-bookworm-slim@sha256:862263c612aa437e3037674b85419622a9d93bff80aa1eee5398dfe686375532 AS bundle
+# The build stamp, as in the service image. The bundle reports VERSION as
+# its own (vite.config.ts) and compares it with the service's.
+ARG VERSION=""
 
 WORKDIR /src/web
 
@@ -38,7 +41,7 @@ COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY web/ ./
-RUN pnpm build
+RUN BACKUP_VAULT_VERSION="$VERSION" pnpm build
 
 # --- install-bundle ---------------------------------------------------------
 # Keep the Go version in step with go.mod and CI's GO_VERSION
@@ -47,6 +50,9 @@ RUN pnpm build
 FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS installer
 ARG TARGETOS
 ARG TARGETARCH
+ARG VERSION=""
+ARG COMMIT=""
+ARG DATE=""
 
 WORKDIR /src
 
@@ -56,7 +62,10 @@ COPY internal/ internal/
 COPY scripts/ scripts/
 
 ENV CGO_ENABLED=0
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/install-bundle ./cmd/install-bundle
+ENV BUILDINFO=github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+    -ldflags "-s -w -X $BUILDINFO.Version=$VERSION -X $BUILDINFO.Commit=$COMMIT -X $BUILDINFO.Date=$DATE" \
+    -o /out/install-bundle ./cmd/install-bundle
 # The notices for the program itself: the Go standard library.
 RUN scripts/third-party-notices.sh -o /out/THIRD_PARTY_NOTICES -p "$TARGETOS/$TARGETARCH" ./cmd/install-bundle
 
@@ -64,6 +73,17 @@ RUN scripts/third-party-notices.sh -o /out/THIRD_PARTY_NOTICES -p "$TARGETOS/$TA
 # distroless/static: no shell, no package manager, no GPL-licensed busybox.
 # The :nonroot variant runs as uid 65532.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+
+ARG VERSION=""
+ARG COMMIT=""
+ARG DATE=""
+LABEL org.opencontainers.image.title="opencloud-backup-vault-web" \
+      org.opencontainers.image.description="Backup Vault web extension for OpenCloud, for an initContainer that installs it" \
+      org.opencontainers.image.source="https://github.com/knoppiks/opencloud-backup-plugin" \
+      org.opencontainers.image.licenses="Apache-2.0 AND AGPL-3.0" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$COMMIT" \
+      org.opencontainers.image.created="$DATE"
 
 COPY --from=bundle /src/web/dist/ /usr/share/nginx/html/backup-vault/
 COPY --from=installer /out/install-bundle /install-bundle

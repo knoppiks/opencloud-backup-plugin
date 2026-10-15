@@ -330,3 +330,16 @@ export interface OpenCloudVersion {
   /** supported is the tested range in words, e.g. "Rolling 7.3.0 to 8.1.0". */
   supported: string
 }
+
+/**
+ * ServiceVersion is GET /version: the service's own build, the API level it
+ * speaks, and the OpenCloud it runs against (compatibility-policy.md §1).
+ */
+export interface ServiceVersion {
+  /** version is the release tag, a `git describe` string, or "dev". */
+  version: string
+  commit?: string
+  /** api_level must equal the bundle's API_LEVEL (api/apilevel.ts). */
+  api_level: number
+  opencloud: OpenCloudVersion
+}

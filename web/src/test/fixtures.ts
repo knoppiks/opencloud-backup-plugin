@@ -77,7 +77,8 @@ export function fakeApi(): FakeApi {
     'run',
     'listNotifications',
     'listSnapshots',
-    'restore'
+    'restore',
+    'serviceVersion'
   ]
   return Object.fromEntries(
     methods.map((m) => [m, vi.fn(() => Promise.reject(new Error(`unexpected call: ${m}`)))])
@@ -118,7 +119,7 @@ export function fakeAdminApi(): FakeAdminApi {
     'checkTarget',
     'grants',
     'replaceGrants',
-    'openCloudVersion'
+    'serviceVersion'
   ]
   return Object.fromEntries(
     methods.map((m) => [m, vi.fn(() => Promise.reject(new Error(`unexpected call: ${m}`)))])
