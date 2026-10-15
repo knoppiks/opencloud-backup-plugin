@@ -39,7 +39,7 @@ jobs:
       with:
         ref: ${{ github.event.release.tag_name }}
 
-    - uses: sigstore/cosign-installer@v4
+    - uses: sigstore/cosign-installer@v4.1.2 # no major tag upstream
 
     - name: verify the image list
       run: |

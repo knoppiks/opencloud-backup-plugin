@@ -171,7 +171,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - uses: sigstore/cosign-installer@v4
+    - uses: sigstore/cosign-installer@v4.1.2 # no major tag upstream
 
     - uses: anchore/sbom-action/download-syft@v0
       with:
@@ -271,7 +271,7 @@ jobs:
       with:
         syft-version: ${{ env.SYFT_VERSION }}
 
-    - uses: sigstore/cosign-installer@v4
+    - uses: sigstore/cosign-installer@v4.1.2 # no major tag upstream
 
     - uses: actions/download-artifact@v8
       with:
