@@ -27,8 +27,10 @@ Every artifact of a release carries **the same version**:
 
 `backupd` and the web bundle **must run at the same version**. That has been
 the rule since `release.yml` existed; from Phase 11 it is *checked*: the
-bundle reads `GET /api/v1/version` and shows a banner when the server's
-version differs from its own (decisions.md #24).
+bundle reads `GET /api/v1/version` once per page load and compares
+(decisions.md #24, #102). A different **API level** warns admins and tells
+members to reload; the same level with a different **version** informs
+admins only; a `dev` build on either side compares the API level only.
 
 ## 2. Plugin versioning: Semantic Versioning, independent of OpenCloud
 
@@ -89,7 +91,10 @@ No MAJOR bump licenses dropping them:
   renamed outright, as `takeout -insecure` → `-plain-http` was (#78).
 - **HTTP API** (`/api/v1`): the only client is the bundle of the same version,
   so the API is versioned by an **API level** integer in
-  `GET /api/v1/version`, not by URL. `/api/v2` is reserved for a change that
+  `GET /api/v1/version`, not by URL. It is raised by any change a bundle of
+  another level would misread (a removed or renamed field or route, a
+  changed meaning), not by additions; `internal/api.APILevel` and the
+  bundle's `API_LEVEL` are kept equal by a test. `/api/v2` is reserved for a change that
   would need two bundles to coexist, which this policy does not foresee.
 - **Downgrades** of the plugin are supported within a MINOR line. Across MINOR
   lines a state migration may make them impossible; release notes say so when

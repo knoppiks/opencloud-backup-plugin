@@ -23,6 +23,11 @@
 FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS build
 ARG TARGETOS
 ARG TARGETARCH
+# The build stamp (`make image` passes `make stamp`'s values; the release
+# passes the tag's). Unset, the binaries report "dev".
+ARG VERSION=""
+ARG COMMIT=""
+ARG DATE=""
 
 WORKDIR /src
 
@@ -35,8 +40,10 @@ COPY . .
 # CGO off, for the same reason CI asserts it: a single static binary that does
 # not care what is in the runtime image (decisions.md, success criterion 1).
 ENV CGO_ENABLED=0
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/backupd ./cmd/backupd && \
-    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/takeout ./cmd/takeout
+ENV BUILDINFO=github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo
+RUN LDFLAGS="-s -w -X $BUILDINFO.Version=$VERSION -X $BUILDINFO.Commit=$COMMIT -X $BUILDINFO.Date=$DATE" && \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "$LDFLAGS" -o /out/backupd ./cmd/backupd && \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "$LDFLAGS" -o /out/takeout ./cmd/takeout
 
 # The third-party notices for exactly these two programs on this platform,
 # after the check that refuses a dependency under a license outside the
@@ -52,6 +59,19 @@ RUN scripts/third-party-notices.sh -o /out/THIRD_PARTY_NOTICES -p "$TARGETOS/$TA
 # The :nonroot variant runs as uid 65532, which is what deploy/'s securityContext
 # pins. There is no shell and no package manager in here by design.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+
+ARG VERSION=""
+ARG COMMIT=""
+ARG DATE=""
+# In the Dockerfile rather than only in the release, so a local build is
+# labelled too. `created` is the commit's time, like the binaries' date.
+LABEL org.opencontainers.image.title="opencloud-backupd" \
+      org.opencontainers.image.description="Backup service for OpenCloud Spaces: encrypted, deduplicated, per-Space backups to S3" \
+      org.opencontainers.image.source="https://github.com/knoppiks/opencloud-backup-plugin" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$COMMIT" \
+      org.opencontainers.image.created="$DATE"
 
 COPY --from=build /out/backupd /backupd
 COPY --from=build /out/takeout /takeout

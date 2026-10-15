@@ -86,6 +86,27 @@ starting point, not the audit.
   `source`, `licenses`, `title`, `description`) — in the Dockerfiles, not only
   via metadata-action, so local builds carry them too.
 
+### Outcome (11.2, #102)
+
+- **Stamp:** `make stamp` (VERSION = `git describe --tags --match 'v[0-9]*'
+  --abbrev=12 --dirty`, COMMIT, DATE = commit time UTC) feeds `make build`,
+  `decrypt-release`, `web-build`, `image`, `web-image`; both Dockerfiles take
+  `ARG VERSION/COMMIT/DATE` and set the OCI labels themselves. The release
+  sets VERSION to the tag.
+- **`go install`:** commit and time come from the pseudo-version
+  (`buildinfo.pseudoVersionRevision`, table-tested); "commit unknown" only
+  for a tagged module version.
+- **backupd:** `backupd version` and the startup log line existed (10.5);
+  `GET /api/v1/version` now adds `version`, `commit`, `api_level` (1).
+- **Web:** `__APP_VERSION__` via Vite `define` from `BACKUP_VAULT_VERSION`;
+  `API_LEVEL` as a TS constant cross-checked by a Go test (no `define`
+  needed). `version/mismatch.ts` decides, `VersionNotice.vue` shows it on the
+  Overview and the destinations page, which also names both versions.
+  `web/package.json`'s version is still 0.0.0; the release sets it in 11.3.
+- **Checks:** unit specs (mismatch table, once-per-load cache, Overview and
+  admin views), E2E `version.e2e.ts` (real answer; faked other release for a
+  member and an admin), CI `make image-stamp-check` on the built images.
+
 ## 11.3 GitHub Releases
 
 A tag `vX.Y.Z` on `main` produces a **draft** GitHub Release containing:
@@ -199,8 +220,8 @@ prefix-parsing tools do not apply. Instead:
 
 - [x] `LICENSE`, `THIRD_PARTY_NOTICES`, license check in CI; busybox question
       decided (#99).
-- [ ] Every artifact reports the same version; mismatch banner tested (unit +
-      E2E with a faked server version).
+- [x] Every artifact reports the same version; mismatch banner tested (unit +
+      E2E with a faked server version) (#102).
 - [ ] `v0.1.0` published with signed checksums, SBOMs, provenance, five
       `decrypt` builds; verification steps documented and walked once.
 - [ ] Renovate, govulncheck, web audit, image scan active; actions

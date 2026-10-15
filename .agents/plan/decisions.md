@@ -1705,6 +1705,45 @@ good.
   `scripts/third-party-notices.sh` only, the one place that runs it, until
   11.7 settles how tool versions are shared.
 
+### Amendments from Phase 11.2 (version in every artifact, #102)
+
+Implements #24's runtime check. None reopens a locked decision.
+
+- **What the bundle says on a difference (owner, 2026-10-14):** a different
+  API level warns admins (both versions, what to do) and gives members a
+  calm "reload, else ask your administrator"; the same API level with a
+  different version informs admins only. Shown on the member Overview and
+  the admin's destinations page; asked once per page load.
+- **`dev` compares the API level only (owner, 2026-10-14),** so development
+  and the E2E fixture (unstamped bundle) stay quiet.
+- **The API level is a Go constant with a TypeScript twin (owner,
+  2026-10-14):** `internal/api.APILevel`, `web/src/api/apilevel.ts`; a Go
+  test fails when they differ. Level 1 is the API as of 11.2.
+- **The stamp's date is the commit's time (owner, 2026-10-14),** in UTC, so
+  the same commit builds the same binary and image labels.
+- **Every build is stamped with `git describe` (owner, 2026-10-14)**
+  against `v[0-9]*` tags (`--abbrev=12 --dirty`): `make build`, the images
+  via `make image`/`web-image`, CI; the release sets VERSION to the tag
+  itself, because describe may name an -rc tag on the same commit.
+- **Confirmed (owner, 2026-10-14):** a `go install`ed binary without VCS
+  information reads its commit and time from its pseudo-version; a build in
+  a checkout keeps the full `vcs.revision`.
+- **Confirmed (owner, 2026-10-14):** the OCI labels are the Dockerfiles' own
+  (title, description, source, licenses, version, revision, created); the
+  release no longer passes metadata-action's labels, whose `created` is the
+  build time. The web image's `licenses` is `Apache-2.0 AND AGPL-3.0` (the
+  SDK stylesheet, 11.1).
+- **Confirmed (owner, 2026-10-14):** the admin destinations page names both
+  versions under the list ("Backup Vault X, backup service Y"), for bug
+  reports; members are not shown versions.
+- **Confirmed (owner, 2026-10-14):** CI checks every artifact of the two
+  images reports one version and commit (`make image-stamp-check`: the
+  programs' `-version`, both labels, the bundle's constant), and an E2E
+  plays a service of another release by altering `/version` in the browser.
+- **Confirmed (owner, 2026-10-14):** `AdminApi.openCloudVersion` is replaced
+  by `serviceVersion`; the destinations page reads the OpenCloud check from
+  the same single answer.
+
 ---
 
 ## Trust & key model

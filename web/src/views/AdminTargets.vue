@@ -6,12 +6,13 @@
 // This page manages destinations and who may use them, nothing else. It shows
 // no Space, no run and no user data (decisions.md #15). Above the list it
 // warns when OpenCloud runs a version this release was not tested with
-// (compatibility-policy.md §3).
+// (compatibility-policy.md §3), or when this bundle and the service differ
+// (#102); below it, both versions, for a bug report.
 //
 // `oc-*` elements are host globals: see components/RequestState.vue.
 import { computed, onMounted, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { asApiError, type AdminTarget, type ApiError, type OpenCloudVersion } from '../api'
+import { asApiError, type AdminTarget, type ApiError } from '../api'
 import { openCloudNotice } from '../admin/compat'
 import { targetRow } from '../admin/targetrow'
 import { adminErrorAdvice, adminErrorTitle } from '../admin/wording'
@@ -21,8 +22,11 @@ import NoticeBanner from '../components/NoticeBanner.vue'
 import PageLayout from '../components/PageLayout.vue'
 import { destinationsCrumbs } from '../layout/breadcrumbs'
 import RequestState from '../components/RequestState.vue'
+import VersionNotice from '../components/VersionNotice.vue'
 import { useAdminApi } from '../composables/useAdminApi'
 import { useIsAdmin } from '../composables/useIsAdmin'
+import { APP_VERSION } from '../version/appversion'
+import { useServiceVersion } from '../version/useServiceVersion'
 
 const { $gettext } = useGettext()
 const api = useAdminApi()
@@ -32,10 +36,14 @@ const loading = ref(true)
 const error = ref<ApiError | undefined>(undefined)
 const targets = ref<AdminTarget[]>([])
 
-const openCloud = ref<OpenCloudVersion | undefined>(undefined)
+// One answer per page load, shared with VersionNotice. Advisory: if the
+// service cannot say, the page says nothing about it rather than showing an
+// error next to working destinations.
+// Not asked for a non-admin, who is shown nothing here.
+const service = isAdmin ? useServiceVersion(api) : ref(undefined)
 
 const rows = computed(() => targets.value.map((t) => targetRow(t, $gettext)))
-const compatNotice = computed(() => openCloudNotice(openCloud.value, $gettext))
+const compatNotice = computed(() => openCloudNotice(service.value?.opencloud, $gettext))
 
 /** fields are the columns; the location gives way on narrow screens. */
 const fields = computed(() => [
@@ -61,22 +69,9 @@ async function load(): Promise<void> {
   }
 }
 
-/**
- * loadOpenCloudVersion is advisory: if the service cannot say, the page says
- * nothing about it rather than showing an error next to working destinations.
- */
-async function loadOpenCloudVersion(): Promise<void> {
-  try {
-    openCloud.value = await api.openCloudVersion()
-  } catch {
-    openCloud.value = undefined
-  }
-}
-
 onMounted(() => {
   if (isAdmin) {
     void load()
-    void loadOpenCloudVersion()
   }
 })
 </script>
@@ -95,6 +90,7 @@ onMounted(() => {
       </oc-button>
     </template>
     <AdminOnly>
+      <VersionNotice :api="api" :is-admin="isAdmin" class="ext:mb-4" />
       <NoticeBanner
         v-if="compatNotice"
         tone="warning"
@@ -133,6 +129,16 @@ onMounted(() => {
           </template>
         </oc-table>
       </RequestState>
+      <p class="ext:mt-6 ext:text-sm ext:text-role-on-surface-variant" data-testid="versions">
+        {{
+          service
+            ? $gettext('Backup Vault %{bundle}, backup service %{service}', {
+                bundle: APP_VERSION,
+                service: service.version
+              })
+            : $gettext('Backup Vault %{bundle}', { bundle: APP_VERSION })
+        }}
+      </p>
     </AdminOnly>
   </PageLayout>
 </template>

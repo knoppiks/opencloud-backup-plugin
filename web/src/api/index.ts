@@ -41,6 +41,7 @@ export type {
   KeyStatus,
   Notification,
   OpenCloudVersion,
+  ServiceVersion,
   PresetKind,
   RecoveryEnvelope,
   RestoreAccepted,

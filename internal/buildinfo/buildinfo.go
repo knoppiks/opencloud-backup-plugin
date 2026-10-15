@@ -7,16 +7,22 @@
 //	  -X github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo.Commit=<sha> \
 //	  -X github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo.Date=<RFC 3339>"
 //
-// Phase 11 wires that into the Makefile, the Dockerfile and the release. Until
-// then, and for any build nobody stamped, the version is "dev" and the commit
-// and date come from what the Go toolchain recorded (`go install …@v1.2.3`
-// records the module version too).
+// The Makefile, both Dockerfiles, CI and the release stamp all three: the
+// version from `git describe`, the date as the commit's time, so the same
+// commit always builds the same binary. For a build nobody stamped the
+// version, commit and date come from what the Go toolchain recorded: a build
+// inside a checkout records the VCS state; `go install …@<version>` records
+// the module version only, from which a pseudo-version's commit and time are
+// read. With nothing recorded, the version is "dev".
 package buildinfo
 
 import (
 	"fmt"
+	"regexp"
 	"runtime"
 	"runtime/debug"
+	"strings"
+	"time"
 )
 
 // Set at link time with -ldflags -X. They are variables, not constants,
@@ -89,6 +95,14 @@ func fillFromToolchain(info *Info, recorded *debug.BuildInfo) {
 		info.GoVersion = recorded.GoVersion
 	}
 	stamped := info.Commit != ""
+	if !stamped {
+		if rev, at, ok := pseudoVersionRevision(recorded.Main.Version); ok {
+			info.Commit = rev
+			if info.Date == "" {
+				info.Date = at
+			}
+		}
+	}
 	for _, setting := range recorded.Settings {
 		switch setting.Key {
 		case "vcs.revision":
@@ -105,6 +119,28 @@ func fillFromToolchain(info *Info, recorded *debug.BuildInfo) {
 			}
 		}
 	}
+}
+
+// pseudoVersion matches the tail every Go pseudo-version ends in, whichever
+// of its three forms (v0.0.0-T-R, vX.Y.Z-pre.0.T-R, vX.Y.Z-0.T-R): a 14-digit
+// UTC time and a 12-hex-digit revision prefix, optionally followed by
+// "+incompatible" or the "+dirty" a build in a modified checkout records.
+var pseudoVersion = regexp.MustCompile(`[-.](\d{14})-([0-9a-f]{12})(\+incompatible)?(\+dirty)?$`)
+
+// pseudoVersionRevision returns the revision prefix and the commit time
+// (RFC 3339) of a pseudo-version. `go install …@<commit>` records nothing
+// else about the source: no vcs.* settings, because the module came from
+// the proxy, not a checkout.
+func pseudoVersionRevision(version string) (rev, at string, ok bool) {
+	m := pseudoVersion.FindStringSubmatch(version)
+	if m == nil || !strings.HasPrefix(version, "v") {
+		return "", "", false
+	}
+	t, err := time.Parse("20060102150405", m[1])
+	if err != nil {
+		return "", "", false
+	}
+	return m[2], t.UTC().Format(time.RFC3339), true
 }
 
 // String is the one-line answer to "which version is this?", as printed by

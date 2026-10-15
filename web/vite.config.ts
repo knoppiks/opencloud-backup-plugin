@@ -19,7 +19,13 @@
 import { defineConfig } from '@opencloud-eu/extension-sdk'
 import { thirdPartyLicenses } from './build/third-party-licenses.ts'
 
+// The bundle's version is the build stamp the Makefile and the image build
+// pass in BACKUP_VAULT_VERSION (the same `git describe` the Go programs
+// carry, #102); unset, it is "dev" (version/appversion.ts).
 export default defineConfig({
   name: 'backup-vault',
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.BACKUP_VAULT_VERSION ?? '')
+  },
   plugins: [thirdPartyLicenses()]
 })

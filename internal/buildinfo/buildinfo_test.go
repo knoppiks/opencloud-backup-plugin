@@ -99,3 +99,61 @@ func TestGetReadsTheRunningBinary(t *testing.T) {
 		t.Fatalf("Get = %+v", got)
 	}
 }
+
+func TestPseudoVersionRevision(t *testing.T) {
+	tests := []struct {
+		version, rev, at string
+	}{
+		{"v0.0.0-20261014185326-a90c590cc686", "a90c590cc686", "2026-10-14T18:53:26Z"},
+		{"v0.1.0-rc.2.0.20261014185326-a90c590cc686", "a90c590cc686", "2026-10-14T18:53:26Z"},
+		{"v0.1.1-0.20261014185326-a90c590cc686", "a90c590cc686", "2026-10-14T18:53:26Z"},
+		{"v2.0.1-0.20261014185326-a90c590cc686+incompatible", "a90c590cc686", "2026-10-14T18:53:26Z"},
+		{"v0.1.0-rc.2.0.20261014185326-a90c590cc686+dirty", "a90c590cc686", "2026-10-14T18:53:26Z"},
+		{"v1.2.3", "", ""},
+		{"v0.1.0-rc.2", "", ""},
+		{"(devel)", "", ""},
+		{"", "", ""},
+		// Not a time: month 13.
+		{"v0.0.0-20261314185326-a90c590cc686", "", ""},
+		// Upper-case hex is not what Go writes.
+		{"v0.0.0-20261014185326-A90C590CC686", "", ""},
+		// Eleven hex digits.
+		{"v0.0.0-20261014185326-a90c590cc68", "", ""},
+	}
+	for _, tt := range tests {
+		rev, at, ok := pseudoVersionRevision(tt.version)
+		if ok != (tt.rev != "") || rev != tt.rev || at != tt.at {
+			t.Errorf("pseudoVersionRevision(%q) = %q, %q, %v; want %q, %q", tt.version, rev, at, ok, tt.rev, tt.at)
+		}
+	}
+}
+
+// `go install …@<commit>` from the proxy: a pseudo-version, no vcs.* settings.
+func TestGoInstallPseudoVersionNamesTheCommit(t *testing.T) {
+	got := resolve(stamp{}, &debug.BuildInfo{Main: debug.Module{Version: "v0.0.0-20261014185326-a90c590cc686"}})
+	if got.Commit != "a90c590cc686" || got.Date != "2026-10-14T18:53:26Z" {
+		t.Fatalf("info = %+v", got)
+	}
+	if line := got.Line("decrypt"); strings.Contains(line, "commit unknown") {
+		t.Fatalf("Line = %q", line)
+	}
+}
+
+// A checkout records the full revision; it wins over the pseudo-version's prefix.
+func TestVCSRevisionWinsOverPseudoVersion(t *testing.T) {
+	got := resolve(stamp{}, &debug.BuildInfo{
+		Main:     debug.Module{Version: "v0.0.0-20261014185326-a90c590cc686"},
+		Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "a90c590cc686f3a37cf31c7f22987e6baacd6fda"}},
+	})
+	if got.Commit != "a90c590cc686f3a37cf31c7f22987e6baacd6fda" {
+		t.Fatalf("Commit = %q", got.Commit)
+	}
+}
+
+// A stamped commit is not replaced by a pseudo-version's.
+func TestStampedCommitWinsOverPseudoVersion(t *testing.T) {
+	got := resolve(stamp{Commit: "stamped"}, &debug.BuildInfo{Main: debug.Module{Version: "v0.0.0-20261014185326-a90c590cc686"}})
+	if got.Commit != "stamped" || got.Date != "" {
+		t.Fatalf("info = %+v", got)
+	}
+}

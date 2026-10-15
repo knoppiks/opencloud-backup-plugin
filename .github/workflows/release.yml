@@ -39,6 +39,15 @@ jobs:
           file: web/Dockerfile
     steps:
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    # The same stamp `make` uses, with the version set to the tag itself:
+    # `git describe` may name another tag on the same commit (an -rc).
+    - id: stamp
+      env:
+        TAG: ${{ github.ref_name }}
+      run: make --no-print-directory stamp VERSION="$TAG" >> "$GITHUB_OUTPUT"
 
     - uses: docker/setup-qemu-action@v3
 
@@ -70,4 +79,9 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: true
         tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+        # The OCI labels are the Dockerfiles' own, from this stamp; the
+        # metadata action's would replace `created` with the build time.
+        build-args: |
+          VERSION=${{ steps.stamp.outputs.version }}
+          COMMIT=${{ steps.stamp.outputs.commit }}
+          DATE=${{ steps.stamp.outputs.date }}

@@ -320,16 +320,24 @@ jobs:
     name: container images (build only)
     runs-on: ubuntu-latest
     steps:
+    # The tags, for `git describe`: the images are stamped the way a release
+    # stamps them (make stamp).
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     # Publishing happens only on a `v*` tag (release.yml). What this job buys
     # is that both Dockerfiles — the root one is where the entrypoint contract
     # deploy/ depends on actually lives — cannot rot between releases.
     - name: docker build (service)
-      run: docker build -t opencloud-backupd:ci .
+      run: make image IMAGE_TAG=ci
 
     - name: docker build (web bundle)
-      run: docker build -t opencloud-backup-vault-web:ci -f web/Dockerfile .
+      run: make web-image IMAGE_TAG=ci
+
+    # Every artifact reports the same version and commit (#102).
+    - name: images report one version
+      run: make image-stamp-check IMAGE_TAG=ci
 
     # The web image has no shell: its entrypoint must do the initContainer's
     # copy by itself, run without arguments, as README documents it.
