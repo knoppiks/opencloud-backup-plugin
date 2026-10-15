@@ -134,16 +134,79 @@ images but mark the GitHub Release as pre-release.
 Macos binaries are unsigned/un-notarised; the docs say how to open them
 (Gatekeeper). Notarisation is backlog.
 
+### Plan (11.3, #104; agreed with the owner 2026-10-15)
+
+Choices:
+
+- **Image tags appear on publish.** The tag push builds, pushes *by digest
+  only*, signs and attests both images; publishing the draft (`release:
+  published`) adds `X.Y.Z` / `X.Y` with `imagetools create`. Reviewing the
+  draft then gates the images too. Digests of a draft that is never
+  published stay untagged in GHCR; cleaned up by hand.
+- **Binary signature:** `cosign sign-blob` (keyless) over `SHA256SUMS` as one
+  `SHA256SUMS.sigstore.json` bundle, plus `actions/attest-build-provenance`
+  per archive (`gh attestation verify`).
+- **Image SBOM/provenance:** BuildKit's own provenance and SBOM off; syft
+  SPDX SBOM per image (release asset + cosign attestation), cosign signature
+  and `attest-build-provenance` (`push-to-registry`) on the digest.
+- **Archives:** tar.gz (zip on Windows) holding the binary, `LICENSE` and the
+  `THIRD_PARTY_NOTICES` for that archive's platform only.
+- **Web bundle** as an asset: `backup-vault_<ver>.tar.gz`, with its own
+  notices. `web/package.json`'s version is set in the build, not committed.
+- **One build definition:** `make decrypt-release` and CI's
+  `decrypt-cross-build` run `goreleaser build --snapshot`, so every PR builds
+  what ships.
+- **Folded in from 11.4:** the main-reachability guard (R5), `concurrency`
+  per tag, `workflow_dispatch` re-run of an existing tag. The tag ruleset
+  and `deploy/` bumps stay in 11.4. **No `release` environment** (solo
+  maintainer; draft review already gates).
+- GoReleaser's changelog is off; the body is a template with the
+  verification steps and image digests. Categorised notes are 11.5.
+
+Checks: CI job `release-snapshot` (`goreleaser check`, snapshot, asset
+names, archive contents, `decrypt`/`takeout version` report the stamp,
+`scripts/verify-release.sh` over the snapshot's checksums). The script is
+what the docs tell users to run. Walked end to end with `v0.1.0-rc.3` on
+`main`.
+
+### Outcome (11.3, #104)
+
+- `.goreleaser.yaml` (GoReleaser v2.18.3, syft v1.54.1): `decrypt` ×5,
+  `takeout` linux ×2, archives with `LICENSE` + per-platform notices (build
+  hook runs `scripts/third-party-notices.sh` per target), SPDX SBOM per
+  archive, `SHA256SUMS` over every asset incl. `dist/release-assets/*`,
+  cosign bundle, draft, `prerelease: auto`, changelog off.
+- Make: `decrypt-release`, `web-archive`, `release-snapshot`, `release`,
+  `release-scripts-test`. Archives and the web archive are reproducible
+  (measured: two snapshots, identical checksums except SBOMs).
+- `release.yml`: `guard` (tag form, on `main`, not yet published) → `ci`
+  + `web-bundle` → `images` (by digest, cosign sign, provenance, SBOM per
+  platform attested) → `release` (images.txt, notes, `make release`,
+  `attest-build-provenance` over `SHA256SUMS`). `concurrency` per tag,
+  `workflow_dispatch` on the tag re-runs.
+- `release-publish.yml` (on `release: published`): verifies `images.txt`
+  through `verify-release.sh -t TAG`, tags the digests
+  (`scripts/image-tags.sh`), checks each tag names the signed digest.
+- Scripts: `check-release-assets.sh` (names, contents, notices' platform,
+  SBOMs, `SHA256SUMS` exactly = assets, `-version` stamp, static),
+  `verify-release.sh` (user-facing), `release-notes.sh`, `image-tags.sh`;
+  tested by `test/release/release-scripts-test.sh`, which also damages a
+  snapshot four ways and expects the check to refuse each.
+- CI: `release assets (snapshot)` replaces `decrypt-cross-build`.
+- README: "Verifying a release" (cosign, checksums, provenance, images,
+  Windows, macOS Gatekeeper); download pointers in the runbook and the
+  extension install.
+- **Open:** the `v0.1.0-rc.3` walk (tag on `main`, draft reviewed,
+  published, tags appear, `verify-release.sh -a` from a clean machine).
+
 ## 11.4 Tags and the release workflow
+
+The workflow parts (main-reachability guard, re-run without moving a tag,
+`concurrency`, the `release` environment question: no) moved into 11.3
+(#104). Left:
 
 - Tag ruleset: `v*` tags may not be moved or deleted; creation restricted to
   the owner.
-- `release.yml` refuses a tag whose commit is not reachable from `main`
-  (fixes R5: rc.2 was tagged on an unmerged branch).
-- `workflow_dispatch` input for re-running a release *without* moving a tag.
-- `concurrency` on the release workflow; a `release` environment so the
-  publish job waits for the owner's approval (optional for a solo
-  maintainer — owner to choose).
 - `deploy/` image references updated by the release (or by Renovate after it)
   so a manifest never names a tag that does not exist.
 

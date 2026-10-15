@@ -10,7 +10,8 @@
 #   decrypt    ABSENT ON PURPOSE. It is the user's tool: it runs on the user's
 #              own machine with the user's own Recovery Key, and the server is
 #              the one place it should never need to be (decisions.md #2, #15).
-#              Builds for every desktop OS come from `make decrypt-release`.
+#              Builds for every desktop OS are GitHub release assets
+#              (.goreleaser.yaml; locally `make decrypt-release`).
 #
 # Base images are pinned by digest (AGENTS.md: pin external versions). Bump them
 # deliberately; a moving tag would mean the image an operator deploys is not the

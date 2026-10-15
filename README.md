@@ -248,6 +248,10 @@ argument it does not know stops it with an error.
 OpenCloud scans the apps directory **at startup only**, which an initContainer
 gets for free. Copying into a running pod does nothing until it restarts.
 
+Without Kubernetes, or without the image: every release carries the bundle as
+`backup-vault_<version>.tar.gz`. It unpacks to `backup-vault/`, which goes into
+the same apps directory; restart OpenCloud afterwards.
+
 **OpenCloud's Content Security Policy has to allow WebAssembly.** The Recovery
 Key's key derivation (Argon2id) runs in the browser as WebAssembly, and the
 default policy of every supported OpenCloud (`script-src 'self' 'unsafe-inline'`)
@@ -487,9 +491,14 @@ encrypted key envelope, and a manifest with checksums. Hand it to the user — a
 USB stick is fine, it is useless without their Recovery Key.
 
 **Step 2 — the user decrypts it, on their own machine.** `decrypt` uses **no
-network at all**. Builds for Linux, macOS and Windows are produced by
-`make decrypt-release`; with a Go toolchain it also installs directly:
+network at all**. Every [release](https://github.com/knoppiks/opencloud-backup-plugin/releases)
+carries it for Linux, macOS and Windows (`decrypt_<version>_<os>_<arch>`);
+check the download before trusting it with a Recovery Key
+([Verifying a release](#verifying-a-release)). With a Go toolchain it also
+installs directly:
 `go install github.com/knoppiks/opencloud-backup-plugin/cmd/decrypt@latest`.
+An administrator without the service image finds `takeout` for Linux in the
+release as well.
 
 ```sh
 decrypt -in ./takeout-alice -list             # which backups are in here?
@@ -647,6 +656,64 @@ kubectl logs deploy/opencloud-backupd | grep '"request_id":"<id>"'
 
 The log never holds query strings, request bodies, tokens, keys or
 credentials.
+
+## Verifying a release
+
+Each [GitHub release](https://github.com/knoppiks/opencloud-backup-plugin/releases)
+lists the checksum of every asset in `SHA256SUMS`. The repository's release
+workflow signs that file, with no long-lived key, as
+`SHA256SUMS.sigstore.json`.
+
+The signature proves that `SHA256SUMS` was made by
+`.github/workflows/release.yml` in this repository, running for that tag. The
+checksums then prove that every download is the file the workflow built. Each
+asset also has GitHub build provenance, and the images are signed and carry
+their SBOMs as attestations. The release notes name the images by digest.
+
+With [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+(v2.4 or newer), in the folder holding the downloads, `SHA256SUMS` and
+`SHA256SUMS.sigstore.json`:
+
+```sh
+TAG=v0.1.0   # the release you downloaded
+cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity "https://github.com/knoppiks/opencloud-backup-plugin/.github/workflows/release.yml@refs/tags/$TAG" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c SHA256SUMS   # macOS: shasum -a 256 --ignore-missing -c SHA256SUMS
+```
+
+Both must succeed: `Verified OK`, then `OK` for each file you downloaded.
+[`scripts/verify-release.sh`](scripts/verify-release.sh)` -t $TAG` runs the
+same two steps. Add `-a` to also check each archive's build provenance with the
+GitHub CLI (`gh attestation verify <archive> --repo knoppiks/opencloud-backup-plugin`).
+
+Images, by the digest the release notes give:
+
+```sh
+cosign verify ghcr.io/knoppiks/opencloud-backupd@sha256:<digest> \
+  --certificate-identity "https://github.com/knoppiks/opencloud-backup-plugin/.github/workflows/release.yml@refs/tags/$TAG" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+**Windows**, without cosign: PowerShell's
+`Get-FileHash decrypt_<version>_windows_amd64.zip` prints the SHA-256. It must
+equal that file's line in `SHA256SUMS`. That only proves something if
+`SHA256SUMS` itself was verified, for example by a family member with cosign.
+
+**macOS** does not run the `decrypt` binary as downloaded: the binaries are not
+notarised, so Gatekeeper refuses them ("cannot be opened because the developer
+cannot be verified"). After verifying the download, remove the quarantine flag
+and run it:
+
+```sh
+xattr -d com.apple.quarantine ./decrypt
+./decrypt -version
+```
+
+A release appears as a draft first. Its images are pushed by digest and get
+their version tags (`X.Y.Z`, and `X.Y` for the newest patch) only when the
+release is published. Pre-releases (`-rc.N`) get only their full version tag.
+There is no `latest`.
 
 ## Developing the web extension
 

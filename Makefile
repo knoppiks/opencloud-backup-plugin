@@ -57,16 +57,64 @@ stamp: ## Print the build stamp (VERSION, COMMIT, DATE) this tree builds with.
 	@echo "commit=$(COMMIT)"
 	@echo "date=$(DATE)"
 
+# The release's CLI binaries are defined once, in .goreleaser.yaml, and built
+# from there everywhere: here, in CI on every pull request, and by the
+# release (phase-11 §11.3, #104). GoReleaser and syft (for the SBOMs) must be
+# on PATH, at the versions CI pins.
+GORELEASER     ?= goreleaser
+RELEASE_DIST   := $(DIST)/release
+# What earlier release jobs add to the release (web bundle archive, image
+# SBOMs, image digests); .goreleaser.yaml checksums and attaches all of it.
+RELEASE_ASSETS := $(DIST)/release-assets
+GORELEASER_ENV := VERSION=$(VERSION) COMMIT=$(COMMIT) DATE=$(DATE)
+
 .PHONY: decrypt-release
-decrypt-release: ## Cross-build the offline decrypt CLI for every supported OS.
-	@mkdir -p $(DIST)
-	@for p in $(DECRYPT_PLATFORMS); do \
-		os=$${p%/*}; arch=$${p#*/}; \
-		ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
-		echo "building decrypt for $$os/$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w $(STAMP_LDFLAGS)" \
-			-o $(DIST)/decrypt-$$os-$$arch$$ext ./cmd/decrypt || exit 1; \
-	done
+decrypt-release: ## Cross-build the offline decrypt CLI for every supported OS (into dist/release).
+	$(GORELEASER_ENV) $(GORELEASER) build --snapshot --clean --id decrypt
+
+# Everything the release builds, signed by nobody and published nowhere,
+# then checked the way the release is checked. Builds the web bundle archive
+# first (web-archive needs `pnpm install` done) into an emptied
+# $(RELEASE_ASSETS), so nothing left from an earlier run is attached.
+.PHONY: release-snapshot
+release-snapshot: ## Build every release asset locally (no signing, no upload) and check them.
+	rm -rf $(RELEASE_ASSETS)
+	$(MAKE) --no-print-directory web-archive
+	$(GORELEASER_ENV) $(GORELEASER) release --snapshot --clean --skip=sign
+	DECRYPT_PLATFORMS="$(DECRYPT_PLATFORMS)" scripts/check-release-assets.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
+	test/release/release-scripts-test.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
+
+# The release's shell scripts (tags, notes, verification), and that the
+# asset check still refuses damaged assets; the latter part runs inside
+# release-snapshot, which has a snapshot to damage.
+.PHONY: release-scripts-test
+release-scripts-test: ## Test the release's shell scripts.
+	test/release/release-scripts-test.sh
+
+# The release itself (release.yml): VERSION must be the tag on HEAD, the
+# tree clean, RELEASE_NOTES rendered, GITHUB_TOKEN and cosign's OIDC
+# identity available. Creates or replaces the draft release.
+.PHONY: release
+release:
+	@[ -n "$(RELEASE_NOTES)" ] || { echo "release: RELEASE_NOTES is not set" >&2; exit 1; }
+	$(GORELEASER_ENV) $(GORELEASER) release --clean --release-notes "$(RELEASE_NOTES)"
+	DECRYPT_PLATFORMS="$(DECRYPT_PLATFORMS)" scripts/check-release-assets.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
+
+# The web bundle as a release asset, for an install without the
+# initContainer image: backup-vault/ holding the bundle, its notices and the
+# project's LICENSE. Owner, order and times are fixed (the commit's), so the
+# same commit gives the same archive.
+WEB_ARCHIVE := $(RELEASE_ASSETS)/backup-vault_$(patsubst v%,%,$(VERSION)).tar.gz
+
+.PHONY: web-archive
+web-archive: web-build ## Build the web bundle and archive it as a release asset.
+	@rm -rf $(DIST)/web-archive
+	@mkdir -p $(DIST)/web-archive/backup-vault $(RELEASE_ASSETS)
+	cp -R $(WEB_DIR)/dist/. $(DIST)/web-archive/backup-vault/
+	cp LICENSE $(DIST)/web-archive/backup-vault/LICENSE
+	tar -C $(DIST)/web-archive --sort=name --mtime="$(DATE)" --owner=0 --group=0 --numeric-owner \
+		-cf - backup-vault | gzip -n >$(WEB_ARCHIVE)
+	@rm -rf $(DIST)/web-archive
 
 # Unit tests build with kopia's own `testing` tag: repositories they create
 # derive their key with kopia's fast test derivation instead of scrypt, which

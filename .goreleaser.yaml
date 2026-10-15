@@ -1,0 +1,161 @@
+# GoReleaser: the release's CLI binaries, their archives, checksums, SBOMs
+# and the checksum signature (phase-11 §11.3, #104). The two images are not
+# built here (release.yml builds them with docker/build-push-action); their
+# SBOMs, the web bundle archive and the list of image digests are produced by
+# earlier release jobs into dist/release-assets/ and attached from there, so
+# SHA256SUMS and its signature cover every asset of a release.
+#
+# Run through make, never directly: the build stamp comes from `make stamp`
+# (VERSION, COMMIT, DATE in the environment), the same stamp every other
+# artifact carries (#102).
+#
+#   make release-snapshot   everything a release builds, nothing published
+#   make decrypt-release    the decrypt binaries only
+#
+# Pinned: GORELEASER_VERSION (and SYFT_VERSION) in ci.yml and release.yml.
+version: 2
+
+project_name: opencloud-backup-plugin
+
+# Not dist/: make keeps coverage profiles and other outputs there, and
+# `--clean` removes this directory.
+dist: dist/release
+
+# Both programs are stamped like every other build and stripped; the
+# modification time is the commit's, so the same commit builds the same
+# archive. `-version` prints the stamp.
+#
+# Each target writes the third-party notices for exactly that program on
+# exactly that platform, after the license check that refuses a dependency
+# outside the allow-list (scripts/third-party-notices.sh, §11.1). Windows
+# decrypt links an MPL-2.0 module the others do not; only its notices say so.
+builds:
+- id: decrypt
+  binary: decrypt
+  main: ./cmd/decrypt
+  env: [ CGO_ENABLED=0 ]
+  flags: [ -trimpath ]
+  ldflags: &stamp
+  - -s -w
+  - -X github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo.Version={{ .Env.VERSION }}
+  - -X github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo.Commit={{ .Env.COMMIT }}
+  - -X github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo.Date={{ .Env.DATE }}
+  mod_timestamp: "{{ .CommitTimestamp }}"
+  # Keep in step with DECRYPT_PLATFORMS in the Makefile: the family's last
+  # resort ships for every desktop OS (phase-5 exit criteria).
+  targets:
+  - linux_amd64
+  - linux_arm64
+  - darwin_amd64
+  - darwin_arm64
+  - windows_amd64
+  hooks:
+    post:
+    - cmd: scripts/third-party-notices.sh -o dist/release/notices/decrypt_{{ .Os }}_{{ .Arch }}/THIRD_PARTY_NOTICES -p {{ .Os }}/{{ .Arch }} ./cmd/decrypt
+      output: true
+
+# takeout also ships in the service image; these are for an operator
+# recovering without it.
+- id: takeout
+  binary: takeout
+  main: ./cmd/takeout
+  env: [ CGO_ENABLED=0 ]
+  flags: [ -trimpath ]
+  ldflags: *stamp
+  mod_timestamp: "{{ .CommitTimestamp }}"
+  targets:
+  - linux_amd64
+  - linux_arm64
+  hooks:
+    post:
+    - cmd: scripts/third-party-notices.sh -o dist/release/notices/takeout_{{ .Os }}_{{ .Arch }}/THIRD_PARTY_NOTICES -p {{ .Os }}/{{ .Arch }} ./cmd/takeout
+      output: true
+
+# <program>_<version>_<os>_<arch>.tar.gz (zip on Windows), one directory
+# holding the program, the project's LICENSE and that platform's notices.
+archives:
+- id: decrypt
+  ids: [ decrypt ]
+  name_template: "decrypt_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  wrap_in_directory: true
+  formats: [ tar.gz ]
+  format_overrides:
+  - goos: windows
+    formats: [ zip ]
+  builds_info: &fileinfo
+    mtime: "{{ .CommitDate }}"
+    owner: root
+    group: root
+    mode: 0755
+  files:
+  - src: LICENSE
+    info: &docinfo
+      mtime: "{{ .CommitDate }}"
+      owner: root
+      group: root
+      mode: 0644
+  - src: dist/release/notices/decrypt_{{ .Os }}_{{ .Arch }}/THIRD_PARTY_NOTICES
+    strip_parent: true
+    info: *docinfo
+
+- id: takeout
+  ids: [ takeout ]
+  name_template: "takeout_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  wrap_in_directory: true
+  formats: [ tar.gz ]
+  builds_info: *fileinfo
+  files:
+  - src: LICENSE
+    info: *docinfo
+  - src: dist/release/notices/takeout_{{ .Os }}_{{ .Arch }}/THIRD_PARTY_NOTICES
+    strip_parent: true
+    info: *docinfo
+
+# A release's version is its tag; a snapshot's is the stamp `git describe`
+# gave (v0.1.0-3-gabcdef012345-dirty), so its asset names say what it is.
+snapshot:
+  version_template: '{{ trimprefix .Env.VERSION "v" }}'
+
+# One SPDX SBOM per archive, by syft (pinned beside GoReleaser).
+sboms:
+- artifacts: archive
+  documents: [ "{{ .ArtifactName }}.spdx.json" ]
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+  extra_files:
+  - glob: dist/release-assets/*
+
+# Keyless (GitHub OIDC): the certificate names release.yml at the tag, which
+# is what scripts/verify-release.sh checks. One bundle file holds signature,
+# certificate and transparency-log proof.
+signs:
+- id: checksums
+  cmd: cosign
+  artifacts: checksum
+  signature: "${artifact}.sigstore.json"
+  args: [ sign-blob, "--bundle=${signature}", "${artifact}", --yes ]
+  output: true
+
+# Notes come from release.yml (scripts/release-notes.sh): verification steps
+# and image digests. Categorised change notes are phase-11 §11.5.
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: knoppiks
+    name: opencloud-backup-plugin
+  # The owner reviews and publishes; publishing is what tags the images
+  # (release-publish.yml).
+  draft: true
+  # A re-run of the same tag (workflow_dispatch) replaces its draft.
+  replace_existing_draft: true
+  replace_existing_artifacts: true
+  # v1.2.3-rc.1 is a pre-release.
+  prerelease: auto
+  mode: replace
+  name_template: "{{ .Tag }}"
+  extra_files:
+  - glob: dist/release-assets/*

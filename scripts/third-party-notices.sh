@@ -220,5 +220,6 @@ HEADER
 }
 
 notices "$@" >"$work/notices"
+mkdir -p "$(dirname "$out")"
 mv "$work/notices" "$out"
 echo "third-party-notices: wrote $out" >&2
