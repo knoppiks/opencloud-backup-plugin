@@ -67,6 +67,10 @@ grep -qxF "ghcr.io/knoppiks/opencloud-backupd@$digest" <<<"$notes" || fail "note
 grep -qxF "ghcr.io/knoppiks/opencloud-backup-vault-web@$digest" <<<"$notes" || fail "notes lack the web digest"
 grep -qF "release.yml@refs/tags/v1.2.3" <<<"$notes" || fail "notes lack the signing identity"
 grep -q "Pre-release" <<<"$notes" && fail "notes of v1.2.3 call it a pre-release"
+# Images are signed with cosign v3; an older cosign finds no signature (#108).
+grep -qF "v2.4 or newer" <<<"$notes" || fail "notes do not name the cosign version for files"
+grep -qF "cosign v3 or newer" <<<"$notes" || fail "notes do not name the cosign version for images"
+grep -qF "no signatures found" <<<"$notes" || fail "notes do not explain an older cosign's answer"
 notes=$("$scripts/release-notes.sh" v1.2.3-rc.1 "$work/images.txt")
 grep -q "Pre-release" <<<"$notes" || fail "notes of v1.2.3-rc.1 do not call it a pre-release"
 

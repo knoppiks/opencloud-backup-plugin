@@ -1795,6 +1795,13 @@ None reopens a locked decision. Takes over the release-workflow parts of
   wraps (README "Verifying a release"); it runs under macOS's bash 3.2.
   macOS binaries stay un-notarised (backlog); the README says how to clear
   the quarantine flag.
+- **cosign is pinned, and its major is part of the user contract (owner,
+  2026-10-15, #108).** Files verify with cosign v2.4 or newer; images need
+  the major the release signs with (v3), since an older one finds no
+  signature. `COSIGN_VERSION` is pinned in `release.yml` and
+  `release-publish.yml`; a Go test fails when they differ or when README and
+  the release notes name another major. Bumping the major is therefore a
+  documented change for users, not a silent one.
 
 ---
 

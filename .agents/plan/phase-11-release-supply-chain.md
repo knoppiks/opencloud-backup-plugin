@@ -166,8 +166,8 @@ Choices:
 Checks: CI job `release-snapshot` (`goreleaser check`, snapshot, asset
 names, archive contents, `decrypt`/`takeout version` report the stamp,
 `scripts/verify-release.sh` over the snapshot's checksums). The script is
-what the docs tell users to run. Walked end to end with `v0.1.0-rc.3` on
-`main`.
+what the docs tell users to run. Walked end to end on `main` (rc.4; see
+the outcome).
 
 ### Outcome (11.3, #104)
 
@@ -196,8 +196,23 @@ what the docs tell users to run. Walked end to end with `v0.1.0-rc.3` on
 - README: "Verifying a release" (cosign, checksums, provenance, images,
   Windows, macOS Gatekeeper); download pointers in the runbook and the
   extension install.
-- **Open:** the `v0.1.0-rc.3` walk (tag on `main`, draft reviewed,
-  published, tags appear, `verify-release.sh -a` from a clean machine).
+- **Walked with `v0.1.0-rc.4` (2026-10-15).** rc.3 stopped before building
+  anything: `sigstore/cosign-installer` has no major tags, `@v4` did not
+  resolve (#106, pinned `@v4.1.2`). rc.4: every job green; draft with 22
+  assets, pre-release; `verify-release.sh -t v0.1.0-rc.4 -a` OK (signature,
+  checksums, provenance of 20 assets); `decrypt -version` names the tag's
+  commit; both images signed, provenance OK, four per-platform SBOM
+  attestations OK; no version tag before publishing. Publishing a
+  hand-made release on the same tag (no assets) was refused by
+  `release-publish.yml` before tagging anything; publishing the bot's draft
+  tagged `0.1.0-rc.4` on both signed digests, and no `0.1` (pre-release).
+  Verified from the owner's machine, not a clean one: the clean-machine
+  walk is 11.9 step 3.
+- **Image verification needs cosign v3 (#108):** the images are signed with
+  cosign v3, whose signatures an older cosign does not find ("no signatures
+  found"). README and the release notes now say so; `COSIGN_VERSION` is
+  pinned in both release workflows, and a Go test ties the pinned major to
+  what the docs say.
 
 ## 11.4 Tags and the release workflow
 

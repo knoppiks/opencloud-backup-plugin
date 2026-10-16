@@ -44,6 +44,28 @@ func TestReleaseToolsAreTheSameInCIAndRelease(t *testing.T) {
 	}
 }
 
+// The images are signed by the cosign release.yml pins, verified by the one
+// release-publish.yml pins, and README and the release notes tell users which
+// major they need (#108): an older major does not find the signatures.
+func TestCosignIsTheSameWhereItSignsAndVerifies(t *testing.T) {
+	pattern := regexp.MustCompile(`(?m)^\s*COSIGN_VERSION: "v(\d+)\.\d+\.\d+"$`)
+	signs := toolchainIn(t, ".github/workflows/release.yml", pattern)
+	verifies := toolchainIn(t, ".github/workflows/release-publish.yml", pattern)
+	if signs != verifies {
+		t.Errorf("release.yml pins cosign v%s.x, release-publish.yml v%s.x", signs, verifies)
+	}
+	want := "cosign v" + signs + " or newer"
+	for _, path := range []string{"README.md", "scripts/release-notes.sh"} {
+		data, err := os.ReadFile(filepath.Join(repoRoot, path))
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if !regexp.MustCompile(`(?i)` + regexp.QuoteMeta(want)).Match(data) {
+			t.Errorf("%s does not say %q for image verification", path, want)
+		}
+	}
+}
+
 func TestToolchainIsTheSameEverywhere(t *testing.T) {
 	want := ""
 	for _, src := range toolchainSources {

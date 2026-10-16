@@ -18,6 +18,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Keep in step with release.yml.
+  COSIGN_VERSION: "v3.0.6"
+
 concurrency:
   group: release-published-${{ github.event.release.tag_name }}
   cancel-in-progress: false
@@ -40,6 +44,8 @@ jobs:
         ref: ${{ github.event.release.tag_name }}
 
     - uses: sigstore/cosign-installer@v4.1.2 # no major tag upstream
+      with:
+        cosign-release: ${{ env.COSIGN_VERSION }}
 
     - name: verify the image list
       run: |
