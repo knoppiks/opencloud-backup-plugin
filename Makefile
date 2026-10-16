@@ -350,6 +350,13 @@ image-stamp-check: ## Check both images report this tree's version everywhere (a
 k8s-validate: ## Validate K8s manifests offline (kubeconform).
 	kubeconform -strict -summary deploy/
 
+# deploy/ names only published versions of this project's images (#110);
+# needs the registry (docker buildx). The check's own test needs nothing.
+.PHONY: deploy-images
+deploy-images: ## Check deploy/ names only published image tags (queries ghcr.io).
+	test/release/deploy-images-test.sh
+	scripts/check-deploy-images.sh deploy/*.yaml
+
 .PHONY: secret-scan
 secret-scan: ## Scan HEAD's full git history for committed secrets (gitleaks).
 	gitleaks git . --log-opts="HEAD" --redact --no-banner

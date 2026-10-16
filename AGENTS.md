@@ -81,6 +81,20 @@ a follow-up edit alone: once committed, it is in history.
 - **Never commit.** The user commits. You may `git add` to stage intended files
   and suggest a concise, imperative commit message (<= 72-char subject).
 - Do not modify git config, skip hooks, force-push, or amend.
+- **A new branch tracks its own name on `origin`, never `main`.** Branch off
+  `origin/main` without tracking it, then point the upstream at the
+  same-named remote branch (it need not exist yet), so the user's plain
+  `git push` creates it:
+
+  ```sh
+  git switch --no-track -c <branch> origin/main
+  git config branch.<branch>.remote origin
+  git config branch.<branch>.merge refs/heads/<branch>
+  ```
+
+  These two per-branch settings are the one exception to "do not modify git
+  config". `git switch -c <branch> origin/main` alone sets the upstream to
+  `main`, so a `git push` would target `main`.
 - **One commit per issue/PR.** Follow-up work on an open PR is folded into
   its commit by the user (amend). When suggesting a message for such a
   change, give the full combined message for the whole PR, not a delta.
