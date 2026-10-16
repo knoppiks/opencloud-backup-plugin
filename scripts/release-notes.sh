@@ -57,7 +57,7 @@ its platform.
 ## Verify
 
 With [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
-installed, in the directory holding the downloaded assets, \`SHA256SUMS\` and
+v2.4 or newer, in the directory holding the downloaded assets, \`SHA256SUMS\` and
 \`SHA256SUMS.sigstore.json\`:
 
 \`\`\`sh
@@ -70,7 +70,10 @@ sha256sum --ignore-missing -c SHA256SUMS   # macOS: shasum -a 256 --ignore-missi
 or run [\`scripts/verify-release.sh -t $tag\`](https://github.com/$REPO/blob/$tag/scripts/verify-release.sh),
 which does both. Build provenance: \`gh attestation verify <archive> --repo $REPO\`.
 Images: \`cosign verify <image>@<digest> --certificate-identity …\` (same
-identity and issuer), or \`gh attestation verify oci://<image>@<digest> --repo $REPO\`.
+identity and issuer) with **cosign v3 or newer**, or
+\`gh attestation verify oci://<image>@<digest> --repo $REPO\`. An older cosign
+reports \`no signatures found\` for these images: upgrade, do not conclude
+they were tampered with.
 
 **macOS:** the binaries are not notarised. After verifying, allow \`decrypt\`
 to run with \`xattr -d com.apple.quarantine ./decrypt\`.

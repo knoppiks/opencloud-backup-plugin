@@ -671,7 +671,7 @@ asset also has GitHub build provenance, and the images are signed and carry
 their SBOMs as attestations. The release notes name the images by digest.
 
 With [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
-(v2.4 or newer), in the folder holding the downloads, `SHA256SUMS` and
+(v2.4 or newer for files; images need v3, below), in the folder holding the downloads, `SHA256SUMS` and
 `SHA256SUMS.sigstore.json`:
 
 ```sh
@@ -687,13 +687,21 @@ Both must succeed: `Verified OK`, then `OK` for each file you downloaded.
 same two steps. Add `-a` to also check each archive's build provenance with the
 GitHub CLI (`gh attestation verify <archive> --repo knoppiks/opencloud-backup-plugin`).
 
-Images, by the digest the release notes give:
+Images, by the digest the release notes give. This needs
+**cosign v3 or newer**: the release signs images with cosign v3, which stores the signature
+where older versions do not look. An older cosign answers
+`no signatures found` for a correctly signed image; that is not a sign of
+tampering, but it is not a verification either. Upgrade and run it again.
 
 ```sh
 cosign verify ghcr.io/knoppiks/opencloud-backupd@sha256:<digest> \
   --certificate-identity "https://github.com/knoppiks/opencloud-backup-plugin/.github/workflows/release.yml@refs/tags/$TAG" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+
+Each platform image also carries its SBOM as an attestation
+(`cosign verify-attestation --type spdxjson`, same identity and issuer, on the
+platform image's digest).
 
 **Windows**, without cosign: PowerShell's
 `Get-FileHash decrypt_<version>_windows_amd64.zip` prints the SHA-256. It must

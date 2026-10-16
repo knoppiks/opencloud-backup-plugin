@@ -45,6 +45,9 @@ env:
   NODE_VERSION: "24.17.0"
   GORELEASER_VERSION: "v2.18.3"
   SYFT_VERSION: "v1.54.1"
+  # Images are signed with cosign v3, and README tells users to verify them
+  # with v3 or newer (#108): an older cosign does not find v3's signatures.
+  COSIGN_VERSION: "v3.0.6"
 
 jobs:
   # Nothing is built for a ref that is not a release tag of a commit on
@@ -172,6 +175,8 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - uses: sigstore/cosign-installer@v4.1.2 # no major tag upstream
+      with:
+        cosign-release: ${{ env.COSIGN_VERSION }}
 
     - uses: anchore/sbom-action/download-syft@v0
       with:
@@ -272,6 +277,8 @@ jobs:
         syft-version: ${{ env.SYFT_VERSION }}
 
     - uses: sigstore/cosign-installer@v4.1.2 # no major tag upstream
+      with:
+        cosign-release: ${{ env.COSIGN_VERSION }}
 
     - uses: actions/download-artifact@v8
       with:
