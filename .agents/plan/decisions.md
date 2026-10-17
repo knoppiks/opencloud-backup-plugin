@@ -1817,6 +1817,27 @@ None reopens a locked decision.
   with its digest). Until `v0.1.0`, `deploy/` names the newest release
   candidate; Renovate (11.6) takes over the bump.
 
+### Amendments from Phase 11.5 (release notes, #112)
+
+Replaces the planned `CHANGELOG.md` and PR-label categories.
+
+- **The changelog is the GitHub release notes (owner, 2026-10-17)**, built
+  from the issues a release ships, grouped by `kind/`, `hint/Breaking` and
+  `hint/Operator Action` first, then the OpenCloud legs tested by digest.
+  No CHANGELOG file. Generated deterministically; the owner edits the
+  draft. No language model writes them.
+- **Labels on issues, not PRs (owner, 2026-10-17):** `kind/` (exactly one),
+  `aspect/`, `hint/`, `status/`. They live on GitHub only; AGENTS.md
+  describes them.
+- **Milestones are phases, not versions (owner, 2026-10-17).** A release's
+  issues come from what was merged since the previous final tag, so
+  phases and releases need not line up.
+- **Checks (owner, 2026-10-17):** a PR must close an issue of this
+  repository with one `kind/` and a milestone (`pr-issue.yml`, required);
+  a final release refuses an issue without one `kind/`, an rc warns.
+- **`.agents/` leaves git in Phase 13 (owner, 2026-10-17)**, following the
+  knoppiks-home conventions (phase-13 §13.6).
+
 ---
 
 ## Trust & key model

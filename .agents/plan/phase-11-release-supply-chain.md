@@ -249,16 +249,46 @@ The workflow parts (main-reachability guard, re-run without moving a tag,
 
 ## 11.5 Changelog and release notes
 
-Commit subjects are Title Case imperative, not Conventional Commits, so
-prefix-parsing tools do not apply. Instead:
+**Superseded plan:** `.github/release.yml` categories by PR label, a
+curated `CHANGELOG.md`, a PR template. Replaced by the owner (2026-10-17,
+#112): the changelog is the GitHub release notes, built from **issues**.
 
-- `.github/release.yml` — GitHub's generated release notes, categorised by
-  **PR label** (`enhancement`, `bug`, `security`, `breaking`,
-  `opencloud-compat`, `dependencies`, `docs`). Labels already exist for most.
-- `CHANGELOG.md` (Keep a Changelog format), curated at release time from the
-  generated notes: what an operator must do, what a user will notice,
-  OpenCloud versions tested (from `versions.yaml`, by digest).
-- PR template asks for the label and an "operator action needed?" line.
+### Outcome (11.5, #112)
+
+- **Labels** (GitHub only, no file in the repo): `kind/` exactly one
+  (Bug, Feature, Enhancement, Refactoring, Question, Epic), `aspect/` any
+  number (16, incl. project-specific `Web UI`, `Recovery`, `Release`,
+  `OpenCloud Compatibility`), `hint/Breaking`, `hint/Operator Action`,
+  `hint/Good first issue`, `status/` (Duplicate, Invalid, Wontfix, Help
+  wanted, Information Needed). Old labels renamed, so issues kept them.
+- **Milestones = phases** (1–14; 1–10 closed), `Roadmap` for unplanned
+  work. All 54 closed issues backfilled (kind, aspects, phase); #68 (canary
+  dry run) has none and is `status/Invalid`.
+- **Which issues a release ships** (`scripts/release-issues.sh`): closed as
+  completed and not `status/Invalid|Duplicate|Wontfix`, and named by work
+  merged since the previous *final* tag (all history for the first): a
+  merged PR's closing references, a merged PR's branch name (`N-slug`), or
+  a closing keyword in a commit of the range. All three are needed for the
+  history so far (measured on rc.4: closing references alone found 39 of
+  51; ten issues were closed by a commit, several by "Refs" + manual close).
+  An rc's range also starts at the previous final tag.
+- **Notes** (`scripts/release-notes.sh`): Breaking changes, Operators must
+  act, then by kind (Highlights = Epic, Features, Enhancements, Bug fixes,
+  Refactoring, Other), then the OpenCloud legs tested (version, image by
+  digest, from `versions.yaml` at the tag), images, downloads, verification.
+  The owner edits the draft before publishing.
+- **Checks** (`scripts/check-issues.sh`): `pr-issue.yml` refuses a PR
+  that closes no issue, or whose issue lacks exactly one `kind/` or a
+  milestone (bots exempt; re-run after fixing the issue). The release guard
+  refuses a final tag shipping an issue without exactly one `kind/`; an rc
+  only warns.
+- Tests: `test/release/release-issues-test.sh` (throwaway repo + fake `gh`:
+  ranges across an rc, three sources, not-planned/invalid/open left out,
+  other repositories left out), notes and check cases in
+  `release-scripts-test.sh`; both mutation-checked.
+- AGENTS.md: the issue/label/milestone rules and the branch-name rule.
+- **Ruleset:** `closes a ready issue` is to be required once it has run on
+  a PR (a check must have reported before a ruleset can name it).
 
 ## 11.6 Dependency updates and scanning
 
@@ -332,3 +362,5 @@ prefix-parsing tools do not apply. Instead:
 - [ ] Renovate, govulncheck, web audit, image scan active; actions
       SHA-pinned; every job required.
 - [ ] SECURITY.md, CONTRIBUTING.md, templates, CODEOWNERS present.
+- [x] Release notes from the issues a release ships, by kind, with the
+      OpenCloud versions tested; PR and release checks (#112).

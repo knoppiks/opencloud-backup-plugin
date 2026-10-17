@@ -1,0 +1,55 @@
+name: Pull request issue
+
+# A pull request closes at least one issue of this repository ("Closes #N" in
+# its description), and each issue it closes carries exactly one kind/ label
+# and a milestone (its phase). The release notes list a release's issues by
+# kind (#112), so an issue that lacks one would be missing from them or
+# mis-sorted; checking here catches it while the issue is fresh.
+#
+# Labels and milestones live on the issue, which does not trigger this
+# workflow: after fixing the issue, re-run the failed job (or edit the pull
+# request description).
+#
+# Pull requests opened by bots (dependency updates) are exempt; they close no
+# issue and do not appear in the notes.
+on:
+  pull_request:
+    types: [ opened, edited, reopened, synchronize, ready_for_review ]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: pr-issue-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  closes-ready-issue:
+    name: closes a ready issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.user.type != 'Bot'
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: the issues this pull request closes
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO_URL: ${{ github.event.repository.html_url }}
+      run: |
+        mkdir -p dist
+        gh pr view "$PR" --json closingIssuesReferences \
+          | jq -r --arg prefix "$REPO_URL/issues/" \
+              '.closingIssuesReferences[] | select(.url | startswith($prefix)) | .number' \
+          | while read -r n; do
+              gh issue view "$n" --json number,title,labels,milestone \
+                | jq -c '{number, title, labels: [.labels[].name], milestone: (.milestone.title // null)}'
+            done \
+          | jq -s . > dist/pr-issues.json
+        jq -r '.[] | "#\(.number) \(.title): \(.labels | join(", ")); \(.milestone // "no milestone")"' dist/pr-issues.json
+
+    - name: each has one kind and a milestone
+      run: scripts/check-issues.sh -m -e dist/pr-issues.json

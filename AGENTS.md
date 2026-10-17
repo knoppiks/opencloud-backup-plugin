@@ -55,6 +55,32 @@ is*, see `README.md`. For *design decisions and rationale*, see
   `.agents/plan/decisions.md`** (with rationale) rather than diverging quietly.
 - `.agents/` is always writable; keep planning docs in sync with reality.
 
+## Issues, labels, milestones
+
+The release notes are built from the issues a release ships, grouped by
+label (`scripts/release-issues.sh`, `scripts/release-notes.sh`); there is no
+CHANGELOG file. CI refuses a pull request whose closing issue is not ready
+(`pr-issue.yml`), and a final release that ships an issue without a kind.
+
+- **Every issue gets exactly one `kind/`**: `Feature` (new functionality),
+  `Enhancement` (improves existing), `Bug`, `Refactoring` (no behaviour
+  change), `Epic` (a phase-sized issue split into others), `Question`.
+- **Any number of `aspect/`** for the areas it touches (`Core`, `Security`,
+  `Recovery`, `Web UI`, `API`, `Configuration`, `Observability`, `Tests`,
+  `Pipeline`, `Release`, `Repository`, `Documentation`, `Dependencies`,
+  `OpenCloud Compatibility`, `Performance`, `Accessibility`). The labels live
+  on GitHub only; `gh label list` is the reference.
+- **`hint/Breaking`** when an upgrade breaks something that worked, and
+  **`hint/Operator Action`** when an operator must do something on upgrade.
+  Both put the issue at the top of the release notes.
+- **Milestone = the phase** the issue belongs to (`Phase 11: Release & Supply
+  Chain`, …); `Roadmap` for work not yet planned into a phase.
+- **The title is what the release notes print.** Write it for an operator or
+  user reading them: the outcome, not the change.
+- An issue closed without shipping is closed as *not planned*, or labelled
+  `status/Invalid`, `status/Duplicate` or `status/Wontfix`, so the notes
+  leave it out.
+
 ## Secret scanning (CI runs gitleaks on the full history)
 
 CI fails on any gitleaks finding in **any commit**, so a leak cannot be fixed by
@@ -81,6 +107,9 @@ a follow-up edit alone: once committed, it is in history.
 - **Never commit.** The user commits. You may `git add` to stage intended files
   and suggest a concise, imperative commit message (<= 72-char subject).
 - Do not modify git config, skip hooks, force-push, or amend.
+- **A branch is named after its issue**: `<number>-<title-slug>`
+  (`112-write-release-notes-from-the-milestones-issues`). The release notes
+  also find a release's issues by these names.
 - **A new branch tracks its own name on `origin`, never `main`.** Branch off
   `origin/main` without tracking it, then point the upstream at the
   same-named remote branch (it need not exist yet), so the user's plain

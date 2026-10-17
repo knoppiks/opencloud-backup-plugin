@@ -52,11 +52,17 @@ env:
 jobs:
   # Nothing is built for a ref that is not a release tag of a commit on
   # main (review R5: an rc was once tagged on an unmerged branch), nor for a
-  # tag whose release is already published.
+  # tag whose release is already published, nor for a final release that
+  # ships an issue without exactly one kind/ label: the notes group by it
+  # (#112). A release candidate only warns about such issues.
   guard:
     name: release tag on main
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
@@ -88,6 +94,32 @@ jobs:
           exit 1
         fi
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+    # The issues this release ships, for its notes (scripts/release-issues.sh).
+    - name: issues this release ships
+      env:
+        TAG: ${{ steps.tag.outputs.tag }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        mkdir -p dist
+        scripts/release-issues.sh "$TAG" > dist/release-issues.json
+        jq -r '"\(length) issue(s): " + ([.[] | "#\(.number)"] | join(" "))' dist/release-issues.json
+
+    - name: every issue has a kind
+      env:
+        TAG: ${{ steps.tag.outputs.tag }}
+      run: |
+        if [[ $TAG == *-rc.* ]]; then
+          scripts/check-issues.sh -w dist/release-issues.json
+        else
+          scripts/check-issues.sh dist/release-issues.json
+        fi
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: release-issues
+        path: dist/release-issues.json
+        if-no-files-found: error
 
   # The full CI suite, against the tagged commit. Nothing is pushed from a
   # commit that did not pass it, whatever passed on main before.
@@ -292,10 +324,19 @@ jobs:
         path: dist/images
         merge-multiple: true
 
+    # Not under release-assets/: it is not a release asset.
+    - uses: actions/download-artifact@v8
+      with:
+        name: release-issues
+        path: dist
+
+    # The draft's body, which the owner edits before publishing. It is the
+    # changelog: there is no CHANGELOG file (#112).
     - name: image list, release notes
       run: |
         LC_ALL=C sort dist/images/*.txt > dist/release-assets/images.txt
-        scripts/release-notes.sh "$TAG" dist/release-assets/images.txt > dist/release-notes.md
+        scripts/release-notes.sh "$TAG" dist/release-assets/images.txt \
+          dist/release-issues.json internal/ocversion/versions.yaml > dist/release-notes.md
 
     # GORELEASER_CURRENT_TAG: an rc and its release may tag the same commit.
     - name: make release

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Tests the release's shell scripts (phase-11 §11.3, #104):
+# Tests the release's shell scripts (phase-11 §11.3, #104; §11.5, #112):
 #
 #   scripts/image-tags.sh            which tags a published release gets
-#   scripts/release-notes.sh         refuses an image list that is not by digest
+#   scripts/release-notes.sh         what changed by kind, OpenCloud legs; refuses
+#                                    an image list not by digest, a bad issue list
+#   scripts/check-issues.sh          one kind/ per issue, milestones, warn mode
 #   scripts/verify-release.sh        the checksum half refuses a changed asset
 #                                    and an empty download; the signature half
 #                                    cannot be skipped by accident
@@ -62,7 +64,24 @@ expect_refused "image-tags without a tag" "$scripts/image-tags.sh"
 digest=sha256:$(printf 'x' | sha256sum | cut -d' ' -f1)
 printf '%s\n' "ghcr.io/knoppiks/opencloud-backupd@$digest" \
 	"ghcr.io/knoppiks/opencloud-backup-vault-web@$digest" >"$work/images.txt"
-notes=$("$scripts/release-notes.sh" v1.2.3 "$work/images.txt")
+versions=$root/internal/ocversion/versions.yaml
+cat >"$work/issues.json" <<'JSON'
+[
+  {"number": 7, "title": "Fix A Thing", "labels": ["kind/Bug", "aspect/Core"], "milestone": "Phase 2"},
+  {"number": 3, "title": "Add A Feature", "labels": ["kind/Feature"], "milestone": "Phase 2"},
+  {"number": 9, "title": "Rename A Setting", "labels": ["kind/Enhancement", "hint/Breaking", "hint/Operator Action"], "milestone": "Phase 2"},
+  {"number": 5, "title": "Unkinded", "labels": ["aspect/Core"], "milestone": null},
+  {"number": 2, "title": "A Bigger Piece", "labels": ["kind/Epic"], "milestone": "Phase 2"}
+]
+JSON
+echo '[]' >"$work/none.json"
+# release_notes TAG [IMAGES] [ISSUES]; an empty argument takes the default.
+release_notes() {
+	local images=${2:-$work/images.txt} issues=${3:-$work/issues.json}
+	"$scripts/release-notes.sh" "$1" "$images" "$issues" "$versions"
+}
+
+notes=$(release_notes v1.2.3)
 grep -qxF "ghcr.io/knoppiks/opencloud-backupd@$digest" <<<"$notes" || fail "notes lack the backupd digest"
 grep -qxF "ghcr.io/knoppiks/opencloud-backup-vault-web@$digest" <<<"$notes" || fail "notes lack the web digest"
 grep -qF "release.yml@refs/tags/v1.2.3" <<<"$notes" || fail "notes lack the signing identity"
@@ -71,15 +90,60 @@ grep -q "Pre-release" <<<"$notes" && fail "notes of v1.2.3 call it a pre-release
 grep -qF "v2.4 or newer" <<<"$notes" || fail "notes do not name the cosign version for files"
 grep -qF "cosign v3 or newer" <<<"$notes" || fail "notes do not name the cosign version for images"
 grep -qF "no signatures found" <<<"$notes" || fail "notes do not explain an older cosign's answer"
-notes=$("$scripts/release-notes.sh" v1.2.3-rc.1 "$work/images.txt")
+
+# What changed (#112): sections in this order, only the non-empty ones, each
+# issue under its kind, hinted ones also on top.
+sections=$(grep '^### ' <<<"$notes" | tr '\n' '|')
+want='### Breaking changes|### Operators must act when upgrading|### Highlights|### Features|### Enhancements|### Bug fixes|### Other|'
+[ "$sections" = "$want" ] || fail "notes sections: got '$sections', want '$want'"
+section_of() { awk -v item="- $1" '/^### /{s=$0} $0==item{print s}' <<<"$notes" | tr '\n' '|'; }
+[ "$(section_of "Fix A Thing #7")" = "### Bug fixes|" ] || fail "#7 is under '$(section_of "Fix A Thing #7")'"
+[ "$(section_of "Rename A Setting #9")" = "### Breaking changes|### Operators must act when upgrading|### Enhancements|" ] ||
+	fail "#9 is under '$(section_of "Rename A Setting #9")'"
+[ "$(section_of "Unkinded #5")" = "### Other|" ] || fail "#5 is under '$(section_of "Unkinded #5")'"
+[ "$(section_of "A Bigger Piece #2")" = "### Highlights|" ] || fail "#2 is under '$(section_of "A Bigger Piece #2")'"
+
+# Tested OpenCloud versions: every leg of versions.yaml, by digest.
+legs=0
+while IFS=$'\t' read -r octag image legdigest; do
+	legs=$((legs + 1))
+	grep -qF "| $octag | \`$image@$legdigest\` |" <<<"$notes" || fail "notes lack OpenCloud $octag ($image@$legdigest)"
+done < <(yq -o=tsv '.legs[] | [.tag, .image, .digest]' <"$versions")
+[ "$legs" -gt 0 ] || fail "read no OpenCloud legs from versions.yaml"
+
+notes=$(release_notes v1.2.3 "" "$work/none.json")
+grep -qF "No issues closed since the previous release." <<<"$notes" || fail "notes without issues do not say so"
+grep -q '^### ' <<<"$notes" && fail "notes without issues have sections"
+
+notes=$(release_notes v1.2.3-rc.1)
 grep -q "Pre-release" <<<"$notes" || fail "notes of v1.2.3-rc.1 do not call it a pre-release"
 
 echo "ghcr.io/knoppiks/opencloud-backupd:1.2.3" >"$work/by-tag.txt"
-expect_refused "release-notes with an image by tag" "$scripts/release-notes.sh" v1.2.3 "$work/by-tag.txt"
+expect_refused "release-notes with an image by tag" release_notes v1.2.3 "$work/by-tag.txt"
 : >"$work/empty.txt"
-expect_refused "release-notes with no images" "$scripts/release-notes.sh" v1.2.3 "$work/empty.txt"
+expect_refused "release-notes with no images" release_notes v1.2.3 "$work/empty.txt"
 cat "$work/images.txt" "$work/by-tag.txt" >"$work/mixed.txt"
-expect_refused "release-notes with one image by tag" "$scripts/release-notes.sh" v1.2.3 "$work/mixed.txt"
+expect_refused "release-notes with one image by tag" release_notes v1.2.3 "$work/mixed.txt"
+echo '{"not": "a list"}' >"$work/bad.json"
+expect_refused "release-notes with a malformed issue list" release_notes v1.2.3 "" "$work/bad.json"
+
+# --- check-issues ---------------------------------------------------------------
+check_issues() { "$scripts/check-issues.sh" "$@" >/dev/null 2>&1; }
+echo '[{"number": 1, "title": "Ready", "labels": ["kind/Bug", "aspect/Core"], "milestone": "Phase 11"}]' >"$work/ready.json"
+echo '[{"number": 1, "title": "Two", "labels": ["kind/Bug", "kind/Feature"], "milestone": "Phase 11"}]' >"$work/two-kinds.json"
+echo '[{"number": 1, "title": "Loose", "labels": ["kind/Bug"], "milestone": null}]' >"$work/no-milestone.json"
+check_issues -m -e "$work/ready.json" || fail "check-issues refused a ready issue"
+check_issues "$work/none.json" || fail "check-issues refused a release without issues"
+check_issues "$work/no-milestone.json" || fail "check-issues wants a milestone without -m"
+expect_refused "check-issues: no kind/" check_issues "$work/issues.json"
+expect_refused "check-issues: two kind/" check_issues "$work/two-kinds.json"
+expect_refused "check-issues -m: no milestone" check_issues -m "$work/no-milestone.json"
+expect_refused "check-issues -e: closes nothing" check_issues -e "$work/none.json"
+check_issues -w "$work/two-kinds.json" || fail "check-issues -w failed instead of warning"
+out=$("$scripts/check-issues.sh" -w "$work/two-kinds.json" 2>&1)
+grep -qF '::warning::#1 Two: has 2 kind/ labels' <<<"$out" || fail "check-issues -w does not warn: $out"
+out=$("$scripts/check-issues.sh" "$work/two-kinds.json" 2>&1 || true)
+grep -qF '::error::#1 Two' <<<"$out" || fail "check-issues does not report an error: $out"
 
 # --- verify-release (checksums) -----------------------------------------------
 dl=$work/download
