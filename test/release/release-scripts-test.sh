@@ -5,6 +5,7 @@
 #   scripts/release-notes.sh         what changed by kind, OpenCloud legs; refuses
 #                                    an image list not by digest, a bad issue list
 #   scripts/check-issues.sh          one kind/ per issue, milestones, warn mode
+#   scripts/check-release-notes.sh   the draft carries the notes it was given
 #   scripts/verify-release.sh        the checksum half refuses a changed asset
 #                                    and an empty download; the signature half
 #                                    cannot be skipped by accident
@@ -126,6 +127,23 @@ cat "$work/images.txt" "$work/by-tag.txt" >"$work/mixed.txt"
 expect_refused "release-notes with one image by tag" release_notes v1.2.3 "$work/mixed.txt"
 echo '{"not": "a list"}' >"$work/bad.json"
 expect_refused "release-notes with a malformed issue list" release_notes v1.2.3 "" "$work/bad.json"
+
+# --- check-release-notes --------------------------------------------------------
+# A fake GitHub CLI whose releases API returns $BODY as the draft's body.
+cat >"$work/gh-notes" <<'SH'
+#!/usr/bin/env bash
+jq -n --arg body "$BODY" '[{tag_name: "v1.2.3-rc.1", draft: true, body: $body},
+	{tag_name: "v1.2.2", draft: false, body: "older"}] | .[] | select(.tag_name == "v1.2.3-rc.1" and .draft) | .body' -r
+SH
+chmod +x "$work/gh-notes"
+printf '## What changed\n\n- Fix A Thing #7\n' >"$work/notes.md"
+check_notes() { GH=$work/gh-notes BODY=$1 "$scripts/check-release-notes.sh" v1.2.3-rc.1 "$work/notes.md" >/dev/null 2>&1; }
+check_notes $'## What changed\r\n\r\n- Fix A Thing #7\r\n' || fail "check-release-notes refused the notes with CRLF line endings"
+expect_refused "check-release-notes: empty body (GoReleaser dropped the notes)" check_notes $'\n'
+expect_refused "check-release-notes: other body" check_notes "## Changelog"
+: >"$work/empty-notes.md"
+expect_refused "check-release-notes: empty notes file" \
+	env GH="$work/gh-notes" BODY="" "$scripts/check-release-notes.sh" v1.2.3-rc.1 "$work/empty-notes.md"
 
 # --- check-issues ---------------------------------------------------------------
 check_issues() { "$scripts/check-issues.sh" "$@" >/dev/null 2>&1; }

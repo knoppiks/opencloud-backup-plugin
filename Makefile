@@ -108,6 +108,7 @@ release:
 	@[ -n "$(RELEASE_NOTES)" ] || { echo "release: RELEASE_NOTES is not set" >&2; exit 1; }
 	$(GORELEASER_ENV) $(GORELEASER) release --clean --release-notes "$(RELEASE_NOTES)"
 	DECRYPT_PLATFORMS="$(DECRYPT_PLATFORMS)" scripts/check-release-assets.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
+	scripts/check-release-notes.sh "$(VERSION)" "$(RELEASE_NOTES)"
 
 # The web bundle as a release asset, for an install without the
 # initContainer image: backup-vault/ holding the bundle, its notices and the
