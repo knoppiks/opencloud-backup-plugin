@@ -115,8 +115,29 @@ page is stale:
 - In-app help: each Backup Vault page links to its docs page **for the
   bundle's own version** (`/vX.Y/…`, `/next/…` for dev builds); the
   Recovery Key page and the key-file text link to "get `decrypt`".
-- `.agents/plan/` stays the design record; the site never links into it for
-  user-facing facts.
+- The site never links into `.agents/plan/`, which leaves git in 13.6.
+
+## 13.6 Move `.agents/` out of git (owner, 2026-10-17)
+
+Following the knoppiks-home group conventions: open work lives in issues,
+`.agents/plan/` is per-session scratch and not committed, anything lasting
+goes to `README.md`, `docs/` or `AGENTS.md`. Plans are chains of
+corrections; content is checked and rewritten as current state, never
+copied.
+
+- Lasting design and contracts (trust/key model, threat model, key
+  envelope format, compatibility policy, restore contract) → `docs/` (the
+  docs site from 13.1–13.4).
+- Hard constraints and agent traps → `AGENTS.md`, plus the group's docs
+  style rules (current state only, derive values, mark the unmeasured).
+- Open work (rest of phases 11–14, backlog) → issues in the phase
+  milestones.
+- Finished phases, reviews, findings, the decision log's history: not
+  migrated; issues, pull requests and `git log` hold them.
+- References from code and tests (`internal/ocversion/repo_test.go`,
+  `web/src/crypto/envelope.ts`, the fixture Caddyfile, `.dockerignore`,
+  README) point at the new paths.
+- Then `.agents/` is ignored and removed from the index (history kept).
 
 ## Exit criteria
 

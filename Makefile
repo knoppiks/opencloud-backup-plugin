@@ -83,6 +83,7 @@ release-snapshot: ## Build every release asset locally (no signing, no upload) a
 	$(GORELEASER_ENV) $(GORELEASER) release --snapshot --clean --skip=sign
 	DECRYPT_PLATFORMS="$(DECRYPT_PLATFORMS)" scripts/check-release-assets.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
 	test/release/release-scripts-test.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
+	test/release/release-issues-test.sh
 
 # The release's shell scripts (tags, notes, verification), and that the
 # asset check still refuses damaged assets; the latter part runs inside
@@ -90,6 +91,14 @@ release-snapshot: ## Build every release asset locally (no signing, no upload) a
 .PHONY: release-scripts-test
 release-scripts-test: ## Test the release's shell scripts.
 	test/release/release-scripts-test.sh
+	test/release/release-issues-test.sh
+
+# The issues TAG ships, and the release notes' "What changed" for it, from
+# GitHub (needs gh signed in). Shows what a release would say before tagging.
+.PHONY: release-issues
+release-issues: ## Print the issues TAG ships (a tag, or HEAD to preview; queries GitHub).
+	@[ -n "$(TAG)" ] || { echo "release-issues: set TAG=vX.Y.Z (or HEAD)" >&2; exit 1; }
+	scripts/release-issues.sh $(TAG)
 
 # The release itself (release.yml): VERSION must be the tag on HEAD, the
 # tree clean, RELEASE_NOTES rendered, GITHUB_TOKEN and cosign's OIDC
