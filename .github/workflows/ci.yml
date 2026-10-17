@@ -403,6 +403,13 @@ jobs:
     - name: validate manifests
       run: kubeconform -strict -summary deploy/
 
+    # The manifests name only published versions of the images (#110): a
+    # tag that was never released, or `latest`, fails here. Nightly too, so
+    # a tag removed from the registry is noticed. docker buildx and jq are
+    # preinstalled; ghcr.io serves public images without a login.
+    - name: images are published
+      run: make deploy-images
+
   # The Go side of the license audit (phase-11 §11.1): every program on every
   # platform anything ships for, against the allow-list, and the probe that
   # proves the check still refuses. The bundle is audited by its own build

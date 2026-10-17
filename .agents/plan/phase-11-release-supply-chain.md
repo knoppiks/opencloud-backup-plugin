@@ -225,6 +225,28 @@ The workflow parts (main-reachability guard, re-run without moving a tag,
 - `deploy/` image references updated by the release (or by Renovate after it)
   so a manifest never names a tag that does not exist.
 
+### Outcome (11.4, #110)
+
+- **Two tag rulesets** (applied 2026-10-16 via the API; a bypass covers a
+  whole ruleset, so one could not both let the owner create and forbid him
+  to move):
+  - "Release tags are immutable" (25254674): `refs/tags/v*`, `update`,
+    `deletion`, `non_fast_forward`, **no bypass**, the owner included.
+    A wrong tag is fixed with the next version (as rc.3 → rc.4), or by
+    switching the ruleset off on purpose.
+  - "Release tags are created by the owner" (25254676): `refs/tags/v*`,
+    `creation`, bypass: repository admin role.
+  Not probed with a test tag: a protected probe could never be removed.
+- **`deploy/` names published images only.** No bot writes to `main`: the
+  release does not bump `deploy/`. Instead `scripts/check-deploy-images.sh`
+  (CI job `k8s manifests`, PRs and nightly; `make deploy-images`) fails on
+  any image of this project in `deploy/` that is not a version tag
+  (`X.Y.Z[-rc.N]`, optional `@sha256:`), is not in the registry, or whose
+  pinned digest differs. Tested offline against a fake registry
+  (`test/release/deploy-images-test.sh`, 11 cases). `deploy/` moved from the
+  never-published `0.1.0` to `0.1.0-rc.4`; the bump after a release is
+  manual until Renovate (11.6) does it.
+
 ## 11.5 Changelog and release notes
 
 Commit subjects are Title Case imperative, not Conventional Commits, so
@@ -241,7 +263,8 @@ prefix-parsing tools do not apply. Instead:
 ## 11.6 Dependency updates and scanning
 
 - **Renovate** (`renovate.json`): gomod, npm/pnpm, Dockerfile digests,
-  compose images (fixture and add-on), GitHub Actions (pinned by SHA),
+  compose images (fixture and add-on), this project's own images in
+  `deploy/` after a release (11.4 leaves that bump manual), GitHub Actions (pinned by SHA),
   `versions.yaml` OpenCloud digests (custom manager), Go toolchain line,
   `GO_VERSION`/`NODE_VERSION` in `ci.yml` (custom regex manager). Grouped
   weekly; security updates immediately. **OpenCloud digest bumps are never
@@ -288,11 +311,15 @@ prefix-parsing tools do not apply. Instead:
 
 1. All of the above merged; CI green on every required job.
 2. Tag `v0.1.0` on `main`; draft release reviewed; published.
+   Then bump `deploy/` to `0.1.0` (a PR; the check refuses it before the
+   release is published).
 3. Verify from a clean machine: download `decrypt`, verify checksum and
    cosign signature, open the frozen Take-Out fixture (Phase 10) with it.
 4. Deploy to the owner's OpenCloud by digest from the release notes.
 5. Delete the `v0.1.0-rc.*` images or leave them marked pre-release (owner's
-   call; tags stay in git).
+   call; tags stay in git, and cannot be deleted under the 11.4 ruleset).
+   Only after step 2's `deploy/` bump: the nightly check fails while
+   `deploy/` names a deleted image.
 
 ## Exit criteria
 

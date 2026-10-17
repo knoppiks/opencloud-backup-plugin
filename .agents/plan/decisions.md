@@ -1803,6 +1803,20 @@ None reopens a locked decision. Takes over the release-workflow parts of
   the release notes name another major. Bumping the major is therefore a
   documented change for users, not a silent one.
 
+### Amendments from Phase 11.4 (tags and manifests, #110)
+
+None reopens a locked decision.
+
+- **Release tags are immutable for everyone, the owner included (owner,
+  2026-10-16).** Two rulesets on `refs/tags/v*`: no update, deletion or
+  force push, with no bypass; creation by the repository admin role only.
+  A mistaken tag is superseded by the next version, never re-pointed.
+- **`deploy/` is checked, not written by the release (owner, 2026-10-16).**
+  No workflow commits to `main`. CI refuses a manifest naming this
+  project's images at anything but a published version tag (optionally
+  with its digest). Until `v0.1.0`, `deploy/` names the newest release
+  candidate; Renovate (11.6) takes over the bump.
+
 ---
 
 ## Trust & key model
