@@ -107,6 +107,17 @@ a follow-up edit alone: once committed, it is in history.
 - **Never commit.** The user commits. You may `git add` to stage intended files
   and suggest a concise, imperative commit message (<= 72-char subject).
 - Do not modify git config, skip hooks, force-push, or amend.
+- **Unattended sessions work in a worktree, never in the main checkout.** The
+  main checkout belongs to the user and may hold their uncommitted work. The
+  unattended driver gives each session its own worktree under
+  `../opencloud-backup-plugin.worktrees/`; work and test only there, and never
+  `checkout`, `stash`, `reset` or `clean` in the main checkout. Interactive
+  sessions work in the main checkout as usual.
+- **Unattended sessions do not sign commits.** Where an unattended run is
+  explicitly permitted to commit, pass `--no-gpg-sign` to every `git commit`
+  (including `--amend`): nobody is there to enter the key passphrase, and a
+  signing prompt would hang the session. Do not change `commit.gpgsign` in git
+  config to achieve this.
 - **A branch is named after its issue**: `<number>-<title-slug>`
   (`112-write-release-notes-from-the-milestones-issues`). The release notes
   also find a release's issues by these names.

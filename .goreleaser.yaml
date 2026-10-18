@@ -138,10 +138,15 @@ signs:
   args: [ sign-blob, "--bundle=${signature}", "${artifact}", --yes ]
   output: true
 
-# Notes come from release.yml (scripts/release-notes.sh): verification steps
-# and image digests. Categorised change notes are phase-11 §11.5.
+# The notes come from release.yml (scripts/release-notes.sh, through
+# `make release RELEASE_NOTES=…`). NOT `disable: true`: GoReleaser reads
+# --release-notes inside its changelog step, so disabling the step drops the
+# notes and the draft gets an empty body (it did for rc.4 and rc.5). Given a
+# notes file, the step uses it and builds no changelog of its own.
+# `make release` refuses to run without one, and check-release-notes.sh
+# checks the draft's body afterwards.
 changelog:
-  disable: true
+  disable: false
 
 release:
   github:

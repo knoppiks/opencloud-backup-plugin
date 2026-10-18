@@ -287,8 +287,17 @@ curated `CHANGELOG.md`, a PR template. Replaced by the owner (2026-10-17,
   other repositories left out), notes and check cases in
   `release-scripts-test.sh`; both mutation-checked.
 - AGENTS.md: the issue/label/milestone rules and the branch-name rule.
-- **Ruleset:** `closes a ready issue` is to be required once it has run on
-  a PR (a check must have reported before a ruleset can name it).
+- **Ruleset:** `closes a ready issue` is required on `main` (ruleset
+  "Default", 2026-10-17, after its first run on #113).
+- **Walked with `v0.1.0-rc.5` (2026-10-17, #114):** guard found 54 issues,
+  all with one `kind/`; notes generated. **The draft's body was empty**, as
+  rc.4's had been: GoReleaser reads `--release-notes` inside its changelog
+  step, and `changelog.disable: true` skipped that step (reproduced
+  locally: "skipped generating changelog" vs. "loading file … read 30
+  bytes"). Fixed with `disable: false` (a given notes file is used as is,
+  no changelog of GoReleaser's own); `make release` now runs
+  `scripts/check-release-notes.sh`, which fails unless the draft carries
+  the notes. rc.6 walks the notes again.
 
 ## 11.6 Dependency updates and scanning
 
