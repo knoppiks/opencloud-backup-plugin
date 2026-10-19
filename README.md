@@ -803,6 +803,26 @@ Every request the browser sends is checked for any form of any Recovery Key
 shown. Set `E2E_CHROME=/usr/bin/google-chrome` to use a system Chrome instead of
 Playwright's.
 
+## Dependencies and known vulnerabilities
+
+Renovate proposes dependency updates as pull requests (`renovate.json`):
+weekly and grouped, security fixes at once. Nothing is merged automatically.
+An update of the OpenCloud versions under test never will be, because every
+OpenCloud release may change the CS3 interface the plugin relies on. GitHub
+Actions are pinned to commits.
+
+CI checks for known vulnerabilities on every pull request, every night, and
+before a release is signed:
+
+| Check | Fails on | Lists |
+|---|---|---|
+| `make vulncheck` (govulncheck) | a vulnerability the Go programs can reach, on any platform they ship for | — |
+| `make web-audit` (osv-scanner) | a high, critical, unrated or malicious finding in a package the web bundle ships | everything else in the lockfile |
+| `make image-scan` (Trivy) | a critical vulnerability with a fix, in either image | every high and critical one |
+
+A finding judged harmless is ignored with a reason and an expiry date, in
+`web/osv-scanner.toml` or `.trivyignore.yaml`.
+
 ## Documentation
 
 - Environment reference (generated):

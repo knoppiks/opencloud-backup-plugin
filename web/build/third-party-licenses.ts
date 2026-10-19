@@ -17,8 +17,17 @@
 // - a module cannot be traced to our sources or to a package.
 //
 // Otherwise it writes THIRD_PARTY_NOTICES next to manifest.json, so the
-// notices travel with the bundle into OpenCloud's apps directory.
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
+// notices travel with the bundle into OpenCloud's apps directory, and the
+// list of bundled packages to BUNDLED_PACKAGES_FILE, outside the bundle, for
+// the vulnerability audit (vulnerability-audit.ts).
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync
+} from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import type { Plugin } from 'vite'
 
@@ -304,6 +313,28 @@ export function renderNotices(packages: readonly BundledPackage[]): string {
 
 export const NOTICES_FILE = 'THIRD_PARTY_NOTICES'
 
+// The bundle's packages, for the vulnerability audit (phase-11 §11.6, #116):
+// written beside the build, outside the bundle, relative to the web root.
+export const BUNDLED_PACKAGES_FILE = 'node_modules/.cache/backup-vault/bundled-packages.json'
+
+export interface BundledPackageRef {
+  name: string
+  version: string
+  // True when none of the package's own files are in the bundle, only code a
+  // build tool of it generated (vite's preload helper, Tailwind's output).
+  generatedOnly: boolean
+}
+
+export function bundledPackageRefs(packages: readonly BundledPackage[]): BundledPackageRef[] {
+  return packages
+    .map((pkg) => ({
+      name: pkg.name,
+      version: pkg.version,
+      generatedOnly: pkg.modules.length === 0
+    }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}
+
 // bundledModuleIds lists the modules of every chunk in the output.
 function bundledModuleIds(bundle: Record<string, unknown>): Set<string> {
   const ids = new Set<string>()
@@ -369,6 +400,9 @@ export function thirdPartyLicenses(): Plugin {
         this.error(`third-party licenses:\n  ${problems.join('\n  ')}`)
       }
       this.emitFile({ type: 'asset', fileName: NOTICES_FILE, source: renderNotices(bundled) })
+      const packagesFile = join(root, BUNDLED_PACKAGES_FILE)
+      mkdirSync(dirname(packagesFile), { recursive: true })
+      writeFileSync(packagesFile, JSON.stringify(bundledPackageRefs(bundled), null, 2) + '\n')
     }
   }
 }

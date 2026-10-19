@@ -313,6 +313,60 @@ curated `CHANGELOG.md`, a PR template. Replaced by the owner (2026-10-17,
 - `pnpm audit --prod` / osv-scanner for the web — blocking on high.
 - Trivy (or grype) on both built images — blocking on fixable critical.
 
+### Outcome (11.6, #116)
+
+Owner's choices (2026-10-19): hosted Mend app; Trivy; the web audit judged
+against the bundle; no automerge; actions pinned by Renovate.
+
+- **`renovate.json`:** `config:recommended` +
+  `helpers:pinGitHubActionDigests`; weekly (Monday before 07:00 Berlin),
+  vulnerability alerts (GitHub + OSV) at any time; lock file maintenance;
+  `gomodTidy`; `ignorePaths` narrowed so `test/` (Caddy in the fixture) is
+  seen. Groups: Go toolchain (go.mod `toolchain`, both Dockerfiles, four
+  workflows: one branch, measured), Node, Go modules (kopia and CS3 APIs
+  apart), web dependencies, GitHub Actions, build and scan tools, base
+  images, deploy manifests, OpenCloud SDKs. The `go` directive is not
+  bumped.
+- **Custom managers:** `# renovate: datasource=… depName=…` above each
+  pinned tool version (workflows, Makefile, scripts), `# renovate:
+  datasource=docker` above each scanner image; Garage in
+  `internal/testutil/garage.go`; the OpenCloud legs in `versions.yaml`
+  (tag + digest). Per policy §3: `oldest` gets digest updates only,
+  `previous-major` no major, a future `production` patches only, `newest`
+  anything; never automerged, with a note to update README and the policy.
+  Kubernetes manager over `deploy/` (this project's image, after a
+  release).
+- **Checks on the config:** `make renovate-config` (pinned validator,
+  strict; CI job `renovate config`); `TestEveryPinnedToolVersionIsAnnotated
+  ForRenovate` fails on a pin without an annotation (mutation-checked);
+  `TestGarageIsTheSameEverywhere`. A local `renovate --platform=local
+  --dry-run=full` produced 24 branches; the leg rules held back
+  `oldest`/`previous-major` moves.
+- **`make vulncheck`** (govulncheck v1.9.0, `./cmd/...`, five platforms; CI
+  `known vulnerabilities (Go)`). First run: 7 reachable in x/net, grpc,
+  x/text; fixed here (x/net v0.60.0, grpc v1.83.1, x/text v0.42.0, x/crypto
+  v0.57.0 with them). `./...` would also scan `internal/testutil`, which
+  ships nowhere.
+- **`make web-audit`** (osv-scanner v2.7.0 image; CI `known vulnerabilities
+  (web bundle)`): the license plugin also writes the bundled package list
+  (`node_modules/.cache/backup-vault/bundled-packages.json`, 11 packages,
+  3 generated-only); `web/build/vulnerability-audit.ts` decides. First run:
+  49 findings, all in tooling (axios, adm-zip, happy-dom, ws, …), 0
+  blocking.
+- **`make image-scan`** (Trivy 0.76.0 image; in CI's `image` job, and in
+  `release.yml` on both platform digests before signing) and **`make
+  image-scan-probe`**: a stand-in image claiming a vulnerable zlib must
+  fail, its patched twin pass. First run: no critical; 7 HIGH in Go
+  modules of `backupd`/`takeout`, fixed by the bumps above.
+- **Dependabot alerts** enabled (2026-10-19, API).
+- Ignore files when needed: `web/osv-scanner.toml`, `.trivyignore.yaml`
+  (reason, expiry). Neither exists yet.
+- **For the owner:** install the Mend Renovate app on the repository
+  after merging (the config is read from `main`; no onboarding PR). Add
+  the three new jobs to the ruleset (or leave it to 11.7). Renovate's
+  pull requests close no issue, so they are not in the release notes;
+  `pr-issue.yml` exempts bots.
+
 ## 11.7 CI hardening
 
 - All actions pinned by full SHA (Renovate keeps them current); same majors

@@ -1,0 +1,269 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Dependency updates (phase-11 §11.6, #116). Weekly, grouped; security fixes at once.",
+    "Nothing is merged automatically: only some CI jobs are required yet (§11.7).",
+    "OpenCloud legs, the web SDK and the CS3 APIs are the compatibility risk (compatibility-policy §4): never automerged, ever.",
+    "Versions in workflows, the Makefile and scripts are found through a `# renovate:` line above them (internal/buildinfo/renovate_test.go)."
+  ],
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "semanticCommits": "disabled",
+  "timezone": "Europe/Berlin",
+  "schedule": [
+    "* 0-6 * * 1"
+  ],
+  "automerge": false,
+  "ignorePaths": [
+    "**/node_modules/**"
+  ],
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "* 0-6 * * 1"
+    ]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": [
+      "at any time"
+    ],
+    "minimumReleaseAge": null
+  },
+  "osvVulnerabilityAlerts": true,
+  "kubernetes": {
+    "managerFilePatterns": [
+      "/^deploy/.+\\.ya?ml$/"
+    ]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Annotated versions: `# renovate: datasource=… depName=… [extractVersion=…]` above `NAME: \"1.2.3\"`, `NAME ?= 1.2.3` or `NAME=1.2.3`.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/",
+        "/^Makefile$/",
+        "/^scripts/[^/]+\\.sh$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s*\\n\\s*[A-Z][A-Z0-9_]*(?:: \"|\\s*\\?=\\s*|=)(?<currentValue>[^\"\\s@]+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Annotated images: `# renovate: datasource=docker` above `NAME ?= image:tag@sha256:…`.",
+      "managerFilePatterns": [
+        "/^Makefile$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=docker\\s*\\n[A-Z][A-Z0-9_]*\\s*\\?=\\s*(?<depName>[^\\s:@]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "The Garage image the integration tests start.",
+      "managerFilePatterns": [
+        "/^internal/testutil/garage\\.go$/"
+      ],
+      "matchStrings": [
+        "const GarageImage = \"(?<depName>[^\":]+):(?<currentValue>[^\"@]+)\""
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "The OpenCloud legs CI tests against, by tag and index digest. The canary has no digest and is not matched.",
+      "managerFilePatterns": [
+        "/^internal/ocversion/versions\\.yaml$/"
+      ],
+      "matchStrings": [
+        "- name: (?<leg>oldest|previous-major|newest|production)\\n\\s+channel: \\S+\\n\\s+image: (?<packageName>\\S+)\\n\\s+tag: (?<currentValue>\\S+)\\n\\s+digest: (?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "depNameTemplate": "OpenCloud {{{leg}}} leg",
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Supply chain: a version must have been public for three days, so a hijacked release is usually withdrawn before it is proposed. Not for security fixes (vulnerabilityAlerts).",
+      "matchDatasources": [
+        "npm",
+        "go"
+      ],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "The go directive is the minimum for `go install` users; it moves on purpose, not with every bump.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "One Go toolchain everywhere: go.mod's toolchain, the images' build stage, every workflow (TestToolchainIsTheSameEverywhere).",
+      "matchDepNames": [
+        "go",
+        "golang"
+      ],
+      "groupName": "Go toolchain"
+    },
+    {
+      "description": "One Node everywhere: the workflows and the web image's build stage.",
+      "matchDepNames": [
+        "node"
+      ],
+      "groupName": "Node"
+    },
+    {
+      "description": "Go modules, minor and patch, in one weekly pull request. kopia (repository format, data crypto) and the CS3 APIs get their own.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepTypes": [
+        "require",
+        "indirect"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "groupName": "Go modules",
+      "matchPackageNames": [
+        "!github.com/kopia/kopia",
+        "!github.com/cs3org/**"
+      ]
+    },
+    {
+      "description": "The web extension's dependencies, minor and patch, in one weekly pull request.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "web dependencies",
+      "matchPackageNames": [
+        "!@opencloud-eu/**"
+      ]
+    },
+    {
+      "description": "GitHub Actions, in one weekly pull request, pinned by commit.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pinDigest"
+      ],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Build, release and scanning tools pinned in workflows, the Makefile and scripts.",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchFileNames": [
+        ".github/workflows/**",
+        "Makefile",
+        "scripts/**"
+      ],
+      "matchDepNames": [
+        "!go",
+        "!node"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "groupName": "build and scan tools"
+    },
+    {
+      "description": "The images' base images (the build stages follow the toolchain groups).",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchDepNames": [
+        "!golang",
+        "!node"
+      ],
+      "groupName": "base images"
+    },
+    {
+      "description": "This project's own images in deploy/: the bump after a release (#110). check-deploy-images.sh refuses anything unpublished.",
+      "matchManagers": [
+        "kubernetes"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/knoppiks/**"
+      ],
+      "groupName": "deploy manifests",
+      "pinDigests": false
+    },
+    {
+      "description": "OpenCloud: every release may change CS3, which is not a public interface (compatibility-policy §4). Never automerged; a bump updates README's supported range and the policy's table too.",
+      "matchFileNames": [
+        "internal/ocversion/versions.yaml"
+      ],
+      "automerge": false,
+      "prBodyNotes": [
+        "**OpenCloud leg.** Never merged automatically (compatibility-policy.md §4). Update README's supported sentence (`TestREADMESupportedSentence`) and the policy's version table in this pull request, and check the whole matrix."
+      ]
+    },
+    {
+      "description": "oldest: the first release of the previous major. It moves with a new major, by hand (compatibility-policy §3); only a re-pushed digest is proposed.",
+      "matchDepNames": [
+        "OpenCloud oldest leg"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor",
+        "patch"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "previous-major: the newest minor of the previous major; a new major moves it by hand.",
+      "matchDepNames": [
+        "OpenCloud previous-major leg"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "production: the newest patch of the current Production line; a new line moves it by hand.",
+      "matchDepNames": [
+        "OpenCloud production leg"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "OpenCloud's web packages and the CS3 APIs follow OpenCloud: their own pull request, never automerged.",
+      "matchPackageNames": [
+        "@opencloud-eu/**",
+        "github.com/cs3org/**"
+      ],
+      "groupName": "OpenCloud SDKs",
+      "automerge": false
+    }
+  ]
+}

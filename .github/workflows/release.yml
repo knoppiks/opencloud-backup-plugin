@@ -41,12 +41,17 @@ concurrency:
 
 env:
   # Keep in step with ci.yml (internal/buildinfo/toolchain_test.go).
+  # renovate: datasource=golang-version depName=go
   GO_VERSION: "1.26.9"
+  # renovate: datasource=node-version depName=node
   NODE_VERSION: "24.17.0"
+  # renovate: datasource=github-releases depName=goreleaser/goreleaser
   GORELEASER_VERSION: "v2.18.3"
+  # renovate: datasource=github-releases depName=anchore/syft
   SYFT_VERSION: "v1.54.1"
   # Images are signed with cosign v3, and README tells users to verify them
   # with v3 or newer (#108): an older cosign does not find v3's signatures.
+  # renovate: datasource=github-releases depName=sigstore/cosign
   COSIGN_VERSION: "v3.0.6"
 
 jobs:
@@ -206,7 +211,8 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - uses: sigstore/cosign-installer@v4.1.2 # no major tag upstream
+    # No major tag upstream: pinned to the release.
+    - uses: sigstore/cosign-installer@v4.1.2
       with:
         cosign-release: ${{ env.COSIGN_VERSION }}
 
@@ -230,6 +236,20 @@ jobs:
           VERSION=${{ steps.stamp.outputs.version }}
           COMMIT=${{ steps.stamp.outputs.commit }}
           DATE=${{ steps.stamp.outputs.date }}
+
+    # The images as pushed, every platform, before anything vouches for
+    # them: a fixable CRITICAL vulnerability stops the release here, with
+    # the digests unsigned and untagged (#116). CI scanned its own build of
+    # the same commit; this is the arm64 image too, and today's database.
+    - name: known vulnerabilities
+      env:
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: |
+        manifest=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Manifest}}')
+        refs=$(jq -r --arg image "$IMAGE" \
+          '.manifests[] | select(.platform.os == "linux") | "\($image)@\(.digest)"' <<<"$manifest")
+        [ "$(wc -l <<<"$refs")" -eq 2 ] || { echo "::error::expected two platform images in $IMAGE@$DIGEST"; exit 1; }
+        make image-scan SCAN_IMAGES="$(paste -sd' ' <<<"$refs")"
 
     # The index and each platform's image.
     - name: sign
@@ -308,7 +328,8 @@ jobs:
       with:
         syft-version: ${{ env.SYFT_VERSION }}
 
-    - uses: sigstore/cosign-installer@v4.1.2 # no major tag upstream
+    # No major tag upstream: pinned to the release.
+    - uses: sigstore/cosign-installer@v4.1.2
       with:
         cosign-release: ${{ env.COSIGN_VERSION }}
 

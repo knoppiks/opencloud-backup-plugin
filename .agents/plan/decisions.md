@@ -1838,6 +1838,37 @@ Replaces the planned `CHANGELOG.md` and PR-label categories.
 - **`.agents/` leaves git in Phase 13 (owner, 2026-10-17)**, following the
   knoppiks-home conventions (phase-13 §13.6).
 
+### Amendments from Phase 11.6 (dependency updates and scanning, #116)
+
+None reopens a locked decision.
+
+- **Renovate runs as the hosted Mend app (owner, 2026-10-19)**; the repository
+  holds only `renovate.json`. **Nothing is automerged** until every job is
+  required (11.7); OpenCloud legs, the web SDK and the CS3 APIs never.
+- **Actions are pinned by commit through Renovate (owner, 2026-10-19)**
+  (`helpers:pinGitHubActionDigests`): its first pull request pins them.
+  11.7 enforces it in the repository settings.
+- **Scanners:** govulncheck (source mode, `./cmd/...` on every shipped
+  platform, blocking on reachable), **osv-scanner** for the web, **Trivy**
+  for the images (owner, 2026-10-19; Trivy over grype). The scanners run
+  as images pinned by digest (osv-scanner v2.7.0 needs Go 1.27 to build),
+  govulncheck with the project's own toolchain, since it judges the
+  standard library by it.
+- **The web audit is judged against the bundle, not the lockfile (owner,
+  2026-10-19)**, for the reason the license audit is (11.1): `--prod` sees 3
+  of the bundle's packages. Blocking: high, critical, unrated or malicious
+  findings in a package whose own files are in the bundle. Packages that
+  contribute only generated code (vite, Tailwind, the Module Federation
+  plugin) and tooling are listed, not blocking: their advisories concern
+  the tool.
+- **The image gate is a fixable CRITICAL** (as planned); HIGH and unfixed
+  are listed. The release scans both platform images by digest before
+  signing them.
+- **Three-day minimum release age** for npm and Go modules (proposed in
+  #116, for the owner's review): a hijacked release is usually withdrawn
+  within that time. Not for security fixes, and not for datasources
+  without release timestamps, whose updates it would hold forever.
+
 ---
 
 ## Trust & key model

@@ -20,6 +20,7 @@ permissions:
 
 env:
   # Keep in step with release.yml.
+  # renovate: datasource=github-releases depName=sigstore/cosign
   COSIGN_VERSION: "v3.0.6"
 
 concurrency:
@@ -43,7 +44,8 @@ jobs:
       with:
         ref: ${{ github.event.release.tag_name }}
 
-    - uses: sigstore/cosign-installer@v4.1.2 # no major tag upstream
+    # No major tag upstream: pinned to the release.
+    - uses: sigstore/cosign-installer@v4.1.2
       with:
         cosign-release: ${{ env.COSIGN_VERSION }}
 
