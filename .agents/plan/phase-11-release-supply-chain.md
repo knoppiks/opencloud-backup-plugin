@@ -384,6 +384,54 @@ against the bundle; no automerge; actions pinned by Renovate.
 - Makefile uses the same pinned tool versions as CI (one `tools.mk` or
   `go tool` directives in `go.mod`).
 
+### Outcome (11.7, #125)
+
+Owner's choices (2026-10-20): pin in this PR; Go tools in `tools/`,
+other linters as images; GitHub + verified + allow-list; every job
+required except `fuzz (short)` (flaky, "context deadline exceeded" at the
+end of `-fuzztime`, four times since 2026-10-12; no issue for now);
+zizmor fails on any finding.
+
+- **Actions:** all 77 references `@<sha> # vX.Y.Z` (the commit of the
+  major tag in use; no version changed). `TestEveryActionIsPinnedToACommit`
+  fails on anything else (mutation-checked). Renovate keeps them.
+- **Go tools:** `tools/<name>/go.mod` with a `tool` directive each
+  (golangci-lint v2.12.2, gitleaks v8.30.1, kubeconform v0.6.7, actionlint
+  v1.7.12, govulncheck v1.9.0), so go.sum pins them and their dependencies
+  stay out of the project's graph and audits. `make tools` builds them into
+  `dist/tools/` (rebuilt when go.mod/go.sum change); `lint`, `lint-probe`,
+  `k8s-validate`, `vulncheck`, `secret-scan`, `pipeline-lint` use them, and
+  CI calls those targets: no curl downloads and no `golangci-lint-action`
+  left. Renovate: gomod manager, grouped with the build and scan tools.
+  go-licenses stays `go install …@v2.0.1` inside the script (sumdb
+  verified; it also runs in the Dockerfiles).
+- **`make pipeline-lint`** (CI `pipeline lint (workflows, scripts,
+  Dockerfiles)`): actionlint with shellcheck on `run:` blocks
+  (`scripts/shellcheck.sh` runs the pinned image), zizmor 1.31.1 (online
+  audits with the job token), shellcheck v0.11.0 on every tracked `*.sh`,
+  hadolint v2.15.1 on both Dockerfiles. Images by digest, Renovate-annotated.
+  First run: 117 zizmor findings; fixed: pins, `persist-credentials: false`
+  on every checkout (nothing pushes with the checkout's token), no Actions
+  cache in `release.yml`'s own jobs and in `release-snapshot` on a tag (two
+  inline ignores, low confidence, the condition zizmor cannot read). One
+  hadolint ignore (consecutive `RUN` in a build stage). zizmor's
+  `self-repository` (`uses: $/…`) disabled in `.github/zizmor.yml`:
+  actionlint 1.7.12 rejects the syntax.
+- **Timeouts** on every job (`TestEveryJobHasATimeLimit`), sized at 2–5×
+  the measured run.
+- **Caches:** Go module/build cache keyed on the tools' go.sum too;
+  Playwright's Chromium by version (`actions/cache` v6.1.0). Not done:
+  pnpm store (install takes seconds; setup-node's cache needs pnpm before
+  Corepack provides it) and buildx layers (the CI image build is ~2 min and
+  would need a cache the release must not read).
+- **`make secret-scan`** = `scripts/secret-scan.sh`: history, then a copy
+  of the files git would commit (`gitleaks dir .` on the checkout walks
+  `node_modules/` for many minutes). Probed with a stand-in AWS key.
+  AGENTS.md updated.
+- **After merge (owner):** ruleset requires every job but `fuzz (short)`;
+  repository settings `sha_pinning_required` and allowed actions
+  (GitHub-owned + verified + allow-list).
+
 ## 11.8 Repository hygiene
 
 - `SECURITY.md`: supported versions (from compatibility-policy), private

@@ -38,12 +38,15 @@ jobs:
   resolve:
     name: resolve the canary's version
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
       go-version: ${{ env.GO_VERSION }}
       node-version: ${{ env.NODE_VERSION }}
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - id: version
       run: |
@@ -71,6 +74,7 @@ jobs:
     needs: [ resolve, suite ]
     if: always() && needs.resolve.result == 'success' && (needs.suite.result == 'failure' || inputs.dry-run)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       issues: write
     env:

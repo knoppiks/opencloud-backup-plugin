@@ -1869,6 +1869,24 @@ None reopens a locked decision.
   within that time. Not for security fixes, and not for datasources
   without release timestamps, whose updates it would hold forever.
 
+### Amendments from Phase 11.7 (CI hardening, #125)
+
+None reopens a locked decision.
+
+- **Every external action is pinned to a commit (owner, 2026-10-20)**, with
+  its version as a comment for Renovate; the repository refuses unpinned
+  ones, and allows GitHub-owned and verified actions plus an explicit list.
+- **One set of tool versions for `make` and CI (owner, 2026-10-20):** Go
+  tools as `tool` directives in their own modules under `tools/`; other
+  tools as images pinned by digest. CI runs the make targets.
+- **The pipeline's own files are linted, and any finding fails (owner,
+  2026-10-20):** actionlint, zizmor, shellcheck, hadolint. Exceptions carry
+  their reason where they are made.
+- **No Actions cache where a release is built.** A cache can be written by
+  any pull request's run; the jobs that build what ships read none on a tag.
+- **Every CI job is required except `fuzz (short)` (owner, 2026-10-20)**,
+  until its intermittent time-out is fixed.
+
 ---
 
 ## Trust & key model
