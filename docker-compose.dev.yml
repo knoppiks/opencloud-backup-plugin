@@ -6,8 +6,9 @@
 # at test/fixtures/opencloud/up.sh (Phase 0, Spikes 3 & 4). Use `make dev-up`,
 # which starts Garage and then the OpenCloud fixture.
 #
-# Pinned versions match the integration fixtures (phase-0-findings.md):
-#   Garage: dxflrs/garage:v2.3.0
+# The Garage image is the one the integration tests start
+# (internal/testutil.GarageImage); a test keeps the two equal, and Renovate
+# bumps both in one pull request.
 
 services:
   garage:

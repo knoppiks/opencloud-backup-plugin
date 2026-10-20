@@ -336,6 +336,62 @@ licenses: ## Check Go dependency licenses against the allow-list; write $(DIST)/
 license-probe: ## Prove the license check still refuses unlicensed and disallowed dependencies.
 	test/licenseprobe/license-probe.sh
 
+# Known vulnerabilities (phase-11 §11.6, #116). The scanners are pinned like
+# every other tool; Renovate bumps them (the `# renovate:` lines).
+# renovate: datasource=go depName=golang.org/x/vuln
+GOVULNCHECK_VERSION ?= v1.9.0
+# renovate: datasource=docker
+OSV_SCANNER_IMAGE ?= ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0
+# renovate: datasource=docker
+TRIVY_IMAGE ?= aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222
+TOOLS := $(abspath $(DIST)/tools)
+
+# The shipped programs, on every platform anything ships for, in source mode:
+# a vulnerability fails only when the code can reach it. The standard
+# library's count too, so this is also what moves the Go toolchain pin.
+# Installed for the host and run per platform: `go run` would build the
+# scanner for the target platform too.
+.PHONY: vulncheck
+vulncheck: ## Fail on a known vulnerability the Go programs can reach (govulncheck, every shipped platform).
+	GOBIN=$(TOOLS) $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	@for p in $(LICENSE_PLATFORMS); do \
+		echo "govulncheck ./cmd/... ($$p)"; \
+		GOOS=$${p%/*} GOARCH=$${p#*/} $(TOOLS)/govulncheck ./cmd/... || exit 1; \
+	done
+
+# The whole lockfile is scanned; what blocks is decided against the packages
+# the bundle holds (web/build/vulnerability-audit.ts). osv-scanner exits 1
+# when it found anything, which is not yet a verdict.
+.PHONY: web-audit
+web-audit: web-build ## Fail on a high/critical known vulnerability in a package the web bundle ships (osv-scanner).
+	@mkdir -p $(DIST)
+	docker run --rm -v "$(CURDIR)/$(WEB_DIR):/src:ro" $(OSV_SCANNER_IMAGE) \
+		scan source --format json -L /src/pnpm-lock.yaml >$(DIST)/osv-web.json || [ $$? -eq 1 ]
+	cd $(WEB_DIR) && $(PNPM) exec jiti build/vulnerability-audit.ts $(abspath $(DIST))/osv-web.json
+
+# Both local builds by default; the release scans its pushed images by digest.
+SCAN_IMAGES ?= $(IMAGE):$(IMAGE_TAG) $(WEB_IMAGE):$(IMAGE_TAG)
+
+.PHONY: image-scan
+image-scan: ## Fail on a fixable critical vulnerability in either image (Trivy; after image, web-image).
+	TRIVY_IMAGE=$(TRIVY_IMAGE) scripts/scan-image.sh $(SCAN_IMAGES)
+
+# An image scan that stops refusing looks like a clean image. This scans a
+# stand-in with a known fixable critical vulnerability and fails unless it
+# is refused, and its patched twin unless it passes.
+.PHONY: image-scan-probe
+image-scan-probe: ## Prove the image scan still refuses a fixable critical vulnerability.
+	TRIVY_IMAGE=$(TRIVY_IMAGE) test/scanprobe/scan-probe.sh
+
+# A renovate.json Renovate cannot read stops every update; the hosted app
+# then opens an issue, and nothing else notices.
+# renovate: datasource=npm depName=renovate
+RENOVATE_VERSION ?= 44.171.1
+
+.PHONY: renovate-config
+renovate-config: ## Validate renovate.json with the pinned Renovate.
+	npx --yes --package renovate@$(RENOVATE_VERSION) -- renovate-config-validator --strict
+
 .PHONY: vet
 vet: ## Run go vet.
 	$(GO) vet ./...

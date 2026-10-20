@@ -20,6 +20,8 @@ import (
 
 // GarageImage is the pinned Garage image. Single-node auto-config
 // (--single-node / --default-bucket) requires >= v2.3.0 (see phase-0 spikes).
+// docker-compose.dev.yml names the same image (internal/buildinfo's
+// TestGarageIsTheSameEverywhere); Renovate bumps both (renovate.json).
 const GarageImage = "dxflrs/garage:v2.3.0"
 
 const (

@@ -21,6 +21,7 @@ set -euo pipefail
 # A program without third-party dependencies (install-bundle) saves nothing.
 shopt -s nullglob
 
+# renovate: datasource=go depName=github.com/google/go-licenses/v2
 GO_LICENSES_VERSION=v2.0.1
 MODULE=github.com/knoppiks/opencloud-backup-plugin
 
