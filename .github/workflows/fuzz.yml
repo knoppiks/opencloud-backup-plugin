@@ -41,9 +41,11 @@ jobs:
     outputs:
       found: ${{ steps.crashers.outputs.found }}
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -69,7 +71,7 @@ jobs:
     # of the plain `go test` run.
     - name: upload failing inputs
       if: always() && steps.crashers.outputs.found == 'true'
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: fuzz-crashers
         path: dist/fuzz-crashers/
@@ -79,6 +81,7 @@ jobs:
     needs: fuzz
     if: always() && needs.fuzz.outputs.found == 'true' && github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       issues: write
     env:

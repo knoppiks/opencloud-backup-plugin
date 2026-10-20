@@ -34,9 +34,11 @@ jobs:
     # Garage containers for the ones that need a target as well.
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
@@ -112,14 +114,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
 
-    - uses: actions/setup-node@v6
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
       with:
         node-version: ${{ inputs.node-version }}
 
@@ -131,7 +135,17 @@ jobs:
       run: pnpm install --frozen-lockfile
 
     # The Chromium build pinned by @playwright/test's version in package.json,
-    # not whatever Chrome the runner image carries this week.
+    # not whatever Chrome the runner image carries this week. Cached by that
+    # version (#125); the system libraries it needs are installed every time.
+    - id: playwright
+      working-directory: web
+      run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium
+
     - name: install the browser
       working-directory: web
       run: pnpm exec playwright install --with-deps chromium
@@ -171,7 +185,7 @@ jobs:
     # artifact per leg: the host's design system differs between them.
     - name: ui screenshots
       if: always()
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ui-screens-${{ inputs.leg }}
         path: web/e2e-results/screens
@@ -179,7 +193,7 @@ jobs:
 
     - name: e2e report on failure
       if: failure()
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: e2e-report-${{ inputs.leg }}
         path: |

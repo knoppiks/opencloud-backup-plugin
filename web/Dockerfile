@@ -66,7 +66,9 @@ ENV BUILDINFO=github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags "-s -w -X $BUILDINFO.Version=$VERSION -X $BUILDINFO.Commit=$COMMIT -X $BUILDINFO.Date=$DATE" \
     -o /out/install-bundle ./cmd/install-bundle
-# The notices for the program itself: the Go standard library.
+# The notices for the program itself: the Go standard library. A step of its
+# own, as in the service image: a build stage, so layers cost nothing.
+# hadolint ignore=DL3059
 RUN scripts/third-party-notices.sh -o /out/THIRD_PARTY_NOTICES -p "$TARGETOS/$TARGETARCH" ./cmd/install-bundle
 
 # --- runtime ----------------------------------------------------------------

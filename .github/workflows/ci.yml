@@ -31,13 +31,8 @@ env:
   # The web extension's floor is Node 20.19 (vite 8); CI runs the current LTS.
   # renovate: datasource=node-version depName=node
   NODE_VERSION: "24.17.0"
-  # Pinned tool versions (AGENTS.md: pin external versions).
-  # renovate: datasource=github-releases depName=golangci/golangci-lint
-  GOLANGCI_LINT_VERSION: "v2.12.2"
-  # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
-  GITLEAKS_VERSION: "8.30.1"
-  # renovate: datasource=github-releases depName=yannh/kubeconform extractVersion=^v(?<version>.+)$
-  KUBECONFORM_VERSION: "0.6.7"
+  # golangci-lint, gitleaks, kubeconform, actionlint and govulncheck are
+  # pinned in tools/<name>/go.mod and built by make, as locally (#125).
   # The release's tools; keep in step with release.yml.
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
   GORELEASER_VERSION: "v2.18.3"
@@ -50,13 +45,19 @@ jobs:
   build-lint:
     name: build / vet / lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
+        cache-dependency-path: |
+          go.sum
+          tools/*/go.sum
 
     # The module files must be what `go mod tidy` would write, and every
     # downloaded module must match go.sum (phase-10-hardening.md §10.8).
@@ -70,14 +71,12 @@ jobs:
       run: go vet ./...
 
     - name: golangci-lint
-      uses: golangci/golangci-lint-action@v9
-      with:
-        version: ${{ env.GOLANGCI_LINT_VERSION }}
+      run: make lint
 
     # A weakened depguard or forbidigo rule passes the step above by
     # reporting nothing. This breaks each trust-boundary rule in a copy of
-    # the sources and fails unless every violation is reported. It uses the
-    # golangci-lint the action just put on PATH.
+    # the sources and fails unless every violation is reported, with the
+    # same golangci-lint.
     - name: trust-boundary rules still fire
       run: make lint-probe
 
@@ -90,10 +89,13 @@ jobs:
   unit-test:
     name: unit tests (race)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -111,10 +113,13 @@ jobs:
   fuzz:
     name: fuzz (short)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -130,7 +135,7 @@ jobs:
 
     - name: upload failing inputs
       if: failure()
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: fuzz-crashers
         path: dist/fuzz-crashers/
@@ -139,10 +144,13 @@ jobs:
   web:
     name: web extension (lint / typecheck / test / build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-node@v6
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
       with:
         node-version: ${{ env.NODE_VERSION }}
 
@@ -183,7 +191,7 @@ jobs:
       working-directory: web
       run: pnpm build
 
-    - uses: actions/upload-artifact@v7
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: backup-vault-web
         path: web/dist
@@ -199,9 +207,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -227,9 +237,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -240,10 +252,13 @@ jobs:
   static-binary:
     name: static binary artifact
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -262,7 +277,7 @@ jobs:
           exit 1
         fi
 
-    - uses: actions/upload-artifact@v7
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: backupd-static
         path: dist/backupd
@@ -281,18 +296,23 @@ jobs:
     timeout-minutes: 30
     steps:
     # The tags, for the stamp (`git describe`).
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
+        persist-credentials: false
         fetch-depth: 0
 
-    - uses: actions/setup-go@v7
+    # This job builds what a release ships, and the release runs it (as
+    # workflow_call, on the tag): there it reads no Actions cache, which any
+    # pull request's run can write (#125, zizmor cache-poisoning).
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
-        cache: true
+        cache: ${{ !startsWith(github.ref, 'refs/tags/') }} # zizmor: ignore[cache-poisoning] off on a tag
 
-    - uses: actions/setup-node@v6
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
       with:
         node-version: ${{ env.NODE_VERSION }}
+        package-manager-cache: ${{ !startsWith(github.ref, 'refs/tags/') }} # zizmor: ignore[cache-poisoning] off on a tag
 
     - name: enable corepack
       run: corepack enable
@@ -301,19 +321,19 @@ jobs:
       working-directory: web
       run: pnpm install --frozen-lockfile
 
-    - uses: goreleaser/goreleaser-action@v7
+    - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
       with:
         version: ${{ env.GORELEASER_VERSION }}
         install-only: true
 
-    - uses: anchore/sbom-action/download-syft@v0
+    - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       with:
         syft-version: ${{ env.SYFT_VERSION }}
 
     - name: make release-snapshot
       run: make release-snapshot
 
-    - uses: actions/upload-artifact@v7
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: release-snapshot
         path: |
@@ -330,6 +350,7 @@ jobs:
   opencloud-legs:
     name: OpenCloud legs
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       legs: ${{ steps.legs.outputs.legs }}
       # A reusable workflow's `with:` cannot read `env`, so the toolchain pins
@@ -337,7 +358,9 @@ jobs:
       go-version: ${{ env.GO_VERSION }}
       node-version: ${{ env.NODE_VERSION }}
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     # yq (mikefarah, v4) is preinstalled on ubuntu-latest.
     - id: legs
@@ -363,11 +386,13 @@ jobs:
   image:
     name: container images (build only)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
     # The tags, for `git describe`: the images are stamped the way a release
     # stamps them (make stamp).
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
+        persist-credentials: false
         fetch-depth: 0
 
     # Publishing happens only on a `v*` tag (release.yml). What this job buys
@@ -405,20 +430,25 @@ jobs:
   manifests:
     name: k8s manifests (kubeconform)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+        cache-dependency-path: |
+          go.sum
+          tools/*/go.sum
 
     # Offline schema validation of the /deploy manifests. `kubectl apply
     # --dry-run=client` needs a reachable API server for REST mappings, so CI
     # uses kubeconform (schema-only, no cluster) as the equivalent check.
-    - name: install kubeconform
-      run: |
-        curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
-          | tar -xz kubeconform
-        sudo mv kubeconform /usr/local/bin/
-
     - name: validate manifests
-      run: kubeconform -strict -summary deploy/
+      run: make k8s-validate
 
     # The manifests name only published versions of the images (#110): a
     # tag that was never released, or `latest`, fails here. Nightly too, so
@@ -434,10 +464,13 @@ jobs:
   licenses:
     name: third-party licenses
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -448,7 +481,7 @@ jobs:
     - name: the check still refuses
       run: make license-probe
 
-    - uses: actions/upload-artifact@v7
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: third-party-notices
         path: dist/THIRD_PARTY_NOTICES
@@ -463,12 +496,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-go@v7
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
+        cache-dependency-path: |
+          go.sum
+          tools/*/go.sum
 
     - name: make vulncheck
       run: make vulncheck
@@ -481,9 +519,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-node@v6
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
       with:
         node-version: ${{ env.NODE_VERSION }}
 
@@ -504,9 +544,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-node@v6
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
       with:
         node-version: ${{ env.NODE_VERSION }}
 
@@ -516,24 +558,51 @@ jobs:
   secret-scan:
     name: secret scan (gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
     # decisions.md forbids key material ever reaching logs, the UI, or the repo.
     # Full history is scanned, not just the diff, so a secret cannot survive by
     # being introduced in an earlier commit of the same phase branch.
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
+        persist-credentials: false
         fetch-depth: 0
 
-    - name: install gitleaks
-      run: |
-        curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-          | tar -xz gitleaks
-        sudo mv gitleaks /usr/local/bin/
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+        cache-dependency-path: |
+          go.sum
+          tools/*/go.sum
 
-    # Scope the scan to HEAD's ancestry. gitleaks defaults to `git log --all`,
-    # and fetch-depth: 0 fetches every branch, so without this a PR would be
-    # judged by other open branches' commits against this tree's allowlist.
-    # -v prints each finding (file, line, commit, rule, fingerprint) so a
-    # failure is actionable from the log; --redact keeps the secret out of it.
-    - name: scan history
-      run: gitleaks git . --log-opts="HEAD" --redact --no-banner -v
+    # HEAD's ancestry, then the tree (scripts/secret-scan.sh), as locally.
+    - name: make secret-scan
+      run: make secret-scan
+
+  # The pipeline's own files (#125): workflows (actionlint with shellcheck
+  # on their scripts, zizmor), shell scripts (shellcheck), Dockerfiles
+  # (hadolint). Any finding fails; exceptions carry their reason inline or
+  # in .github/zizmor.yml. The token lets zizmor's online audits run
+  # (impostor commits, known-vulnerable actions); it can read, nothing more.
+  pipeline-lint:
+    name: pipeline lint (workflows, scripts, Dockerfiles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+        cache-dependency-path: |
+          go.sum
+          tools/*/go.sum
+
+    - name: make pipeline-lint
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: make pipeline-lint

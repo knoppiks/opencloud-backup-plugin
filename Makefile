@@ -306,16 +306,32 @@ web-vectors: ## Regenerate the browser-produced interop vectors, then verify Go 
 generate: ## Regenerate checked-in generated files (environment references).
 	$(GO) test ./cmd/backupd ./cmd/takeout -run '^TestEnvironmentReference$$' -count=1 -update
 
+# The Go tools CI uses, at the versions CI uses (phase-11 §11.7, #125). Each
+# is a `tool` directive in a module of its own under tools/<name>/, so its
+# go.sum pins every byte of it and its dependencies stay out of this
+# module's graph (and out of the license and vulnerability audits). Renovate
+# bumps them like any Go module. Built with the project's own toolchain into
+# $(TOOLS), rebuilt when the module files change.
+TOOLS := $(abspath $(DIST)/tools)
+GO_TOOLS := $(notdir $(wildcard tools/*))
+
+$(addprefix $(TOOLS)/,$(GO_TOOLS)): $(TOOLS)/%: tools/%/go.mod tools/%/go.sum
+	GOBIN=$(TOOLS) $(GO) -C tools/$* install tool
+	@touch $@
+
+.PHONY: tools
+tools: $(addprefix $(TOOLS)/,$(GO_TOOLS)) ## Build the pinned Go tools into $(DIST)/tools.
+
 .PHONY: lint
-lint: ## Run golangci-lint.
-	golangci-lint run ./...
+lint: $(TOOLS)/golangci-lint ## Run golangci-lint.
+	$(TOOLS)/golangci-lint run ./...
 
 # A weakened depguard or forbidigo rule does not fail `make lint`; it just
 # stops reporting. This breaks each trust-boundary rule in a copy of the
 # sources and fails unless lint reports every one (#93).
 .PHONY: lint-probe
-lint-probe: ## Prove the trust-boundary lint rules still fire (one violation per rule).
-	test/lintprobe/lint-probe.sh
+lint-probe: $(TOOLS)/golangci-lint ## Prove the trust-boundary lint rules still fire (one violation per rule).
+	GOLANGCI_LINT=$(TOOLS)/golangci-lint test/lintprobe/lint-probe.sh
 
 # Every Go program on every platform anything ships for: the images carry
 # backupd and takeout (and install-bundle) for linux, the release carries
@@ -337,23 +353,19 @@ license-probe: ## Prove the license check still refuses unlicensed and disallowe
 	test/licenseprobe/license-probe.sh
 
 # Known vulnerabilities (phase-11 §11.6, #116). The scanners are pinned like
-# every other tool; Renovate bumps them (the `# renovate:` lines).
-# renovate: datasource=go depName=golang.org/x/vuln
-GOVULNCHECK_VERSION ?= v1.9.0
+# every other tool: govulncheck in tools/, the others as images by digest;
+# Renovate bumps them (the `# renovate:` lines).
 # renovate: datasource=docker
 OSV_SCANNER_IMAGE ?= ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0
 # renovate: datasource=docker
 TRIVY_IMAGE ?= aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222
-TOOLS := $(abspath $(DIST)/tools)
 
 # The shipped programs, on every platform anything ships for, in source mode:
 # a vulnerability fails only when the code can reach it. The standard
 # library's count too, so this is also what moves the Go toolchain pin.
-# Installed for the host and run per platform: `go run` would build the
-# scanner for the target platform too.
+# Built for the host and run per platform.
 .PHONY: vulncheck
-vulncheck: ## Fail on a known vulnerability the Go programs can reach (govulncheck, every shipped platform).
-	GOBIN=$(TOOLS) $(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+vulncheck: $(TOOLS)/govulncheck ## Fail on a known vulnerability the Go programs can reach (govulncheck, every shipped platform).
 	@for p in $(LICENSE_PLATFORMS); do \
 		echo "govulncheck ./cmd/... ($$p)"; \
 		GOOS=$${p%/*} GOARCH=$${p#*/} $(TOOLS)/govulncheck ./cmd/... || exit 1; \
@@ -413,8 +425,8 @@ image-stamp-check: ## Check both images report this tree's version everywhere (a
 	scripts/check-image-stamp.sh $(IMAGE):$(IMAGE_TAG) $(WEB_IMAGE):$(IMAGE_TAG) "$(VERSION)" "$(COMMIT)"
 
 .PHONY: k8s-validate
-k8s-validate: ## Validate K8s manifests offline (kubeconform).
-	kubeconform -strict -summary deploy/
+k8s-validate: $(TOOLS)/kubeconform ## Validate K8s manifests offline (kubeconform).
+	$(TOOLS)/kubeconform -strict -summary deploy/
 
 # deploy/ names only published versions of this project's images (#110);
 # needs the registry (docker buildx). The check's own test needs nothing.
@@ -423,9 +435,33 @@ deploy-images: ## Check deploy/ names only published image tags (queries ghcr.io
 	test/release/deploy-images-test.sh
 	scripts/check-deploy-images.sh deploy/*.yaml
 
+# HEAD's whole history (what CI fails on), then the files of the working
+# tree git would commit (AGENTS.md, "Secret scanning").
 .PHONY: secret-scan
-secret-scan: ## Scan HEAD's full git history for committed secrets (gitleaks).
-	gitleaks git . --log-opts="HEAD" --redact --no-banner
+secret-scan: $(TOOLS)/gitleaks ## Scan HEAD's history and the working tree for secrets (gitleaks).
+	scripts/secret-scan.sh $(TOOLS)/gitleaks
+
+# The pipeline's own files (#125): workflows (actionlint, with shellcheck on
+# their `run:` scripts, and zizmor's security audits), shell scripts
+# (shellcheck), Dockerfiles (hadolint). Non-Go linters run as images pinned
+# by digest. zizmor's online audits (impostor commits, known-vulnerable
+# actions) need GH_TOKEN; without it they are skipped, as locally they may be.
+# renovate: datasource=docker
+ZIZMOR_IMAGE ?= ghcr.io/zizmorcore/zizmor:1.31.1@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9
+# renovate: datasource=docker
+SHELLCHECK_IMAGE ?= koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+# renovate: datasource=docker
+HADOLINT_IMAGE ?= hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
+SHELL_SCRIPTS = git ls-files -z --cached --others --exclude-standard -- '*.sh'
+DOCKERFILES := Dockerfile $(WEB_DIR)/Dockerfile
+
+.PHONY: pipeline-lint
+pipeline-lint: $(TOOLS)/actionlint ## Lint workflows, shell scripts and Dockerfiles (actionlint, zizmor, shellcheck, hadolint).
+	SHELLCHECK_IMAGE=$(SHELLCHECK_IMAGE) $(TOOLS)/actionlint -shellcheck=scripts/shellcheck.sh
+	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo -e GH_TOKEN $(ZIZMOR_IMAGE) \
+		$(if $(GH_TOKEN),,--no-online-audits) .github/workflows
+	$(SHELL_SCRIPTS) | SHELLCHECK_IMAGE=$(SHELLCHECK_IMAGE) xargs -0 scripts/shellcheck.sh
+	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo $(HADOLINT_IMAGE) hadolint $(DOCKERFILES)
 
 .PHONY: dev-up
 dev-up: ## Start dev Garage, then the test OpenCloud fixture (and seed it).

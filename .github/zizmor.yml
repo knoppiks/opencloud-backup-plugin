@@ -1,0 +1,10 @@
+# zizmor configuration (phase-11 §11.7, #125). `make pipeline-lint` fails
+# on any finding; every exception here or inline (`# zizmor: ignore[…]`)
+# carries its reason.
+rules:
+  # GitHub's self-repository syntax (`uses: $/…`, July 2026) is not yet
+  # known to actionlint (v1.7.12), which rejects it, and the reusable
+  # workflows called with `./` run from the caller's own commit anyway.
+  # Switch when actionlint accepts it.
+  self-repository:
+    disable: true

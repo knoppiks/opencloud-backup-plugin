@@ -192,6 +192,21 @@
       "groupName": "build and scan tools"
     },
     {
+      "description": "The Go tools under tools/ (#125): with the other build and scan tools, majors apart. Each module's indirect dependencies follow its tool.",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchFileNames": [
+        "tools/**"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "groupName": "build and scan tools"
+    },
+    {
       "description": "The images' base images (the build stages follow the toolchain groups).",
       "matchManagers": [
         "dockerfile"
