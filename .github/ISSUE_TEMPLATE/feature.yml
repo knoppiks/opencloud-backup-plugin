@@ -1,0 +1,40 @@
+name: Feature request
+description: Something the plugin should do, or do better.
+labels: [ "kind/Feature" ]
+body:
+- type: markdown
+  attributes:
+    value: |
+      Describe the need, not the implementation: what you are trying to do, and what stops you today. The title is what the release notes will print once it ships, so say what changes for whoever uses or runs the plugin.
+
+- type: textarea
+  id: today
+  attributes:
+    label: What happens today
+    description: What you are trying to do, and how the plugin gets in the way or falls short.
+  validations:
+    required: true
+
+- type: textarea
+  id: wanted
+  attributes:
+    label: What should happen
+    description: What you would like to be able to do, from your point of view (a family member, the admin, the operator).
+  validations:
+    required: true
+
+- type: textarea
+  id: why
+  attributes:
+    label: Why it matters
+    description: Who it helps and how often. If it touches keys, encryption or who can see what, say so.
+  validations:
+    required: false
+
+- type: textarea
+  id: alternatives
+  attributes:
+    label: What you do instead now
+    description: Workarounds or other tools you have tried.
+  validations:
+    required: false

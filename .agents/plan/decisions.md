@@ -1887,6 +1887,34 @@ None reopens a locked decision.
 - **Every CI job is required except `fuzz (short)` (owner, 2026-10-20)**,
   until its intermittent time-out is fixed.
 
+### Amendments from Phase 11.8 (repository hygiene, #137)
+
+None reopens a locked decision.
+
+- **Security fixes go to the newest published release only while 0.x
+  (owner, 2026-10-21).** No backports; release candidates are never fixed.
+  Reports go through GitHub's private vulnerability reporting (enabled
+  2026-10-21); acknowledgement within 14 days, best effort (solo
+  maintainer), no fixed disclosure deadline.
+- **Security scope follows the threat model.** In: key handling, the
+  ciphertext-only admin boundary, access between users, silently failing
+  backups, release verification. Out, as documented behaviour: Garage's
+  missing Object Lock, the server's wrapped copy of the Data Key (whoever
+  controls the cluster can decrypt; the boundary is the OpenCloud admin
+  *role*), the service-account secret, upstream vulnerabilities.
+- **Questions are issues with `kind/Question` (owner, 2026-10-21)**, not
+  Discussions. Issue forms preset the kind (Bug, Feature, Question); no
+  blank issues; no milestone preset, the owner triages.
+- **CODEOWNERS is `* @knoppiks`** and the ruleset does not require a code
+  owner's review (a solo maintainer cannot approve his own pull request).
+- **`make build` strips like the release (owner, 2026-10-21)**; `DEBUG=1`
+  keeps symbols.
+- **`.editorconfig` is checked, except indentation.** editorconfig-checker
+  (a `tools/` module) runs in CI's lint job over every tracked file:
+  charset, LF, final newline, trailing whitespace. Indentation stays with
+  gofmt and prettier: its check flagged 345 lines, all inside raw strings,
+  heredocs and multi-line jq programs.
+
 ---
 
 ## Trust & key model

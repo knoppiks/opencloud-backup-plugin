@@ -1,0 +1,78 @@
+name: Bug report
+description: Something does not work as the documentation says it should.
+labels: [ "kind/Bug" ]
+body:
+- type: markdown
+  attributes:
+    value: |
+      A security problem (a key exposed, an admin seeing plaintext, one user reaching another's backups) is **not** reported here: use [private vulnerability reporting](https://github.com/knoppiks/opencloud-backup-plugin/security/advisories/new) instead (see SECURITY.md).
+
+      Never paste a Recovery Key, key file, S3 credential or service-account secret, in a log or anywhere else.
+
+- type: input
+  id: plugin-version
+  attributes:
+    label: Plugin version
+    description: "`backupd version`, `decrypt -version`, or the version Backup Vault's destinations page shows an admin."
+    placeholder: v0.1.0 (0123456789ab, go1.27.3, linux/amd64)
+  validations:
+    required: true
+
+- type: input
+  id: opencloud-version
+  attributes:
+    label: OpenCloud version
+    description: The version of the OpenCloud server (its web UI's "About", or the image tag you run).
+    placeholder: "8.1.0"
+  validations:
+    required: true
+
+- type: dropdown
+  id: component
+  attributes:
+    label: Where does it happen?
+    multiple: true
+    options:
+    - Backup Vault (the web extension)
+    - backupd (scheduled backups, retention, the API)
+    - takeout (extracting a Take-Out)
+    - decrypt (opening a Take-Out offline)
+    - Deployment (images, manifests, configuration)
+    - Documentation
+  validations:
+    required: true
+
+- type: textarea
+  id: what-happened
+  attributes:
+    label: What happened
+    description: What you did, what you saw, and what you expected to see instead.
+  validations:
+    required: true
+
+- type: textarea
+  id: reproduce
+  attributes:
+    label: Steps to reproduce
+    placeholder: |
+      1. …
+      2. …
+  validations:
+    required: false
+
+- type: textarea
+  id: logs
+  attributes:
+    label: Log output
+    description: The relevant `backupd` log lines or command output. Check them for anything secret before posting.
+    render: text
+  validations:
+    required: false
+
+- type: textarea
+  id: environment
+  attributes:
+    label: Environment
+    description: How it is deployed (Kubernetes, Compose, …), the S3 store (Garage version), and anything unusual.
+  validations:
+    required: false

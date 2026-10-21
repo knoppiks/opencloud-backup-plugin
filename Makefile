@@ -27,6 +27,9 @@ COMMIT  ?= $(shell git rev-parse HEAD 2>/dev/null)
 DATE    ?= $(shell TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
 BUILDINFO := github.com/knoppiks/opencloud-backup-plugin/internal/buildinfo
 STAMP_LDFLAGS := -X $(BUILDINFO).Version=$(VERSION) -X $(BUILDINFO).Commit=$(COMMIT) -X $(BUILDINFO).Date=$(DATE)
+# Stripped (no symbol table, no DWARF) as the images and the release build
+# their binaries; `make build DEBUG=1` keeps both for a debugger.
+BUILD_LDFLAGS := $(if $(DEBUG),,-s -w )$(STAMP_LDFLAGS)
 # The same stamp for an image build.
 DOCKER_STAMP := --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE)
 
@@ -42,11 +45,11 @@ help: ## Show this help.
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: ## Build all binaries into $(DIST).
+build: ## Build all binaries into $(DIST), stripped (DEBUG=1 keeps symbols).
 	@mkdir -p $(DIST)
 	@for b in $(BINARIES); do \
 		echo "building $$b"; \
-		CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(STAMP_LDFLAGS)" -o $(DIST)/$$b ./cmd/$$b || exit 1; \
+		CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(BUILD_LDFLAGS)" -o $(DIST)/$$b ./cmd/$$b || exit 1; \
 	done
 
 # KEY=value lines, for CI ($$GITHUB_OUTPUT) and anyone asking what a build
@@ -466,6 +469,14 @@ pipeline-lint: $(TOOLS)/actionlint ## Lint workflows, shell scripts and Dockerfi
 		$(if $(GH_TOKEN),,--no-online-audits) .github/workflows
 	$(SHELL_SCRIPTS) | SHELLCHECK_IMAGE=$(SHELLCHECK_IMAGE) xargs -0 scripts/shellcheck.sh
 	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo $(HADOLINT_IMAGE) hadolint $(DOCKERFILES)
+
+# Every file git would commit against .editorconfig (#137): charset, line
+# endings, final newline, trailing whitespace. Indentation is left to gofmt,
+# prettier and review; raw strings and heredocs carry their own.
+.PHONY: editorconfig
+editorconfig: $(TOOLS)/editorconfig-checker ## Check every tracked file against .editorconfig.
+	git ls-files -z --cached --others --exclude-standard \
+		| xargs -0 $(TOOLS)/editorconfig-checker -no-color -disable-indentation
 
 .PHONY: dev-up
 dev-up: ## Start dev Garage, then the test OpenCloud fixture (and seed it).

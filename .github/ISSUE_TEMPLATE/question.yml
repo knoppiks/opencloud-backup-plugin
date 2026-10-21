@@ -1,0 +1,32 @@
+name: Question
+description: How do I…? Is it meant to…? Ask here when the README does not answer it.
+labels: [ "kind/Question" ]
+body:
+- type: markdown
+  attributes:
+    value: |
+      Please check the [README](https://github.com/knoppiks/opencloud-backup-plugin#readme) first: deployment, the recovery runbook and the known limits are described there. Never paste a Recovery Key, key file or credential.
+
+- type: textarea
+  id: question
+  attributes:
+    label: Your question
+  validations:
+    required: true
+
+- type: textarea
+  id: context
+  attributes:
+    label: Context
+    description: What you are trying to do, and what you have tried or read so far.
+  validations:
+    required: false
+
+- type: input
+  id: versions
+  attributes:
+    label: Versions
+    description: Plugin and OpenCloud versions, if the question is about a running installation.
+    placeholder: plugin v0.1.0, OpenCloud 8.1.0
+  validations:
+    required: false

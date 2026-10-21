@@ -1,0 +1,52 @@
+# Editor settings that agree with the formatters (gofmt, prettier, the shell
+# and YAML style in use). `make editorconfig` checks every tracked file
+# against them, except indentation: the formatters own that, and raw strings,
+# heredocs and multi-line jq programs carry indentation of their own.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[{*.go,go.mod,go.work}]
+indent_style = tab
+indent_size = unset
+
+[{Makefile,*.mk}]
+indent_style = tab
+indent_size = unset
+
+[*.sh]
+indent_style = tab
+indent_size = unset
+
+# The OpenCloud fixture's scripts are indented with two spaces.
+[test/fixtures/opencloud/*.sh]
+indent_style = space
+indent_size = 2
+
+[Dockerfile]
+indent_size = 4
+
+# As `caddy fmt` writes it.
+[Caddyfile]
+indent_style = tab
+indent_size = unset
+
+# A trailing double space is a hard line break in Markdown.
+[*.md]
+trim_trailing_whitespace = false
+
+# Frozen fixtures and generated files are compared byte for byte
+# (.gitattributes); no editor may touch them.
+[{pkg/takeout/testdata/**,internal/**/testdata/**,**/*.sum,web/pnpm-lock.yaml}]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset

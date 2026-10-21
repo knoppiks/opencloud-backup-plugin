@@ -10,14 +10,16 @@ test/fixtures/opencloud/data/
 test/fixtures/opencloud/apps/
 test/fixtures/opencloud/fixture.env
 
-# Build output and local state.
-dist/
+# Build output and local state, at any depth.
+**/dist/
+**/node_modules/
 tmp/
 .git/
 .idea/
 
-# Not part of the service.
-node_modules/
+# Not part of the service. The web extension has its own image
+# (web/Dockerfile, with web/Dockerfile.dockerignore).
+web/
 .agents/
 deploy/
 docker-compose.dev.yml
