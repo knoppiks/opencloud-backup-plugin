@@ -22,7 +22,7 @@ import (
 // (--single-node / --default-bucket) requires >= v2.3.0 (see phase-0 spikes).
 // docker-compose.dev.yml names the same image (internal/buildinfo's
 // TestGarageIsTheSameEverywhere); Renovate bumps both (renovate.json).
-const GarageImage = "dxflrs/garage:v2.3.0"
+const GarageImage = "dxflrs/garage:v2.4.1"
 
 const (
 	garageS3Port    = "3900/tcp"

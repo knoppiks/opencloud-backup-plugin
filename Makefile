@@ -310,13 +310,17 @@ generate: ## Regenerate checked-in generated files (environment references).
 # is a `tool` directive in a module of its own under tools/<name>/, so its
 # go.sum pins every byte of it and its dependencies stay out of this
 # module's graph (and out of the license and vulnerability audits). Renovate
-# bumps them like any Go module. Built with the project's own toolchain into
-# $(TOOLS), rebuilt when the module files change.
+# bumps them like any Go module. Built into $(TOOLS) with the toolchain the
+# project's go.mod names (the tools' modules name none, so there is one pin
+# to move), and rebuilt when it or the tool's module files change.
+# golangci-lint refuses to lint a module that targets a newer Go than it was
+# built with.
 TOOLS := $(abspath $(DIST)/tools)
 GO_TOOLS := $(notdir $(wildcard tools/*))
+GO_TOOLCHAIN := $(shell sed -n 's/^toolchain //p' go.mod)
 
-$(addprefix $(TOOLS)/,$(GO_TOOLS)): $(TOOLS)/%: tools/%/go.mod tools/%/go.sum
-	GOBIN=$(TOOLS) $(GO) -C tools/$* install tool
+$(addprefix $(TOOLS)/,$(GO_TOOLS)): $(TOOLS)/%: tools/%/go.mod tools/%/go.sum go.mod
+	GOBIN=$(TOOLS) GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GO) -C tools/$* install tool
 	@touch $@
 
 .PHONY: tools
@@ -398,7 +402,7 @@ image-scan-probe: ## Prove the image scan still refuses a fixable critical vulne
 # A renovate.json Renovate cannot read stops every update; the hosted app
 # then opens an issue, and nothing else notices.
 # renovate: datasource=npm depName=renovate
-RENOVATE_VERSION ?= 44.171.1
+RENOVATE_VERSION ?= 44.171.7
 
 .PHONY: renovate-config
 renovate-config: ## Validate renovate.json with the pinned Renovate.

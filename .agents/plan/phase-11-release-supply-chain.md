@@ -367,6 +367,44 @@ against the bundle; no automerge; actions pinned by Renovate.
   pull requests close no issue, so they are not in the release notes;
   `pr-issue.yml` exempts bots.
 
+### Follow-up (11.6, #133): catch-up and coarser groups
+
+Owner (2026-10-20): the ~20 updates waiting for Renovate's first schedule
+were applied by hand in one PR, and the groups made coarser, because
+merging and rebasing them one by one cost more than the updates.
+
+- **Applied:** Go toolchain 1.27.3 (go.mod, both Dockerfiles by digest,
+  four workflows), Node 24.22.0, every direct Go module but go-cs3apis
+  (CS3) and kopia (current), the web extension's minor/patch updates and
+  pnpm 10.34.7, a regenerated lockfile, golangci-lint v2.15.0, kubeconform
+  v0.8.0, syft v1.55.0, cosign v3.1.3, renovate 44.171.7, Garage v2.4.1,
+  Caddy 2.11, and every action at its latest release, majors included
+  (setup-node v7, docker/* v4 and build-push v7: runtime bumps, no input
+  we use removed). The `tools/` modules take the fixes of Renovate's
+  security PRs #118, #127–132; gitleaks needs `mholt/archives` v0.1.5 for
+  rardecode v2.2.0, which #128 alone would have broken.
+- **Caddy 2.11 broke the fixture's sign-in** (first CI run of this PR):
+  its `reverse_proxy` now sets `Host` to the upstream's address for an
+  HTTPS upstream (caddyserver/caddy#7454), and OpenCloud's IdP refuses a
+  logon for any host but `localhost:9200` (400). The Caddyfile passes
+  `header_up Host {hostport}` (`{host}` drops the port and is refused
+  too). Every fixture test and E2E spec failed on every leg; local unit
+  and Garage integration runs could not see it.
+- **Left to Renovate, one PR each:** TypeScript 7, ESLint 10, Vitest 5,
+  happy-dom 21, pnpm 12 (each may need code changes) and the go-cs3apis
+  digest (CS3).
+- **`tools/` builds with the project's toolchain** (`GOTOOLCHAIN` from
+  go.mod's `toolchain`; the tool modules name none, so there is one pin):
+  golangci-lint refuses a module that targets a newer Go than it was built
+  with. A toolchain bump rebuilds the tools.
+- **Groups now:** `pipeline` (actions, all update types; tools in
+  workflows, Makefile, scripts and `tools/`), `container images` (base
+  images, Garage, Caddy), `Go modules` (main module), `web dependencies`,
+  plus Go toolchain, Node, OpenCloud SDKs, deploy manifests and every
+  major outside actions apart; lock file maintenance monthly. Measured
+  with a local `--dry-run=full` against `main` before this PR: 13 branches
+  instead of 20.
+
 ## 11.7 CI hardening
 
 - All actions pinned by full SHA (Renovate keeps them current); same majors

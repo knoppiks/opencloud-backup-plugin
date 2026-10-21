@@ -27,17 +27,17 @@ concurrency:
 env:
   # Keep in sync with go.mod's toolchain pin.
   # renovate: datasource=golang-version depName=go
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.27.3"
   # The web extension's floor is Node 20.19 (vite 8); CI runs the current LTS.
   # renovate: datasource=node-version depName=node
-  NODE_VERSION: "24.17.0"
+  NODE_VERSION: "24.22.0"
   # golangci-lint, gitleaks, kubeconform, actionlint and govulncheck are
   # pinned in tools/<name>/go.mod and built by make, as locally (#125).
   # The release's tools; keep in step with release.yml.
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
   GORELEASER_VERSION: "v2.18.3"
   # renovate: datasource=github-releases depName=anchore/syft
-  SYFT_VERSION: "v1.54.1"
+  SYFT_VERSION: "v1.55.0"
 
 jobs:
   # Building, vetting and linting run beside the unit tests rather than in
@@ -150,7 +150,7 @@ jobs:
       with:
         persist-credentials: false
 
-    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ env.NODE_VERSION }}
 
@@ -309,7 +309,7 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
         cache: ${{ !startsWith(github.ref, 'refs/tags/') }} # zizmor: ignore[cache-poisoning] off on a tag
 
-    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ env.NODE_VERSION }}
         package-manager-cache: ${{ !startsWith(github.ref, 'refs/tags/') }} # zizmor: ignore[cache-poisoning] off on a tag
@@ -326,7 +326,7 @@ jobs:
         version: ${{ env.GORELEASER_VERSION }}
         install-only: true
 
-    - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+    - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
       with:
         syft-version: ${{ env.SYFT_VERSION }}
 
@@ -523,7 +523,7 @@ jobs:
       with:
         persist-credentials: false
 
-    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ env.NODE_VERSION }}
 
@@ -548,7 +548,7 @@ jobs:
       with:
         persist-credentials: false
 
-    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ env.NODE_VERSION }}
 

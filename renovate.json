@@ -25,8 +25,9 @@
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": [
-      "* 0-6 * * 1"
-    ]
+      "* 0-6 1-7 * 1"
+    ],
+    "description": "Monthly (first Monday) rather than weekly (#133): the transitive refresh is the noisiest pull request and the least urgent; security fixes come anyway."
   },
   "vulnerabilityAlerts": {
     "enabled": true,
@@ -124,7 +125,7 @@
       "groupName": "Node"
     },
     {
-      "description": "Go modules, minor and patch, in one weekly pull request. kopia (repository format, data crypto) and the CS3 APIs get their own.",
+      "description": "Go modules, minor and patch, in one weekly pull request (the main module; tools/ goes with the pipeline). kopia (repository format, data crypto) and the CS3 APIs get their own.",
       "matchManagers": [
         "gomod"
       ],
@@ -141,6 +142,9 @@
       "matchPackageNames": [
         "!github.com/kopia/kopia",
         "!github.com/cs3org/**"
+      ],
+      "matchFileNames": [
+        "go.mod"
       ]
     },
     {
@@ -158,20 +162,15 @@
       ]
     },
     {
-      "description": "GitHub Actions, in one weekly pull request, pinned by commit.",
+      "description": "The pipeline (#133): GitHub Actions, every update type (their majors are runtime bumps, pinned by commit either way), in the same pull request as the tools below.",
       "matchManagers": [
         "github-actions"
       ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "digest",
-        "pinDigest"
-      ],
-      "groupName": "GitHub Actions"
+      "groupName": "pipeline",
+      "separateMajorMinor": false
     },
     {
-      "description": "Build, release and scanning tools pinned in workflows, the Makefile and scripts.",
+      "description": "Build, release and scanning tools pinned in workflows, the Makefile and scripts, in the pipeline pull request; their majors apart.",
       "matchManagers": [
         "custom.regex"
       ],
@@ -189,10 +188,10 @@
         "patch",
         "digest"
       ],
-      "groupName": "build and scan tools"
+      "groupName": "pipeline"
     },
     {
-      "description": "The Go tools under tools/ (#125): with the other build and scan tools, majors apart. Each module's indirect dependencies follow its tool.",
+      "description": "The Go tools under tools/ (#125), in the pipeline pull request; their majors apart.",
       "matchManagers": [
         "gomod"
       ],
@@ -204,10 +203,10 @@
         "patch",
         "digest"
       ],
-      "groupName": "build and scan tools"
+      "groupName": "pipeline"
     },
     {
-      "description": "The images' base images (the build stages follow the toolchain groups).",
+      "description": "Container images (#133): the images' base images (the build stages follow the toolchain groups), and the Garage and Caddy images the tests run. Majors apart.",
       "matchManagers": [
         "dockerfile"
       ],
@@ -215,7 +214,29 @@
         "!golang",
         "!node"
       ],
-      "groupName": "base images"
+      "groupName": "container images",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ]
+    },
+    {
+      "description": "The test fixtures' images: Garage (dev compose and the integration tests' constant) and the OpenCloud fixture's Caddy.",
+      "matchManagers": [
+        "docker-compose",
+        "custom.regex"
+      ],
+      "matchDepNames": [
+        "dxflrs/garage",
+        "caddy"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "groupName": "container images"
     },
     {
       "description": "This project's own images in deploy/: the bump after a release (#110). check-deploy-images.sh refuses anything unpublished.",

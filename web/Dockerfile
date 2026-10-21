@@ -26,7 +26,7 @@
 # on every platform, so it is built once, on the builder's own. The build
 # checks the bundle's third-party licenses and writes THIRD_PARTY_NOTICES
 # into it (web/build/third-party-licenses.ts).
-FROM --platform=$BUILDPLATFORM node:24.17.0-bookworm-slim@sha256:862263c612aa437e3037674b85419622a9d93bff80aa1eee5398dfe686375532 AS bundle
+FROM --platform=$BUILDPLATFORM node:24.22.0-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS bundle
 # The build stamp, as in the service image. The bundle reports VERSION as
 # its own (vite.config.ts) and compares it with the service's.
 ARG VERSION=""
@@ -47,7 +47,7 @@ RUN BACKUP_VAULT_VERSION="$VERSION" pnpm build
 # Keep the Go version in step with go.mod and CI's GO_VERSION
 # (internal/buildinfo/toolchain_test.go). Cross-compiled on the builder's
 # platform, like the service image.
-FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS installer
+FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm@sha256:5c3e9b43cfd3bb95c7937462e29d87ada57b481a96fa23ad0eb61778d7a00110 AS installer
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=""

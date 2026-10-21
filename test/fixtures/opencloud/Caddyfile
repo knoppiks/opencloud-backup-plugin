@@ -39,10 +39,14 @@ https://localhost:9200 {
 	}
 
 	# Everything else is OpenCloud: the SPA, config.json, graph, webdav, OCS,
-	# the konnect IdP and the data gateway. Caddy preserves the original Host
-	# header, so OpenCloud still believes it is localhost:9200.
+	# the konnect IdP and the data gateway. OpenCloud must still believe it is
+	# localhost:9200 (its IdP refuses a sign-in for any other host), so the
+	# original Host header is passed on. Caddy 2.11 replaces it with the
+	# upstream's address for an HTTPS upstream unless told otherwise
+	# (caddyserver/caddy#7454).
 	handle {
 		reverse_proxy https://opencloud:9200 {
+			header_up Host {hostport}
 			transport http {
 				tls
 				# The fixture's OpenCloud serves its own self-signed
