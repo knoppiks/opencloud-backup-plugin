@@ -486,6 +486,47 @@ zizmor fails on any finding.
   root image.
 - `make build` strips like CI.
 
+### Outcome (11.8, #137)
+
+Owner's choices (2026-10-21): newest release only; acknowledgement within
+14 days; private reporting on; questions as `kind/Question` issues; issue
+forms with the kind preset and no blank issues; `* @knoppiks`; the planned
+description and topics; strip with `DEBUG=1` to keep symbols; an
+`.editorconfig` that matches the formatters, checked.
+
+- **Renovate's stale security PRs** #127–132, #134, #135 closed themselves
+  ("autoclosed", 2026-10-21) once #136 had superseded them.
+- **`SECURITY.md`:** supported versions (newest release; the OpenCloud
+  window by link to the policy and README, not repeated), private
+  reporting, what to include and never include, response, scope and out
+  of scope per decisions.md's threat model.
+- **`CONTRIBUTING.md`:** setup (Go per go.mod, Docker, Node/Corepack, yq),
+  the make targets, which tests a change must run (the fixture and E2E for
+  anything OpenCloud or the browser sees), AGENTS.md's hard constraints in
+  plain words, the gitleaks rule, labels and milestones, branch and commit
+  style, `Closes #N`.
+- **`.github/`:** `CODEOWNERS`; issue forms `bug.yml` (plugin and OpenCloud
+  version required), `feature.yml`, `question.yml`, `config.yml` (no blank
+  issues, contact link to private reporting); `pull_request_template.md`
+  ending in `Closes #`. Forms validated against SchemaStore's schemas
+  (`check-jsonschema`, one-off).
+- **`.editorconfig`** + `make editorconfig` (editorconfig-checker v3.11.3
+  in `tools/`, CI step in `build / vet / lint`, no new job). Shell scripts
+  are tabs except the OpenCloud fixture's (two spaces, as written); Caddyfile
+  tabs as `caddy fmt`; frozen fixtures and lock files untouched.
+- **`.dockerignore`:** `web/`, `**/node_modules/`, `**/dist/` (`spikes/` is
+  gone since 10.7). Service image context measured at 2.5 MB.
+- **`make build`** passes `-s -w` unless `DEBUG=1`.
+- **Repository settings** (2026-10-21, API): private vulnerability
+  reporting on; description; topics `opencloud`, `backup`, `kopia`,
+  `self-hosted`, `encryption`. Homepage waits for the docs site (Phase 13).
+- **Checks** (`internal/buildinfo/repository_test.go`, each mutation-checked):
+  every form sets exactly one valid `kind/`; the bug form requires both
+  versions; blank issues off and the private-reporting link present;
+  SECURITY.md links it; the PR template ends in `Closes #`; every relative
+  link and anchor in SECURITY.md, CONTRIBUTING.md and the PR template
+  resolves; `.dockerignore` excludes the three paths.
+
 ## 11.9 Cut `v0.1.0`
 
 1. All of the above merged; CI green on every required job.
@@ -508,8 +549,9 @@ zizmor fails on any finding.
       E2E with a faked server version) (#102).
 - [ ] `v0.1.0` published with signed checksums, SBOMs, provenance, five
       `decrypt` builds; verification steps documented and walked once.
-- [ ] Renovate, govulncheck, web audit, image scan active; actions
-      SHA-pinned; every job required.
-- [ ] SECURITY.md, CONTRIBUTING.md, templates, CODEOWNERS present.
+- [x] Renovate, govulncheck, web audit, image scan active; actions
+      SHA-pinned; every job required (#116, #125, #133; but `fuzz (short)`,
+      owner's exception; checked 2026-10-21: 23 required, the rest is fuzz).
+- [x] SECURITY.md, CONTRIBUTING.md, templates, CODEOWNERS present (#137).
 - [x] Release notes from the issues a release ships, by kind, with the
       OpenCloud versions tested; PR and release checks (#112).

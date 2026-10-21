@@ -80,6 +80,9 @@ jobs:
     - name: trust-boundary rules still fire
       run: make lint-probe
 
+    - name: files agree with .editorconfig
+      run: make editorconfig
+
   # `make test` is the one definition of the unit run: -race, with kopia's
   # `testing` tag for its fast test key derivation (see the Makefile). The
   # release derivation is exercised end to end by `integration (release key
