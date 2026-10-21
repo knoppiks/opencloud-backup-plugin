@@ -526,6 +526,15 @@ description and topics; strip with `DEBUG=1` to keep symbols; an
   SECURITY.md links it; the PR template ends in `Closes #`; every relative
   link and anchor in SECURITY.md, CONTRIBUTING.md and the PR template
   resolves; `.dockerignore` excludes the three paths.
+- **Follow-up (#139): README status.** The note at the top still described
+  the project before Phase 8 (admin view "the current phase", nothing run
+  in a browser). Rewritten for a newcomer at v0.1.0: what works, what is
+  not there yet (packaging, docs site, member mail, Garage deletes), links
+  to the supported range and the verification steps rather than repeating
+  them. The notifications line now says operators get mail. The link check
+  covers README.md too (all its links resolved). The rc.6 draft's notes
+  did render (6.4 kB body, 22 assets), closing 11.5's open point; the draft
+  stays until 11.9 step 5.
 
 ## 11.9 Cut `v0.1.0`
 

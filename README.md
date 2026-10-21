@@ -8,19 +8,26 @@ not the enterprise. A user clicks "back up my data" once; backups then run
 automatically to an external S3 target. The admin can operate and recover
 backups **without ever seeing the plaintext content** of a user's data.
 
-> Status: **in development.** The backup pipeline works end to end — a seeded
-> OpenCloud Space is snapshotted, encrypted and deduplicated onto an S3 target —
-> and **both restore paths work**: an admin Take-Out that the user decrypts
-> offline with their Recovery Key (verified with OpenCloud stopped), and a
-> user-triggered restore back into their Space. Unattended scheduling, retention
-> and key rotation have landed since. The user interface, **Backup Vault**, is an
-> OpenCloud Web extension under [`web/`](web/): per-Space overview and status,
-> the setup wizard with the Recovery Key ceremony (tested byte-for-byte against
-> the Go implementation in both directions), restore, and Recovery Key check and
-> replacement. Backup targets are managed through an admin HTTP API or seeded at
-> first start; the admin view for them is the current phase. Nothing has yet
-> been exercised end to end in a real browser. The design and phased roadmap
-> live in [`.agents/plan/`](.agents/plan/).
+> Status: **early releases (0.x).** Until 1.0 a minor version may still
+> break things; its release notes say what to do.
+>
+> **What works:** scheduled, encrypted, deduplicated backups of OpenCloud Spaces
+> to S3, time-based retention, key rotation, and **both restore paths**: an
+> admin Take-Out the user opens offline with their Recovery Key (also with
+> OpenCloud stopped), and a restore back into the Space. **Backup Vault**, the
+> OpenCloud Web extension under [`web/`](web/), covers the user side (overview,
+> setup with the Recovery Key ceremony, restore, key check and replacement) and
+> the admin side (backup targets and who may use them). CI runs the whole
+> flow in a real browser across the
+> [supported OpenCloud range](#deployment-preconditions). Releases are
+> signed and can be [verified](#verifying-a-release).
+>
+> **Not there yet:** a ready-made Compose or Kustomize add-on (deploy from
+> the manifests in [`deploy/`](deploy/) for now), a documentation site,
+> and notification mail to family members (operators can get it). Garage
+> cannot stop a leaked S3 key from deleting backups; snapshots of the storage
+> host can ([see below](#protecting-backups-from-the-credential-that-writes-them)).
+> The design and roadmap live in [`.agents/plan/`](.agents/plan/).
 
 ## What it does
 
@@ -72,10 +79,10 @@ OpenCloud Space  ──(CS3 read)──▶  backup worker  ──(encrypt + dedu
   so they do not all start at once, at most a couple run at a time, and a service
   restart neither repeats a run nor loses one. If a Space stops backing up
   successfully, a notification is raised for its members — a backup that quietly
-  died is the failure this is most worried about. Member notifications are
-  recorded and served over the API; mailing them needs the user directory and is
-  not wired yet, so today the operator's log is where a failure is noticed
-  first.
+  died is the failure this is most worried about. The operator gets these in
+  the log, and by mail when SMTP is configured. Members see them in Backup
+  Vault; mailing them too needs OpenCloud's user directory and is not wired
+  yet.
 - **Retention that actually happens.** Each Space keeps its snapshots for a time
   window it chooses. Applying that window — expiring what has aged out and
   reclaiming the storage it frees, including what a failed run left behind — is
