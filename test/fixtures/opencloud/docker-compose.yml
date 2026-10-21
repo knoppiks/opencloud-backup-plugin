@@ -7,7 +7,7 @@
 #
 # Images: OpenCloud from OC_IMAGE, which up.sh writes to ./.env from the leg it
 # picked in internal/ocversion/versions.yaml (the only place OpenCloud is pinned);
-# caddy:2.10-alpine.
+# caddy:2.11-alpine.
 # Exposed:
 #   9200 -> HTTPS single origin, served by the proxy below: OpenCloud plus
 #           /backup/* routed to a backupd on the host (sub-phase 8c)
@@ -61,7 +61,7 @@ services:
   # The single origin the web extension needs. See ./Caddyfile for why this is
   # a container of its own rather than a route in OpenCloud's proxy.
   proxy:
-    image: caddy:2.10-alpine
+    image: caddy:2.11-alpine
     container_name: opencloud-fixture-proxy
     ports:
     - "9200:9200"
