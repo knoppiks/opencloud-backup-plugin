@@ -184,11 +184,11 @@ func headingAnchors(t *testing.T, path string) map[string]bool {
 	return anchors
 }
 
-// The policy and the guide point into the README and the plans rather than
-// repeat them; a renamed heading or a moved file must not leave them
-// pointing at nothing.
+// The README, the policy and the guide point into each other and the plans
+// rather than repeat them; a renamed heading or a moved file must not leave
+// them pointing at nothing.
 func TestFrontDoorDocumentsLinkToWhatExists(t *testing.T) {
-	for _, doc := range []string{"SECURITY.md", "CONTRIBUTING.md", ".github/pull_request_template.md"} {
+	for _, doc := range []string{"README.md", "SECURITY.md", "CONTRIBUTING.md", ".github/pull_request_template.md"} {
 		data, err := os.ReadFile(filepath.Join(repoRoot, doc))
 		if err != nil {
 			t.Fatal(err)
@@ -199,10 +199,10 @@ func TestFrontDoorDocumentsLinkToWhatExists(t *testing.T) {
 				continue
 			}
 			file, anchor, _ := strings.Cut(target, "#")
-			path := filepath.Join(repoRoot, filepath.Dir(doc), file)
 			if file == "" {
-				path = filepath.Join(repoRoot, doc)
+				file = filepath.Base(doc)
 			}
+			path := filepath.Join(repoRoot, filepath.Dir(doc), file)
 			if _, err := os.Stat(path); err != nil {
 				t.Errorf("%s: link %q: %v", doc, target, err)
 				continue
