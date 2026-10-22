@@ -550,14 +550,41 @@ description and topics; strip with `DEBUG=1` to keep symbols; an
    Only after step 2's `deploy/` bump: the nightly check fails while
    `deploy/` names a deleted image.
 
+### Outcome (11.9, so far)
+
+- **Why now, at 0.x (owner, 2026-10-22):** 1.0 is the "ready" mark
+  (compatibility-policy §2); 0.1.0 is the first installable, verifiable
+  release. Phase 12 needs released images, the final-tag paths of the
+  pipeline had never run, SECURITY.md supports "the newest release", and
+  `deploy/` named an rc. Gaps go into the notes as "Known limitations"
+  (Kubernetes only, Garage deletes, no member mail, unmeasured state-Space
+  growth / R10).
+- **Tagged 2026-10-22** on 7333732 (CI, nightly, fuzz, canary green there;
+  all 60 shipped issues ready). The tag is lightweight, not signed; the
+  ruleset keeps it as is. `release.yml` green; draft: not a pre-release, 22
+  assets, 60 issues, legs 7.3.0 / 7.5.0 / 8.1.0. "Known limitations" added
+  above the generated notes by hand (`gh release edit`).
+- **Verified before publishing** (owner's machine): `verify-release.sh -t
+  v0.1.0 -a` OK, 20 assets; `decrypt -version` names 7333732; both images
+  signed (cosign v3.1.3) with provenance; no `0.1.0` tag before publishing.
+  A distribution's cosign ("devel", v2) reports "no signatures found", as
+  the README warns.
+- **Published 2026-10-22 13:43 UTC.** `release-publish.yml` green; `0.1.0`
+  and `0.1` name the signed digests on both images; no `latest`.
+- **`deploy/` (#141):** `0.1.0` pinned by digest, which the deploy check
+  verifies against the registry.
+- Open: steps 3 (clean machine), 4 (owner's deployment), 5 (rc images,
+  the unpublished rc.6 draft).
+
 ## Exit criteria
 
 - [x] `LICENSE`, `THIRD_PARTY_NOTICES`, license check in CI; busybox question
       decided (#99).
 - [x] Every artifact reports the same version; mismatch banner tested (unit +
       E2E with a faked server version) (#102).
-- [ ] `v0.1.0` published with signed checksums, SBOMs, provenance, five
-      `decrypt` builds; verification steps documented and walked once.
+- [x] `v0.1.0` published with signed checksums, SBOMs, provenance, five
+      `decrypt` builds; verification steps documented and walked once
+      (2026-10-22; the clean-machine walk, 11.9 step 3, still open).
 - [x] Renovate, govulncheck, web audit, image scan active; actions
       SHA-pinned; every job required (#116, #125, #133; but `fuzz (short)`,
       owner's exception; checked 2026-10-21: 23 required, the rest is fuzz).
