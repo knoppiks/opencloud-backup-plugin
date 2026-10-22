@@ -49,14 +49,13 @@ spec:
         # want to choose when.
         #
         # CI fails if this names a tag that is not published
-        # (scripts/check-deploy-images.sh). Until v0.1.0, the newest release
-        # candidate.
+        # (scripts/check-deploy-images.sh), or a digest the tag does not name.
         #
         # NO `args` HERE, on purpose. The image's entrypoint is the service with
         # an empty argument list; the first argument is read as an operator
         # subcommand (rotate-srw, rotate-tw), so anything set here would run a
         # command instead of the service.
-        image: ghcr.io/knoppiks/opencloud-backupd:0.1.0-rc.4
+        image: ghcr.io/knoppiks/opencloud-backupd:0.1.0@sha256:9f4217afff711672d34525827a7c7c4d2df9ddfa8e29f199782ac1e96d33b10e
         imagePullPolicy: IfNotPresent
         ports:
         - name: http
