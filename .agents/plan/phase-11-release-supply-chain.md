@@ -588,22 +588,32 @@ description and topics; strip with `DEBUG=1` to keep symbols; an
   `STATE_BACKEND`, service account set). Its restore procedure still used
   `takeout -insecure` (renamed `-plain-http`, #78) and would have failed
   on the first command; fixed in the same change. The web image changes
-  OpenCloud's own pod, so OpenCloud restarts: deployed by hand.
-  **Open:** merged and rolled out.
+  OpenCloud's own pod, so OpenCloud restarts: deployed by hand. Merged
+  and rolled out by the owner (2026-10-26).
 - **Clean-up (step 5):** the unpublished rc.6 draft deleted (2026-10-23;
-  tag kept, the ruleset forbids deleting it). The `0.1.0-rc.*` images go
-  too (owner, 2026-10-23), but only versions outside what `0.1.0` and
-  `0.1` reference: GHCR lists a multi-platform image's platform
-  manifests, signatures and attestations as untagged versions of their
-  own, so "delete untagged" would break the release. Needs
-  `read:packages,delete:packages` on the token. **Open.**
-- **Dependabot (2026-10-23):** none of the 35 open alerts is in the
-  shipped bundle (11 packages, the same as the release's notices). 5 are
-  fixable within the ranges (follow-redirects, dompurify, source-map-js);
-  30 come from `@module-federation/dts-plugin` 2.3.1 (axios, ws, adm-zip),
-  pinned exactly and switched off in the build (`dts: false`). Proposed:
-  update the 5, dismiss the 30 as "vulnerable code not actually used";
-  owner's decision pending.
+  tag kept, the ruleset forbids deleting it). The `0.1.0-rc.*` images
+  deleted (owner, 2026-10-26), but only versions outside what `0.1.0` and
+  `0.1` reach: GHCR lists a multi-platform image's platform manifests,
+  signatures and attestations as untagged versions of their own, so
+  "delete untagged" would break the release. Walked from both tags: the
+  index, its two platform manifests, and each one's referrers index
+  (tag `sha256-<hex>`) with its Sigstore bundles: 12 versions per
+  package kept, 58 deleted (rc.1, rc.2, rc.4 and their referrers; the
+  untagged rc.3/5/6 builds; three superseded one-entry referrers indexes
+  of 0.1.0 itself, replaced when the second bundle was attached).
+  Afterwards both images re-verified: signature, provenance, SBOM
+  attestation per platform, both tags on the signed digest. Needs
+  `read:packages,delete:packages` on the token.
+- **Dependabot (#148, 2026-10-26):** none of the 35 open alerts was in
+  the shipped bundle (11 packages, the same as the release's notices).
+  The 5 fixable within the ranges (follow-redirects 1.16.2, dompurify
+  3.4.17, source-map-js 1.2.2) updated in the lockfile; the bundle's
+  package list is unchanged. The 30 from `@module-federation/dts-plugin`
+  2.3.1 (axios, ws, adm-zip; exact pins, plugin switched off with `dts:
+  false`) dismissed as "vulnerable code not actually used", each with the
+  reason; their fix is a Module Federation 2.9 upgrade through the
+  extension SDK. `make web-audit` also lists happy-dom (Renovate #144)
+  and zod, neither bundled.
 
 ## Exit criteria
 
