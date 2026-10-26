@@ -78,8 +78,8 @@ github.com/cpuguy83/dockercfg v0.3.2 h1:DlJTyZGBDlXqUZ2Dk2Q3xHs/FtnooJJVaad2S9GK
 github.com/cpuguy83/dockercfg v0.3.2/go.mod h1:sugsbF4//dDlL/i+S+rtpIWp+5h0BHJHfjj5/jFyUJc=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
-github.com/cs3org/go-cs3apis v0.0.0-20260424072047-8d9ef7076ae9 h1:8WtMb7TKKx1AJM3j+uR+H25y4v+b8o8GIQg/2ooCyRo=
-github.com/cs3org/go-cs3apis v0.0.0-20260424072047-8d9ef7076ae9/go.mod h1:DedpcqXl193qF/08Y04IO0PpxyyMu8+GrkD6kWK2MEQ=
+github.com/cs3org/go-cs3apis v0.0.0-20260915133204-93f9871a72ef h1:qURHnj7/EXcV7CeNsEHD4fjGrYqpYf+1I2T3yK19TUM=
+github.com/cs3org/go-cs3apis v0.0.0-20260915133204-93f9871a72ef/go.mod h1:DedpcqXl193qF/08Y04IO0PpxyyMu8+GrkD6kWK2MEQ=
 github.com/danieljoos/wincred v1.2.3 h1:v7dZC2x32Ut3nEfRH+vhoZGvN72+dQ/snVXo/vMFLdQ=
 github.com/danieljoos/wincred v1.2.3/go.mod h1:6qqX0WNrS4RzPZ1tnroDzq9kY3fu1KwE7MRLQK4X0bs=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
