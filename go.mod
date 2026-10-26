@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.3
 	github.com/aws/smithy-go v1.28.5
-	github.com/cs3org/go-cs3apis v0.0.0-20260424072047-8d9ef7076ae9
+	github.com/cs3org/go-cs3apis v0.0.0-20260915133204-93f9871a72ef
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/hashicorp/cronexpr v1.1.3
 	github.com/kopia/kopia v0.23.1
