@@ -573,8 +573,37 @@ description and topics; strip with `DEBUG=1` to keep symbols; an
   and `0.1` name the signed digests on both images; no `latest`.
 - **`deploy/` (#141):** `0.1.0` pinned by digest, which the deploy check
   verifies against the registry.
-- Open: steps 3 (clean machine), 4 (owner's deployment), 5 (rc images,
-  the unpublished rc.6 draft).
+- **Clean machine (step 3, 2026-10-23, #143):** a fresh Ubuntu container
+  with curl, jq and cosign v3.1.3 only. `verify-blob` "Verified OK",
+  checksum OK, `decrypt -version` names 7333732. The frozen `takeout-v1`
+  from the tag's source archive: `-verify` OK without a key, `-list` shows
+  both snapshots, both restored and every file's SHA-256 matches the
+  sidecar (incl. `фото/café.txt`); a wrong key exits 1 and writes no
+  folder. The walk's own commands had two slips (a `--strip-components`
+  off by one, a path in the restore helper), not the release's.
+- **Owner's deployment (step 4):** `knoppiks-home/apps/opencloud#10` moves
+  service and web extension from `0.1.0-rc.2` to `0.1.0` by digest, on
+  OpenCloud 7.5.0 (in the window). rc.2 → 0.1.0 needs no setting change
+  there: 10.3's stricter startup checks pass (no booleans, no
+  `STATE_BACKEND`, service account set). Its restore procedure still used
+  `takeout -insecure` (renamed `-plain-http`, #78) and would have failed
+  on the first command; fixed in the same change. The web image changes
+  OpenCloud's own pod, so OpenCloud restarts: deployed by hand.
+  **Open:** merged and rolled out.
+- **Clean-up (step 5):** the unpublished rc.6 draft deleted (2026-10-23;
+  tag kept, the ruleset forbids deleting it). The `0.1.0-rc.*` images go
+  too (owner, 2026-10-23), but only versions outside what `0.1.0` and
+  `0.1` reference: GHCR lists a multi-platform image's platform
+  manifests, signatures and attestations as untagged versions of their
+  own, so "delete untagged" would break the release. Needs
+  `read:packages,delete:packages` on the token. **Open.**
+- **Dependabot (2026-10-23):** none of the 35 open alerts is in the
+  shipped bundle (11 packages, the same as the release's notices). 5 are
+  fixable within the ranges (follow-redirects, dompurify, source-map-js);
+  30 come from `@module-federation/dts-plugin` 2.3.1 (axios, ws, adm-zip),
+  pinned exactly and switched off in the build (`dts: false`). Proposed:
+  update the 5, dismiss the 30 as "vulnerable code not actually used";
+  owner's decision pending.
 
 ## Exit criteria
 
@@ -584,7 +613,7 @@ description and topics; strip with `DEBUG=1` to keep symbols; an
       E2E with a faked server version) (#102).
 - [x] `v0.1.0` published with signed checksums, SBOMs, provenance, five
       `decrypt` builds; verification steps documented and walked once
-      (2026-10-22; the clean-machine walk, 11.9 step 3, still open).
+      (2026-10-22; from a clean machine 2026-10-23, #143).
 - [x] Renovate, govulncheck, web audit, image scan active; actions
       SHA-pinned; every job required (#116, #125, #133; but `fuzz (short)`,
       owner's exception; checked 2026-10-21: 23 required, the rest is fuzz).
