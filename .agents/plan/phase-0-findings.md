@@ -527,3 +527,95 @@ same route as the Graph calls `backupd` already makes.
   `style-src`.** Neither has `'wasm-unsafe-eval'`. The fixture's `csp.yaml`
   (7.3.0 default + wasm) therefore withholds `blob:` styles from an 8.1 host;
   re-derived from 8.1's default in 9.3.
+
+## Phase 12 spike — the compose add-on (#150) ✅
+
+Measured 2026-10-26 on `opencloud-eu/opencloud-compose` at c957c36
+(2026-10-12; default `OC_DOCKER_TAG` 8.1.0), Docker 29.9.2, Compose v5.6.1,
+with released `0.1.0` images and a draft `backup/backup.yml` +
+`traefik/backup.yml`. Stack: `docker-compose.yml:traefik/opencloud.yml` +
+the draft, local certificates (`TRAEFIK_SERVICES_TLS_CONFIG=tls=true`, a
+throwaway CA), ports 4080/4443.
+
+### 1. Issuer reachability from inside the compose network
+
+- `traefik/opencloud.yml` gives Traefik the network alias `${OC_DOMAIN}` on
+  `opencloud-net` (each add-on's `traefik/<addon>.yml` adds its own domain the
+  same way). A container on `opencloud-net` therefore resolves the issuer
+  `https://${OC_DOMAIN}[:${TRAEFIK_PORT_HTTPS}]` to Traefik with no extra
+  configuration; Traefik listens on the same port inside, so the issuer URL
+  works unchanged.
+- **Let's Encrypt** (upstream's default): the system roots suffice.
+- **Self-signed / local certificates:** upstream's answer is `INSECURE=true`,
+  which turns certificate checks off for OpenCloud and the office add-ons.
+  OpenCloud's own proxy needs it too: without it every token fails with
+  `x509: certificate signed by unknown authority` against its own issuer,
+  and `backupd`'s Graph calls get 401.
+  **`backupd` does not reuse `INSECURE`:** turning off certificate checks
+  for the token issuer is not acceptable for the service that holds the
+  wrapping keys. It takes the CA instead (`SSL_CERT_FILE`, which Go honours,
+  mounted read-only). Measured: IdP keys discovered over TLS with the CA, a
+  real `web` token accepted, `GET /backup/api/v1/version` 200 through
+  Traefik.
+- **`external-proxy/*` overlays** (no Traefik in the stack): `${OC_DOMAIN}`
+  resolves through the host's DNS to the operator's proxy, and the
+  `/backup/api` route has to be added there. Needs its own
+  `external-proxy/backup.yml` (port published on `127.0.0.1`, like
+  upstream's `external-proxy/opencloud.yml`). Not run.
+- **Keycloak / external IdP overlays:** `OIDC_ISSUER` is `${IDP_ISSUER_URL}`,
+  `OIDC_AUDIENCE` the web client id (`${OC_OIDC_CLIENT_ID}`, default `web`).
+  Admin detection with OIDC-claim role assignment is not measured.
+
+### 2. The service account
+
+- `opencloud init` (run by the base file's `command` on every start, a no-op
+  after the first) writes `/etc/opencloud/opencloud.yaml` into the
+  `opencloud-config` volume (or `${OC_CONFIG_DIR}`): mode 0600, uid 1000.
+  `service_account_id` / `service_account_secret` repeat per service with
+  the same values.
+- `backupd` already reads `OC_SERVICE_ACCOUNT_ID` / `OC_SERVICE_ACCOUNT_SECRET`,
+  the names OpenCloud uses.
+- **Chosen: `setup.sh` reads them** with
+  `docker compose exec -T opencloud` + `grep -m1` (the OpenCloud image has a
+  shell) and writes them to `.env`. Measured: `provision-state-space` and the
+  service started with values obtained this way. The operator never sees
+  them; `.env` already holds `INITIAL_ADMIN_PASSWORD`.
+- Rejected without measuring: setting the pair in `.env` and passing it to
+  OpenCloud as an override. It would replace the account every OpenCloud
+  service uses, on an existing installation, to suit an add-on.
+- Mounting the config volume into `backupd` was rejected: it couples
+  `backupd` to OpenCloud's config file format, and the file is 0600 uid 1000.
+- **`.env` quoting:** a Space id contains `$` (`<storage>$<space>!<node>`).
+  Unquoted in `.env`, Compose interpolates it. `setup.sh` must write
+  `STATE_SPACE_ID` single-quoted (measured: quoted survives as `$$` in
+  `docker compose config`, and the service gets the literal id).
+
+### 3. `depends_on` on the extended `opencloud` service
+
+- **Static:** `docker compose config` over all eight `COMPOSE_FILE`
+  combinations in upstream's `.env.example` (plus tika/clamav/opensearch), with
+  the add-on placed before and after the others. `opencloud.depends_on` always
+  merges to `backup-vault-web: service_completed_successfully` plus whatever
+  the other overlays add (`tika`, `clamav`, `opensearch: service_healthy`).
+- **Installer:** runs as `${OC_CONTAINER_UID_GID:-1000:1000}`, not the
+  image's 65532, so it can write the bind-mounted `OC_APPS_DIR`. With that,
+  the bundle is installed (43 files) before OpenCloud starts.
+- **Upgrades:** without `restart: true` on the dependency, a new web image
+  reinstalls the bundle but OpenCloud keeps its startup scan of the old one.
+  **With `restart: true`**, Compose stops OpenCloud, runs the installer,
+  starts OpenCloud. A no-change `up -d` reruns the installer (one-shot) but
+  does not restart OpenCloud.
+- On a host reboot the daemon restarts containers by policy, not Compose
+  ordering; the bundle stays on the bind mount, so that is harmless.
+
+### Other observations (inputs to #151, #152, 12.1)
+
+- `backupd` started with OpenCloud down exits 1 (`cs3 authenticate: … dns:
+  A record lookup error`), as on Kubernetes. In Compose that is every reboot
+  (#152).
+- The work directory defaults to `/tmp` ("work directory is memory-backed");
+  a `tmpfs` on `/tmp` with a size is enough, no separate `/work`.
+- `backupd` survived OpenCloud being recreated under it (no restart).
+- `/backup/api` with `PathPrefix` on OpenCloud's host wins over OpenCloud's
+  `Host()` router by Traefik's rule-length priority; no explicit priority
+  needed, OpenCloud's `/` stays served.
