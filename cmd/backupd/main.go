@@ -47,6 +47,7 @@ import (
 	"github.com/knoppiks/opencloud-backup-plugin/internal/cs3state"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/instance"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/jobs"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/memlimit"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/notify"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/objstore"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/ocversion"
@@ -81,11 +82,14 @@ const (
 type startupDeps struct {
 	// openState returns the durable state store.
 	openState func(ctx context.Context, st stateEnv, client *cs3.Client, serviceAccountID string, logger *slog.Logger) (state.Store, error)
+	// memory sets the process's soft memory limit; nil leaves it alone.
+	memory *memlimit.Host
 }
 
 // productionStartup is what the service runs with.
 func productionStartup() startupDeps {
-	return startupDeps{openState: buildStateStore}
+	memory := memlimit.Production()
+	return startupDeps{openState: buildStateStore, memory: &memory}
 }
 
 // service is everything main runs: the HTTP API and, when configured, the
@@ -155,6 +159,9 @@ func serve(cfg serviceEnv, logger *slog.Logger, deps startupDeps) error {
 	build := buildinfo.Get()
 	logger.Info("starting backupd", "version", build.Version, "commit", build.Commit, "go", build.GoVersion)
 	logger.Info("configuration", "config", cfg)
+	if deps.memory != nil {
+		configureMemoryLimit(*deps.memory, cfg.Backup, logger)
+	}
 
 	svc, cleanup, err := buildService(context.Background(), cfg, logger, deps)
 	if err != nil {

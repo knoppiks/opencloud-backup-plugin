@@ -14,8 +14,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/knoppiks/opencloud-backup-plugin/internal/api"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/memlimit"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/snapshot"
 )
 
@@ -85,6 +87,32 @@ func resolveWorkDir(cfg workEnv, logger *slog.Logger) (string, error) {
 			workDirVar, resolved, workDirAllowDiskVar)
 	}
 	return dir, nil
+}
+
+// configureMemoryLimit sets the Go runtime's soft limit below the
+// container's, leaving room for the memory-backed work directory and /tmp
+// (internal/memlimit). Never fatal: without a limit the service runs as it
+// always did, and the log says why.
+func configureMemoryLimit(host memlimit.Host, w workEnv, logger *slog.Logger) {
+	dirs := []string{snapshot.WorkDirOrTemp(w.WorkDir), os.TempDir()}
+	res, err := memlimit.Configure(host, dirs)
+	switch {
+	case err == nil && res.FromEnv:
+		logger.Info("memory limit set by "+memlimit.EnvVar, "limit_bytes", res.Limit)
+	case err == nil:
+		logger.Info("memory limit derived from the container's",
+			"limit_bytes", res.Limit,
+			"container_bytes", res.Budget.Container,
+			"memory_backed_dirs_bytes", res.Budget.MemoryFS)
+	case errors.Is(err, memlimit.ErrNoContainerLimit):
+		logger.Info("no container memory limit; the Go memory limit stays unset")
+	case errors.Is(err, memlimit.ErrNoCgroupV2):
+		logger.Info("container memory limit unknown (no cgroup v2); set " +
+			memlimit.EnvVar + " to limit the service's memory")
+	default:
+		logger.Warn("memory limit not set; give the memory-backed directories a size "+
+			"below the container's memory limit, or set "+memlimit.EnvVar, "err", err)
+	}
 }
 
 // chain composes cleanup functions, running them in the order given.

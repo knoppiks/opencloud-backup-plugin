@@ -35,6 +35,9 @@ type command struct {
 	// parse reads the command's flags. Help comes back as flag.ErrHelp and a
 	// malformed command line as a *cli.UsageError.
 	parse func(args []string, stdout, stderr io.Writer) (action, error)
+	// load reads the configuration the command needs; nil is the whole of
+	// the service's (loadServiceEnv).
+	load func(environ []string) (serviceEnv, error)
 }
 
 // commands are the operator commands, in the order help lists them.
@@ -54,6 +57,12 @@ func commands() []command {
 			name:    twRotation.name,
 			summary: "re-wrap every target's credentials from TW_KEY_OLD to TW_KEY",
 			parse:   parseRotate(twRotation),
+		},
+		{
+			name:    "healthcheck",
+			summary: "ask the running service whether it is ready (for a container healthcheck)",
+			parse:   parseHealthcheck,
+			load:    loadListenerEnv,
 		},
 	}
 }
@@ -99,7 +108,11 @@ func runCommandLine(args, environ []string, stdout, stderr io.Writer) int {
 	}
 
 	logger := newLogger(stderr)
-	cfg, err := loadServiceEnv(environ)
+	load := cmd.load
+	if load == nil {
+		load = loadServiceEnv
+	}
+	cfg, err := load(environ)
 	if err != nil {
 		logger.Error("invalid configuration", "err", err)
 		return cli.ExitFailure
@@ -159,8 +172,8 @@ Commands:
 	fmt.Fprintf(&b, "  %-24s %s\n", "help", "show this help")
 	b.WriteString(`
 The service and every command are configured through the environment
-(docs/reference/environment.md). Operator commands need the same environment
-as the service.
+(docs/reference/environment-backupd.md). Operator commands need the same
+environment as the service; healthcheck reads only the listener's.
 
 Exit status: 0 success, 1 failure, 2 the command line was wrong.
 `)
