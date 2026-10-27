@@ -78,6 +78,7 @@ func TestHelpForOneCommand(t *testing.T) {
 		"provision-state-space": "usage: backupd provision-state-space",
 		"rotate-srw":            "SRW_KEY_OLD",
 		"rotate-tw":             "TW_KEY_OLD",
+		"healthcheck":           "usage: backupd healthcheck",
 	}
 	for name, want := range cases {
 		for _, args := range [][]string{{"help", name}, {name, "-h"}} {

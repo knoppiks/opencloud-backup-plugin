@@ -316,6 +316,10 @@ spec:
         envFrom:
         - configMapRef:
             name: opencloud-backup-bootstrap-target
+        # The service sets Go's memory limit from this limit, less the
+        # sizeLimits of the memory-backed volumes below (tmpfs counts against
+        # it too): 512Mi - 256Mi - 16Mi, 90% of that, ~216Mi. Raise the limit
+        # with the work volume's sizeLimit. GOMEMLIMIT overrides it.
         resources:
           requests:
             cpu: 50m

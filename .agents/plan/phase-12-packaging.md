@@ -60,6 +60,13 @@ Used as:
   needs a `backupd healthcheck` subcommand — add in this phase),
   `restart: unless-stopped`, **one replica** (compose's default; the
   instance guard still applies).
+  *Landed in #151:* `backupd healthcheck` (probes `/readyz` over loopback,
+  `-live` for `/healthz`; reads only the listener's variables; exec form
+  `["CMD", "/backupd", "healthcheck"]`, since `docker run --health-cmd`
+  needs a shell). `GOMEMLIMIT` is no longer needed in the add-on: the
+  service derives it from the cgroup v2 limit less the tmpfs sizes, so the
+  add-on must give `/tmp` a `size` (unsized tmpfs leaves the limit unset,
+  with a warning).
 - `CS3_GATEWAY_ADDR=opencloud:9142`, `CS3_DATA_SERVER_URL=http://opencloud:9158`,
   `OIDC_ISSUER`/`OC_BASE_URL` = `https://${OC_DOMAIN}`, `OIDC_AUDIENCE=web`
   (built-in IdP; the Keycloak overlay differs — documented).

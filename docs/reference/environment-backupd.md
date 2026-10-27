@@ -2,9 +2,9 @@
 
 # Environment reference: backupd
 
-The backup service, and its operator commands (`provision-state-space`, `rotate-srw`, `rotate-tw`), which read the same configuration.
+The backup service, and its operator commands (`provision-state-space`, `rotate-srw`, `rotate-tw`), which read the same configuration. `healthcheck` reads only the HTTP listener's.
 
-The Go runtime also reads `TZ` (the zone schedules are read in, unless `SCHEDULE_TIMEZONE` says otherwise) and `SSL_CERT_DIR` / `SSL_CERT_FILE` (extra CAs, for example for a backup target with a private certificate).
+The Go runtime also reads `TZ` (the zone schedules are read in, unless `SCHEDULE_TIMEZONE` says otherwise), `SSL_CERT_DIR` / `SSL_CERT_FILE` (extra CAs, for example for a backup target with a private certificate), and `GOMEMLIMIT`. Unset, the service derives its memory limit from the container's (cgroup v2), less the size of the memory-backed work directory and `/tmp`, and logs the result; set it to choose the limit yourself.
 
 - **Booleans** are exactly `true` or `false`. Anything else is refused at
   startup.
