@@ -83,25 +83,43 @@ same TLS resolver as `traefik/opencloud.yml`. Not `/backup` (would capture
 3. Whether compose's `depends_on` on an extended `opencloud` service behaves
    with every overlay combination opencloud-compose documents.
 
+**Outcome (#150, 2026-10-26):** all three answered, see
+`phase-0-findings.md` "Phase 12 spike". What changes above:
+
+- Issuer: Traefik's `${OC_DOMAIN}` network alias already routes it. For
+  self-signed certs `backupd` takes the CA (`SSL_CERT_FILE`, mounted
+  read-only), **not** upstream's `INSECURE=true` (owner confirmed,
+  2026-10-26). OpenCloud itself still needs `INSECURE=true` with self-signed
+  certs; that is upstream's setting, not ours.
+- Service account: `setup.sh` reads it from OpenCloud's generated config via
+  `docker compose exec` and writes it to `.env`; values in `.env` that hold a
+  `$` (the state Space id) are single-quoted.
+- `depends_on` merges with every documented overlay; it needs
+  `restart: true` so a new web bundle restarts OpenCloud. The installer runs
+  as `${OC_CONTAINER_UID_GID:-1000:1000}`.
+- No `/work` tmpfs: the work dir defaults to `/tmp`.
+- The `external-proxy/*` overlays need an `external-proxy/backup.yml`
+  (not run); Keycloak admin detection is unmeasured.
+
 ## 12.2 The CSP line
 
-The add-on cannot patch one line inside opencloud-compose's `csp.yaml`.
-**DECISION NEEDED**, options:
+The edit is required, not a Phase 12 choice: without `'wasm-unsafe-eval'` in
+`script-src` the browser cannot compile hash-wasm's Argon2id, and the
+Recovery Key ceremony fails (deployment-readiness decision 1, measured
+there). opencloud-compose's default `csp.yaml` lacks it (c957c36,
+2026-10-12).
 
-- **A. Documented one-line edit** of the operator's existing
-  `config/opencloud/csp.yaml`. Honest, no drift, one manual step that
-  fails late (review W3) unless Phase 14's diagnosis lands.
-- **B. Ship a full replacement CSP** the overlay mounts over theirs.
-  Zero manual steps, but it silently drops whatever the operator or a newer
-  opencloud-compose added (Collabora, Keycloak domains).
-- **C. Upstream:** propose `'wasm-unsafe-eval'` in opencloud-compose's
-  default CSP (it allows WebAssembly compilation only, not `eval`). Fixes it
-  for every extension that uses WASM. Combine with A until merged.
+The add-on documents the one-line edit of the operator's
+`config/opencloud/csp.yaml`, as the README does for Kubernetes, and
+`setup.sh` checks it and prints the exact line when it is missing (the admin
+view's diagnosis is Phase 14 W3). Not done (owner, 2026-10-26): a
+replacement CSP mounted over theirs (would silently drop the operator's and
+upstream's entries), and an upstream PR to opencloud-compose's default
+(backlog).
 
-Recommendation: **A + C**, plus a check in `setup.sh` and in the admin view
-(Phase 14 W3) that tells the operator precisely which line is missing.
+## 12.3 First-run helper (decided: shipped)
 
-## 12.3 First-run helper (optional, owner to decide)
+**Decided (owner, 2026-10-26):** `setup.sh` ships with the add-on.
 
 `backup/setup.sh`, run once from the opencloud-compose directory:
 
@@ -170,7 +188,7 @@ and `deploy/kustomize/README.md` that the docs site later absorbs.
 - [ ] A fresh opencloud-compose checkout + the add-on + `setup.sh` gives a
       working Backup Vault (setup, backup, restore) — walked once by hand on
       a clean machine and automated in CI on every matrix leg.
-- [ ] The CSP decision taken; if C, the upstream PR is open.
+- [ ] The CSP edit documented for compose and checked by `setup.sh`.
 - [ ] Kustomize base + example overlay render and validate; NetworkPolicy
       tested on a kind cluster with a CNI that enforces it (or recorded as
       untested — not claimed).

@@ -20,5 +20,5 @@ owner; items here are not promises.
 | **Recovering from `server.ocbke`** as a flow instead of a manual operator step | R1 amendment | Rare; documented as manual. Would pair well with 5b. |
 | **TLS to the CS3 gateway** | Phase 14 A.5 | Only if the spike shows OpenCloud supports it. |
 | **Helm chart** of our own | Phase 12 | Compose is primary, Kustomize secondary; a chart only if Kubernetes users ask, and then as values for OpenCloud's chart rather than a parallel one. |
-| **Contribution upstream**: `'wasm-unsafe-eval'` in opencloud-compose's default CSP | Phase 12 option C | Tracked there once decided. |
+| **Contribution upstream**: `'wasm-unsafe-eval'` in opencloud-compose's default CSP | Phase 12 §12.2 | Not pursued (owner, 2026-10-26): would not remove the documented edit (old checkouts, custom CSPs, Kubernetes) and needs upstream to loosen its default for a third-party extension. Revisit only if upstream asks. |
 | **A third UI language** | translations.ts | Revisit the `.po` pipeline decision when it happens. |

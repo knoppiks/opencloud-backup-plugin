@@ -1228,7 +1228,9 @@ layout, which was a scaffolding choice rather than a locked decision.
   left the window — MINOR or MAJOR (policy §2); the grace period for the
   previous Production line (policy §3; superseded by the #25 amendment in
   "Moving to OpenCloud 8.x"); per-Space metric labels (Phase 14);
-  the CSP mechanism for the compose add-on (Phase 12); busybox (Phase 11);
+  the CSP mechanism for the compose add-on (Phase 12; settled 2026-10-26:
+  the documented edit of deployment-readiness decision 1, checked by
+  `setup.sh`, phase-12 §12.2); busybox (Phase 11);
   R10's option; Phase 5b — v1 or backlog.
 
 ### Amendments from moving to OpenCloud 8.x (Phase 9, #64)
