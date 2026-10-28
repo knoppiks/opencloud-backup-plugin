@@ -231,9 +231,13 @@ func newHTTPServer(addr string, handler http.Handler, logger *slog.Logger) *http
 
 // listen serves httpSrv in the background. A listener that fails reports on
 // the returned channel and calls stop, which ends startup or the service.
+// The channel is closed when the listener is done, which it is soon after
+// httpSrv.Shutdown: receiving from it is how a caller waits for that, so
+// nothing of the listener's outlives serve.
 func listen(httpSrv *http.Server, cfg listenerEnv, logger *slog.Logger, stop func()) <-chan error {
 	serveErr := make(chan error, 1)
 	go func() {
+		defer close(serveErr)
 		var err error
 		if cfg.TLSCertFile != "" {
 			logger.Info("backupd listening (TLS)", "addr", cfg.Addr)
@@ -263,10 +267,8 @@ func stopStarting(ctx context.Context, httpSrv *http.Server, serveErr <-chan err
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
 
-	select {
-	case err := <-serveErr:
+	if err := <-serveErr; err != nil {
 		return err
-	default:
 	}
 	if ctx.Err() != nil && errors.Is(startErr, context.Canceled) {
 		logger.Info("stopped while starting", "err", startErr)
@@ -307,10 +309,8 @@ func shutdown(
 		logger.Warn("runs did not stop in time; their locks expire on their own")
 	}
 
-	select {
-	case err := <-serveErr:
+	if err := <-serveErr; err != nil {
 		return err
-	default:
 	}
 	if shutdownErr != nil {
 		return fmt.Errorf("graceful shutdown failed: %w", shutdownErr)
