@@ -433,7 +433,7 @@ image-stamp-check: ## Check both images report this tree's version everywhere (a
 
 .PHONY: k8s-validate
 k8s-validate: $(TOOLS)/kubeconform ## Validate K8s manifests offline (kubeconform).
-	$(TOOLS)/kubeconform -strict -summary deploy/
+	$(TOOLS)/kubeconform -strict -summary deploy/*.yaml
 
 # deploy/ names only published versions of this project's images (#110);
 # needs the registry (docker buildx). The check's own test needs nothing.

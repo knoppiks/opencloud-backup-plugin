@@ -285,6 +285,9 @@ blocked.
 
 ## Deployment: step by step
 
+With [opencloud-compose](https://github.com/opencloud-eu/opencloud-compose),
+use the add-on in [`deploy/compose/`](deploy/compose/README.md) instead.
+
 In order, for a Kubernetes deployment next to an existing OpenCloud. `deploy/`
 holds the manifests; every `REPLACE_ME` in them is refused at startup. Every
 environment variable, its default and what it does is listed in the
