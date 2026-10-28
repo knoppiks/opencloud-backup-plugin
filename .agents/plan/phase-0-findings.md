@@ -619,3 +619,27 @@ throwaway CA), ports 4080/4443.
 - `/backup/api` with `PathPrefix` on OpenCloud's host wins over OpenCloud's
   `Host()` router by Traefik's rule-length priority; no explicit priority
   needed, OpenCloud's `/` stays served.
+
+### 4. What the CS3 gateway returns while OpenCloud boots (#152)
+
+Measured 2026-10-28 on the test fixture (OpenCloud 8.1.0, single container,
+warm data): a probe ran `cs3state.Check` every 50 ms with the right and a
+wrong service-account secret across four `docker restart`s and one
+stop/start.
+
+- **Booting, with the right secret:** only transport errors, then success.
+  gRPC `Unavailable` (`connection refused`, `error reading server preface:
+  connection reset by peer`) and once `DeadlineExceeded` (a call in flight as
+  the container stopped). No CS3 status code ever appeared before `OK`; the
+  gateway answered fully 2–14 s after the container started.
+- **Wrong secret, OpenCloud up:** `Authenticate` answers `CODE_INTERNAL`
+  (not `CODE_UNAUTHENTICATED`), from the first successful connection on.
+- In Compose the boot-time error is the same gRPC `Unavailable` with a DNS
+  cause (section "Other observations").
+
+Consequence: transport-level errors (gRPC `Unavailable`, `DeadlineExceeded`)
+and CS3 `CODE_UNAVAILABLE` are "OpenCloud is not up yet" and are waited out.
+Any CS3 status answer is OpenCloud speaking, so a wrong secret
+(`CODE_INTERNAL`), a missing state Space and an unsafe one stay fatal.
+Not measured: a cold first start (`init`) or a slow host; CS3
+`CODE_UNAVAILABLE` is included for that case.

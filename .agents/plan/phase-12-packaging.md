@@ -67,6 +67,10 @@ Used as:
   service derives it from the cgroup v2 limit less the tmpfs sizes, so the
   add-on must give `/tmp` a `size` (unsized tmpfs leaves the limit unset,
   with a warning).
+  *Landed in #152:* startup waits for OpenCloud (listener first, `/readyz`
+  503 meanwhile) for `STARTUP_WAIT_SECONDS`; the add-on sets it to `0`
+  (wait as long as it takes). A stale instance record after an unclean stop
+  is waited out (decisions.md, "Amendments from Phase 12").
 - `CS3_GATEWAY_ADDR=opencloud:9142`, `CS3_DATA_SERVER_URL=http://opencloud:9158`,
   `OIDC_ISSUER`/`OC_BASE_URL` = `https://${OC_DOMAIN}`, `OIDC_AUDIENCE=web`
   (built-in IdP; the Keycloak overlay differs — documented).

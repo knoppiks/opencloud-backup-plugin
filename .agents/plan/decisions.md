@@ -1917,6 +1917,36 @@ None reopens a locked decision.
   gofmt and prettier: its check flagged 345 lines, all inside raw strings,
   heredocs and multi-line jq programs.
 
+### Amendments from Phase 12 (packaging; #152, waiting for OpenCloud)
+
+Amends #16's single-instance check; reopens nothing else.
+
+- **Startup waits for OpenCloud, with a deadline (owner, 2026-10-28).**
+  `STARTUP_WAIT_SECONDS`, default 120; `0` waits as long as it takes. An
+  orchestrator that restarts with backoff (Kubernetes) keeps the default and
+  lets the pod die after it; the Compose add-on sets `0`, because Compose
+  restarts by policy without any ordering on OpenCloud's health.
+- **The listener comes first.** While startup waits, `/healthz` answers 200,
+  `/readyz` 503, every other route 503 `starting`. SIGTERM during the wait
+  is a clean stop (exit 0).
+- **Only "not up yet" is waited out.** Measured on the fixture
+  (phase-0-findings.md, "Phase 12 spike" §4): a booting OpenCloud yields
+  gRPC `Unavailable`/`DeadlineExceeded` and nothing else; a wrong
+  service-account secret yields `CODE_INTERNAL` from `Authenticate` as soon
+  as the gateway listens. So transport errors and CS3 `CODE_UNAVAILABLE` are
+  retried (1 s doubling to 30 s, a log line at most every 30 s); any other
+  CS3 answer stays fatal at once: wrong secret, missing state Space, unsafe
+  state Space. Configuration errors are fatal before the listener starts.
+  Operator commands (`rotate-*`) do not wait.
+- **#16 amended: a stale instance record is waited out, a live one is
+  refused (owner, 2026-10-28).** After an unclean stop (host reboot,
+  SIGKILL) the record outlives its process by up to the 2-minute TTL, and
+  the replacement used to exit until it expired. Now the replacement watches
+  the record (re-read every TTL/12): renewed — the other instance is alive
+  (it renews every TTL/3) — means `ErrAnotherInstance` as before; expired or
+  withdrawn unrenewed means take over. The wait is bounded by the record's
+  own TTL, not by `STARTUP_WAIT_SECONDS`. Still a check, not a lock.
+
 ---
 
 ## Trust & key model

@@ -7,7 +7,8 @@
 // rolling update.
 //
 // A guard writes a short-lived record announcing itself and refuses to start
-// while another instance's record is still live. **This is not a lock.** Two
+// while another instance is renewing its record; a record that stops being
+// renewed is waited out instead. **This is not a lock.** Two
 // processes starting at the same moment can both read "nobody there" and both
 // write; the same missing primitive that stops the lease from being a lock stops
 // this from being one. What it does catch is the common case — a second instance
@@ -40,9 +41,10 @@ const (
 	writeTimeout = 30 * time.Second
 )
 
-// ErrAnotherInstance reports that a live instance record belongs to someone
-// else. It is a startup error: two instances against one state Space can mark
-// each other's runs failed and dispatch the same Space twice.
+// ErrAnotherInstance reports that another instance is alive: its record was
+// renewed while this one watched it. It is a startup error: two instances
+// against one state Space can mark each other's runs failed and dispatch the
+// same Space twice.
 var ErrAnotherInstance = errors.New(
 	"instance: another instance of this service is running against this state space; " +
 		"only one is supported (decisions.md #16) — deploy with strategy Recreate")
@@ -74,7 +76,8 @@ type Options struct {
 	Clock Clock
 	// Logger receives diagnostics. It never sees key material.
 	Logger *slog.Logger
-	// After schedules renewals. Tests inject a channel they control.
+	// After schedules renewals and the re-reads of a record Claim waits on.
+	// Tests inject a channel they control.
 	After func(time.Duration) <-chan time.Time
 }
 
@@ -126,7 +129,9 @@ func New(st state.Store, opts Options) (*Guard, error) {
 func (g *Guard) ID() string { return g.id }
 
 // Claim announces this instance and returns the function that stands it down.
-// It returns ErrAnotherInstance when someone else's record is still live.
+// It returns ErrAnotherInstance when someone else's record is renewed while
+// Claim watches it, and waits (at most the TTL, or until ctx ends) for one
+// that is not.
 //
 // An unreadable record counts as live: a state store that cannot be understood
 // is not evidence that nobody is there, and refusing to start is the recoverable
@@ -154,15 +159,14 @@ func (g *Guard) Claim(ctx context.Context) (func(), error) {
 	}, nil
 }
 
-// checkAlone refuses when another instance's record has not expired, and clears
-// the records of instances that are demonstrably gone.
+// checkAlone refuses when another instance is alive, and clears the records of
+// instances that are demonstrably gone.
 func (g *Guard) checkAlone(ctx context.Context) error {
 	keys, err := g.docs.Keys(ctx)
 	if err != nil {
 		return fmt.Errorf("instance: list instance records: %w", err)
 	}
 
-	now := g.clock.Now()
 	for _, key := range keys {
 		rec, err := g.docs.GetKey(ctx, key)
 		if err != nil {
@@ -171,8 +175,10 @@ func (g *Guard) checkAlone(ctx context.Context) error {
 		if rec.ID == g.id {
 			continue
 		}
-		if now.Before(rec.ExpiresAt) {
-			return ErrAnotherInstance
+		if g.clock.Now().Before(rec.ExpiresAt) {
+			if err := g.awaitExpiry(ctx, key, rec); err != nil {
+				return err
+			}
 		}
 		// Expired: that process is gone, or is so far behind on renewals that
 		// it has already lost its run leases.
@@ -182,6 +188,47 @@ func (g *Guard) checkAlone(ctx context.Context) error {
 	}
 	return nil
 }
+
+// awaitExpiry watches a live record until it expires or is withdrawn, and
+// refuses as soon as it is renewed.
+//
+// A record outlives its process by up to the TTL when that process did not
+// stand down: a crash, or a host that went down under it. The replacement
+// that starts after a reboot then finds it live. Refusing would make it
+// restart until the TTL ran out; waiting costs at most the same TTL. What
+// tells a dead instance from a live one is renewal, which a live one does
+// every TTL/3, so the record is watched rather than merely waited out
+// (decisions.md #16, amended for #152).
+func (g *Guard) awaitExpiry(ctx context.Context, key string, seen record) error {
+	g.logger.Info("another instance's record is live; waiting to see whether it is renewed",
+		"instance", seen.ID, "expires_at", seen.ExpiresAt)
+	for {
+		remaining := seen.ExpiresAt.Sub(g.clock.Now())
+		if remaining <= 0 {
+			g.logger.Info("the other instance's record expired unrenewed; taking over", "instance", seen.ID)
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("instance: waiting for another instance's record to expire: %w", ctx.Err())
+		case <-g.after(min(g.watchInterval(), remaining)):
+		}
+
+		rec, err := g.docs.GetKey(ctx, key)
+		switch {
+		case state.IsNotFound(err):
+			return nil
+		case err != nil:
+			return fmt.Errorf("%w (an instance record could not be read)", ErrAnotherInstance)
+		case !rec.ExpiresAt.Equal(seen.ExpiresAt):
+			return ErrAnotherInstance
+		}
+	}
+}
+
+// watchInterval is how often a live record is re-read while waiting for it to
+// expire: often enough to notice a renewal well before the next one is due.
+func (g *Guard) watchInterval() time.Duration { return g.ttl / 12 }
 
 // write stores this instance's record, valid from now.
 func (g *Guard) write(ctx context.Context) error {

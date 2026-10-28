@@ -51,6 +51,7 @@ import (
 	"github.com/knoppiks/opencloud-backup-plugin/internal/notify"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/objstore"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/ocversion"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/retry"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/scheduler"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/spacecfg"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/state"
@@ -84,6 +85,8 @@ type startupDeps struct {
 	openState func(ctx context.Context, st stateEnv, client *cs3.Client, serviceAccountID string, logger *slog.Logger) (state.Store, error)
 	// memory sets the process's soft memory limit; nil leaves it alone.
 	memory *memlimit.Host
+	// guard tunes the single-instance guard; the zero value is production's.
+	guard instance.Options
 }
 
 // productionStartup is what the service runs with.
@@ -163,37 +166,25 @@ func serve(cfg serviceEnv, logger *slog.Logger, deps startupDeps) error {
 		configureMemoryLimit(*deps.memory, cfg.Backup, logger)
 	}
 
-	svc, cleanup, err := buildService(context.Background(), cfg, logger, deps)
-	if err != nil {
-		return fmt.Errorf("startup failed: %w", err)
-	}
-	defer cleanup()
-
-	certFile, keyFile := cfg.HTTP.TLSCertFile, cfg.HTTP.TLSKeyFile
-	basePath := cfg.HTTP.BasePath
-	if basePath != "" {
-		logger.Info("API mounted under a path prefix", "base_path", basePath)
-	}
-
-	addr := cfg.HTTP.Addr
-	httpSrv := &http.Server{
-		Addr:    addr,
-		Handler: mountBasePath(svc.api.Handler(), basePath),
-		// net/http's own errors (TLS handshakes, malformed requests) go to
-		// the structured log rather than to a plain line on stderr.
-		ErrorLog: httpErrorLog(logger),
-		// A stalled or slow client must not be able to hold a connection open
-		// indefinitely. WriteTimeout is generous because a snapshot listing for
-		// a large Space is served synchronously; backup runs are background jobs
-		// and do not hold a request open.
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      2 * time.Minute,
-		IdleTimeout:       2 * time.Minute,
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// The listener comes first and answers "alive, not ready" while startup
+	// waits for OpenCloud (api.Starting), so a probe can tell starting from
+	// dead. The API takes over once it is built.
+	if cfg.HTTP.BasePath != "" {
+		logger.Info("API mounted under a path prefix", "base_path", cfg.HTTP.BasePath)
+	}
+	routes := newSwitchHandler(api.Starting())
+	httpSrv := newHTTPServer(cfg.HTTP.Addr, mountBasePath(routes, cfg.HTTP.BasePath), logger)
+	serveErr := listen(httpSrv, cfg.HTTP, logger, stop)
+
+	svc, cleanup, err := buildService(ctx, cfg, logger, deps)
+	if err != nil {
+		return stopStarting(ctx, httpSrv, serveErr, err, logger)
+	}
+	defer cleanup()
+	routes.set(svc.api.Handler())
 
 	var workers sync.WaitGroup
 	if svc.openCloud != nil {
@@ -213,16 +204,44 @@ func serve(cfg serviceEnv, logger *slog.Logger, deps startupDeps) error {
 		}()
 	}
 
+	logger.Info("backupd ready")
+	<-ctx.Done()
+	logger.Info("shutting down")
+	return shutdown(httpSrv, svc.background, &workers, serveErr, logger)
+}
+
+// newHTTPServer is the API's listener.
+func newHTTPServer(addr string, handler http.Handler, logger *slog.Logger) *http.Server {
+	return &http.Server{
+		Addr:    addr,
+		Handler: handler,
+		// net/http's own errors (TLS handshakes, malformed requests) go to
+		// the structured log rather than to a plain line on stderr.
+		ErrorLog: httpErrorLog(logger),
+		// A stalled or slow client must not be able to hold a connection open
+		// indefinitely. WriteTimeout is generous because a snapshot listing for
+		// a large Space is served synchronously; backup runs are background jobs
+		// and do not hold a request open.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+}
+
+// listen serves httpSrv in the background. A listener that fails reports on
+// the returned channel and calls stop, which ends startup or the service.
+func listen(httpSrv *http.Server, cfg listenerEnv, logger *slog.Logger, stop func()) <-chan error {
 	serveErr := make(chan error, 1)
 	go func() {
 		var err error
-		if certFile != "" {
-			logger.Info("backupd listening (TLS)", "addr", addr)
-			err = httpSrv.ListenAndServeTLS(certFile, keyFile)
+		if cfg.TLSCertFile != "" {
+			logger.Info("backupd listening (TLS)", "addr", cfg.Addr)
+			err = httpSrv.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
 		} else {
 			// Plain HTTP: a Data Key crosses this listener once per Space, at
 			// key setup, so something in front of it must terminate TLS.
-			logger.Info("backupd listening (plain HTTP; a TLS-terminating ingress is required)", "addr", addr)
+			logger.Info("backupd listening (plain HTTP; a TLS-terminating ingress is required)", "addr", cfg.Addr)
 			err = httpSrv.ListenAndServe()
 		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -230,10 +249,30 @@ func serve(cfg serviceEnv, logger *slog.Logger, deps startupDeps) error {
 			stop()
 		}
 	}()
+	return serveErr
+}
 
-	<-ctx.Done()
-	logger.Info("shutting down")
-	return shutdown(httpSrv, svc.background, &workers, serveErr, logger)
+// stopStarting closes the listener after startup did not complete and says
+// why. A signal while waiting for OpenCloud is a clean stop, not a failure;
+// a listener that could not start is reported as itself, not as the startup
+// it cut short.
+func stopStarting(ctx context.Context, httpSrv *http.Server, serveErr <-chan error, startErr error, logger *slog.Logger) error {
+	// ctx is usually what ended startup; closing the listener must not end
+	// with it.
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), httpShutdownTimeout)
+	defer cancel()
+	_ = httpSrv.Shutdown(shutdownCtx)
+
+	select {
+	case err := <-serveErr:
+		return err
+	default:
+	}
+	if ctx.Err() != nil && errors.Is(startErr, context.Canceled) {
+		logger.Info("stopped while starting", "err", startErr)
+		return nil
+	}
+	return fmt.Errorf("startup failed: %w", startErr)
 }
 
 // shutdown stops accepting work, cancels what is running, and waits for it to
@@ -376,8 +415,11 @@ func buildService(ctx context.Context, cfg serviceEnv, logger *slog.Logger, deps
 	// Two instances against one state Space can mark each other's runs failed
 	// and dispatch the same Space twice (decisions.md #16). This is a check, not
 	// a lock — the backend has no compare-and-set — but it catches the case that
-	// actually happens: a rolling update starting a second pod.
-	guard, err := instance.New(backing, instance.Options{Logger: logger})
+	// actually happens: a rolling update starting a second pod. The record of
+	// an instance that stopped uncleanly is waited out, not refused.
+	guardOpts := deps.guard
+	guardOpts.Logger = logger
+	guard, err := instance.New(backing, guardOpts)
 	if err != nil {
 		return service{}, cleanup, err
 	}
@@ -603,7 +645,26 @@ func buildStateStore(ctx context.Context, st stateEnv, client *cs3.Client, servi
 			"CS3_GATEWAY_ADDR is required to reach the state space named by STATE_SPACE_ID")
 	}
 
-	store, err := cs3state.New(client, cs3state.Options{
+	store, err := openStateSpace(st, client, serviceAccountID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Everything after this reads or writes the state Space, starting with
+	// the instance record, so OpenCloud has to be up. After a reboot it starts
+	// together with this service and is usually not, yet (#152).
+	if err := waitForStateSpace(ctx, store.Check, st.startupWait(), retry.Options{Logger: logger}); err != nil {
+		return nil, err
+	}
+
+	logger.Info("service state persisted in OpenCloud", "space", st.SpaceID)
+	return store, nil
+}
+
+// openStateSpace is the state store over the Space STATE_SPACE_ID names. It
+// does not reach OpenCloud: resolution is lazy.
+func openStateSpace(st stateEnv, client *cs3.Client, serviceAccountID string) (*cs3state.Store, error) {
+	return cs3state.New(client, cs3state.Options{
 		SpaceID: st.SpaceID,
 		Prefix:  st.Prefix,
 		// The state Space is created by the service account (see
@@ -613,30 +674,68 @@ func buildStateStore(ctx context.Context, st stateEnv, client *cs3.Client, servi
 		// from an end user's.
 		ServiceAccountID: serviceAccountID,
 	})
-	if err != nil {
-		return nil, err
-	}
+}
 
-	// A state Space an end user can reach is a Space an end user can empty, and
-	// what they would be emptying is the only server-side copy of every wrapped
-	// Data Key. That is a misconfiguration to refuse at boot, not to discover
-	// later. A Space that cannot be checked at all is a different matter:
-	// OpenCloud may simply not be up yet, and resolution is lazy for exactly
-	// that reason, so it is a warning.
+// waitForStateSpace checks the state Space until OpenCloud answers, for at
+// most timeout (zero: without limit).
+//
+// Only "OpenCloud is not up yet" is waited out (cs3.Unreachable). An answer
+// ends the wait either way: a state Space an end user can reach is a Space an
+// end user can empty, and what they would be emptying is the only server-side
+// copy of every wrapped Data Key, so that is refused at boot; and a refused
+// service account or a missing Space is a misconfiguration no amount of
+// waiting fixes.
+func waitForStateSpace(ctx context.Context, check func(context.Context) error, timeout time.Duration, opts retry.Options) error {
+	waitCtx, cancel := ctx, context.CancelFunc(func() {})
+	if timeout > 0 {
+		waitCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	defer cancel()
+
+	opts.What, opts.Transient = "OpenCloud", cs3.Unreachable
+	err := retry.Until(waitCtx, func(ctx context.Context) error {
+		attemptCtx, cancel := context.WithTimeout(ctx, stateCheckTimeout)
+		defer cancel()
+		return check(attemptCtx)
+	}, opts)
+	switch {
+	case err == nil:
+		return nil
+	case ctx.Err() == nil && waitCtx.Err() != nil:
+		return fmt.Errorf("OpenCloud did not answer within %s (STARTUP_WAIT_SECONDS): %w", timeout, err)
+	case refusedServiceAccount(err):
+		return fmt.Errorf("OpenCloud refused the service account; check OC_SERVICE_ACCOUNT_ID and "+
+			"OC_SERVICE_ACCOUNT_SECRET: %w", err)
+	default:
+		return err
+	}
+}
+
+// refusedServiceAccount reports OpenCloud turning down the service account's
+// credentials. It answers a wrong secret with CODE_INTERNAL, not
+// CODE_UNAUTHENTICATED (phase-0-findings.md, "Phase 12 spike" §4), so any
+// refusal of Authenticate counts.
+func refusedServiceAccount(err error) bool {
+	st := new(cs3.StatusError)
+	return errors.As(err, &st) && st.Op == "Authenticate"
+}
+
+// checkStateSpaceOnce is the operator commands' check: a command run by hand
+// does not wait for OpenCloud. An unsafe Space is refused; one that cannot be
+// checked is a warning, and the command fails on first use if it stays so.
+func checkStateSpaceOnce(ctx context.Context, store *cs3state.Store, logger *slog.Logger) error {
 	checkCtx, cancel := context.WithTimeout(ctx, stateCheckTimeout)
 	defer cancel()
 	if err := store.Check(checkCtx); err != nil {
 		if errors.Is(err, cs3state.ErrUnsafeStateSpace) {
-			return nil, err
+			return err
 		}
-		logger.Warn("could not verify the state space at startup; it will be resolved on first use", "err", err)
+		logger.Warn("could not verify the state space; it will be resolved on first use", "err", err)
 	}
-
-	logger.Info("service state persisted in OpenCloud", "space", st.SpaceID)
-	return store, nil
+	return nil
 }
 
-// stateCheckTimeout bounds the startup validation of the state Space.
+// stateCheckTimeout bounds one check of the state Space.
 const stateCheckTimeout = 30 * time.Second
 
 // buildNotifier wires the delivery sinks. Logs are always a sink; SMTP is added

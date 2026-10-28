@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/kopia/kopia/repo/blob/throttling"
 
@@ -55,7 +56,7 @@ func newServiceEnv() serviceEnv {
 	return serviceEnv{
 		HTTP:      listenerEnv{Addr: ":8080"},
 		API:       api.DefaultEnv(),
-		State:     stateEnv{Prefix: cs3state.DefaultPrefix},
+		State:     stateEnv{Prefix: cs3state.DefaultPrefix, WaitSeconds: int(defaultStartupWait / time.Second)},
 		Scheduler: scheduler.DefaultEnv(),
 	}
 }
@@ -159,10 +160,31 @@ type stateEnv struct {
 	SpaceID string `env:"STATE_SPACE_ID" doc:"Id of the OpenCloud Space holding schedules, run history, wrapped key envelopes and target records. Create it with backupd provision-state-space. Required unless STATE_BACKEND is memory."`
 	Prefix  string `env:"STATE_PREFIX" doc:"Folder inside the state Space the records live under."`
 	Backend string `env:"STATE_BACKEND" values:"memory" doc:"Set to memory for throwaway state that does not survive a restart (smoke tests only)."`
+	// WaitSeconds is read through startupWait.
+	WaitSeconds int `env:"STARTUP_WAIT_SECONDS" doc:"Seconds the service waits at startup for OpenCloud to answer before it exits. It is alive but not ready meanwhile. 0 waits as long as it takes, for a runtime that does not restart it (Docker Compose)."`
+}
+
+// defaultStartupWait is long enough for OpenCloud to boot beside the service,
+// short enough that an orchestrator's restart backoff takes over when it does
+// not.
+const defaultStartupWait = 2 * time.Minute
+
+var _ config.Validator = (*stateEnv)(nil)
+
+// Validate refuses a negative wait, which would read as "do not wait" and
+// look like it means something else.
+func (s *stateEnv) Validate() error {
+	if s.WaitSeconds < 0 {
+		return fmt.Errorf("STARTUP_WAIT_SECONDS must be 0 (wait as long as it takes) or more: got %d", s.WaitSeconds)
+	}
+	return nil
 }
 
 // memory reports whether the operator explicitly asked for throwaway state.
 func (s stateEnv) memory() bool { return s.Backend == stateBackendMemory }
+
+// startupWait is how long startup waits for OpenCloud; zero is without limit.
+func (s stateEnv) startupWait() time.Duration { return time.Duration(s.WaitSeconds) * time.Second }
 
 // custodyEnv holds the two custody keys and, during a rotation, the ones
 // retiring. Each is base64 of 32 random bytes.

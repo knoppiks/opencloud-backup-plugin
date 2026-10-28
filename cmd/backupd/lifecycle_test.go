@@ -76,18 +76,21 @@ func TestBuildService_AFailedStartupReleasesTheInstanceRecord(t *testing.T) {
 	cleanup()
 }
 
-// The live instance is still protected: the guard has not been weakened.
+// The live instance is still protected: the guard has not been weakened. The
+// second start watches the first one's record and is refused once it sees it
+// renewed; a short TTL makes that happen in milliseconds.
 func TestBuildService_ASecondLiveInstanceIsStillRefused(t *testing.T) {
 	cfg := testConfig(t, minimalServiceEnv(t)...)
-	st := state.NewMemoryStore()
+	deps := sharedState(state.NewMemoryStore())
+	deps.guard = instance.Options{TTL: 300 * time.Millisecond}
 
-	_, cleanup, err := buildService(context.Background(), cfg, discardLogger(), sharedState(st))
+	_, cleanup, err := buildService(context.Background(), cfg, discardLogger(), deps)
 	if err != nil {
 		t.Fatalf("first start: %v", err)
 	}
 	defer cleanup()
 
-	_, cleanup2, err := buildService(context.Background(), cfg, discardLogger(), sharedState(st))
+	_, cleanup2, err := buildService(context.Background(), cfg, discardLogger(), deps)
 	defer cleanup2()
 	if !errors.Is(err, instance.ErrAnotherInstance) {
 		t.Fatalf("second start = %v, want ErrAnotherInstance", err)

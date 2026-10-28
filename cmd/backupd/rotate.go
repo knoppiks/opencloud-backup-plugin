@@ -137,8 +137,11 @@ func runRotate(
 	if st.SpaceID == "" {
 		return errors.New("STATE_SPACE_ID is required: there is nothing to rotate in in-memory state")
 	}
-	store, err := buildStateStore(ctx, st, client, cs3Env.ServiceAccountID.Reveal(), logger)
+	store, err := openStateSpace(st, client, cs3Env.ServiceAccountID.Reveal())
 	if err != nil {
+		return err
+	}
+	if err := checkStateSpaceOnce(ctx, store, logger); err != nil {
 		return err
 	}
 

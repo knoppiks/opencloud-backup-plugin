@@ -36,7 +36,114 @@ func TestNew_RequiresAStore(t *testing.T) {
 	}
 }
 
+// newWatcher builds a guard whose waits are reported on waits and end when
+// the test sends on tick, so a test knows when Claim has started watching.
+func newWatcher(t *testing.T, backing state.Store, clock Clock, id string) (g *Guard, waits <-chan time.Duration, tick chan<- time.Time) {
+	t.Helper()
+	w := make(chan time.Duration, 16)
+	c := make(chan time.Time)
+	g, err := New(backing, Options{TTL: time.Minute, ID: id, Clock: clock,
+		After: func(d time.Duration) <-chan time.Time { w <- d; return c }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return g, w, c
+}
+
+// claimAsync runs Claim in the background, for a Claim that waits on a live
+// record until the test moves time on.
+func claimAsync(ctx context.Context, g *Guard) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := g.Claim(ctx)
+		done <- err
+	}()
+	return done
+}
+
+// result waits for a background Claim.
+func result(t *testing.T, done <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Claim did not return")
+		return nil
+	}
+}
+
+// A live instance renews its record while the newcomer watches it, and that
+// is what gets the newcomer refused.
 func TestGuard_RefusesToStartBesideALiveInstance(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+
+	first, renewFirst := newGuard(t, backing, clock, "instance-a", time.Minute)
+	release, err := first.Claim(ctx)
+	if err != nil {
+		t.Fatalf("first Claim: %v", err)
+	}
+
+	second, waits, watch := newWatcher(t, backing, clock, "instance-b")
+	done := claimAsync(ctx, second)
+	<-waits
+
+	clock.Advance(20 * time.Second)
+	renewFirst <- clock.Now()
+	waitForExpiry(t, backing, "instance-a", clock.Now().Add(time.Minute))
+	watch <- clock.Now()
+	if err := result(t, done); !errors.Is(err, ErrAnotherInstance) {
+		t.Fatalf("second Claim = %v, want ErrAnotherInstance", err)
+	}
+
+	// This is the rolling-update case: the first instance stands down, the
+	// replacement starts immediately rather than waiting out the TTL.
+	release()
+	if _, err := second.Claim(ctx); err != nil {
+		t.Fatalf("Claim after the previous instance released: %v", err)
+	}
+}
+
+// After an unclean stop the record outlives its process. The replacement
+// waits it out instead of failing (#152), re-reading it in between.
+func TestGuard_WaitsOutARecordThatIsNotRenewed(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+
+	crashed, _ := newGuard(t, backing, clock, "instance-a", time.Minute)
+	if _, err := crashed.Claim(ctx); err != nil {
+		t.Fatalf("first Claim: %v", err)
+	}
+
+	next, waits, watch := newWatcher(t, backing, clock, "instance-b")
+	done := claimAsync(ctx, next)
+
+	// Re-read every TTL/12 while there is that much left, then once at expiry.
+	if d := <-waits; d != 5*time.Second {
+		t.Fatalf("first wait = %v, want TTL/12", d)
+	}
+	clock.Advance(57 * time.Second)
+	watch <- clock.Now()
+	if d := <-waits; d != 3*time.Second {
+		t.Fatalf("last wait = %v, want the 3s left", d)
+	}
+	clock.Advance(3 * time.Second)
+	watch <- clock.Now()
+	if err := result(t, done); err != nil {
+		t.Fatalf("Claim after the record expired = %v", err)
+	}
+
+	ids, err := state.NewDocuments[record](backing, prefix).IDs(ctx)
+	if err != nil || len(ids) != 1 || ids[0] != "instance-b" {
+		t.Fatalf("instance records = %v (%v), want only instance-b", ids, err)
+	}
+}
+
+// A record withdrawn while it is watched frees the way at once.
+func TestGuard_StartsWhenTheWatchedRecordIsWithdrawn(t *testing.T) {
 	ctx := context.Background()
 	backing := state.NewMemoryStore()
 	clock := testutil.NewFakeClock(epoch)
@@ -46,17 +153,58 @@ func TestGuard_RefusesToStartBesideALiveInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Claim: %v", err)
 	}
+	second, waits, watch := newWatcher(t, backing, clock, "instance-b")
+	done := claimAsync(ctx, second)
+	<-waits
 
-	second, _ := newGuard(t, backing, clock, "instance-b", time.Minute)
-	if _, err := second.Claim(ctx); !errors.Is(err, ErrAnotherInstance) {
-		t.Fatalf("second Claim = %v, want ErrAnotherInstance", err)
-	}
-
-	// This is the rolling-update case: the first instance stands down, the
-	// replacement starts immediately rather than waiting out the TTL.
 	release()
-	if _, err := second.Claim(ctx); err != nil {
-		t.Fatalf("Claim after the previous instance released: %v", err)
+	watch <- clock.Now()
+	if err := result(t, done); err != nil {
+		t.Fatalf("Claim after the record was withdrawn = %v", err)
+	}
+}
+
+// Shutting down while waiting ends the wait.
+func TestGuard_WaitEndsWithTheContext(t *testing.T) {
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+
+	first, _ := newGuard(t, backing, clock, "instance-a", time.Minute)
+	if _, err := first.Claim(context.Background()); err != nil {
+		t.Fatalf("first Claim: %v", err)
+	}
+	second, waits, _ := newWatcher(t, backing, clock, "instance-b")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := claimAsync(ctx, second)
+	<-waits
+	cancel()
+	if err := result(t, done); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Claim = %v, want context.Canceled", err)
+	}
+}
+
+// A watched record that becomes unreadable is not evidence that its instance
+// is gone.
+func TestGuard_RefusesWhenTheWatchedRecordBecomesUnreadable(t *testing.T) {
+	ctx := context.Background()
+	backing := state.NewMemoryStore()
+	clock := testutil.NewFakeClock(epoch)
+
+	first, _ := newGuard(t, backing, clock, "instance-a", time.Minute)
+	if _, err := first.Claim(ctx); err != nil {
+		t.Fatalf("first Claim: %v", err)
+	}
+	second, waits, watch := newWatcher(t, backing, clock, "instance-b")
+	done := claimAsync(ctx, second)
+	<-waits
+
+	key := state.NewDocuments[record](backing, prefix).Key("instance-a")
+	if err := backing.Replace(ctx, key, []byte("not json")); err != nil {
+		t.Fatalf("corrupt: %v", err)
+	}
+	watch <- clock.Now()
+	if err := result(t, done); !errors.Is(err, ErrAnotherInstance) {
+		t.Fatalf("Claim = %v, want ErrAnotherInstance", err)
 	}
 }
 
@@ -101,11 +249,6 @@ func TestGuard_RenewalKeepsTheRecordLive(t *testing.T) {
 	clock.Advance(90 * time.Second)
 	renew <- clock.Now()
 	waitForExpiry(t, backing, "instance-a", clock.Now().Add(time.Minute))
-
-	other, _ := newGuard(t, backing, clock, "instance-b", time.Minute)
-	if _, err := other.Claim(ctx); !errors.Is(err, ErrAnotherInstance) {
-		t.Fatalf("Claim beside a renewed instance = %v, want ErrAnotherInstance", err)
-	}
 }
 
 // Reclaiming with the same id is how a restart of the same identity behaves; it
