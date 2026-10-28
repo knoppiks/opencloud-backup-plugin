@@ -340,7 +340,11 @@ secrets shown only as set or unset.
      the directory. That adds to the image's public CA bundle. Do not use
      `SSL_CERT_FILE` for this: it replaces the bundle, and the service then
      cannot verify a publicly certified OpenCloud issuer.
-9. **Check it.** `/readyz` answers 200 once the gateway is reachable. In
+9. **Check it.** `/readyz` answers 200 once the gateway is reachable. If
+   OpenCloud is not up yet, the service waits for it (`STARTUP_WAIT_SECONDS`,
+   two minutes by default) and logs "waiting for OpenCloud"; `/healthz`
+   answers 200 meanwhile. It exits at once if OpenCloud refuses the service
+   account or the state Space is missing or unsafe. In
    OpenCloud, Backup Vault appears in the app menu. Set up one Space, run
    "Back up now", and restore from it before relying on it.
 

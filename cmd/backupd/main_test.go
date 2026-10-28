@@ -122,6 +122,7 @@ func TestServe_LogsTheEffectiveConfigurationWithoutSecrets(t *testing.T) {
 		"SRW_KEY="+srw, "TW_KEY="+tw, "SMTP_PASSWORD="+password,
 		"OC_BASE_URL=https://cloud.example",
 		"BACKUP_WORK_DIR_ALLOW_DISK=true", "BACKUP_WORK_DIR="+t.TempDir(),
+		"BACKUPD_ADDR=127.0.0.1:0",
 	)
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))

@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync/atomic"
 
 	"github.com/knoppiks/opencloud-backup-plugin/internal/api"
 	"github.com/knoppiks/opencloud-backup-plugin/internal/memlimit"
@@ -113,6 +114,23 @@ func configureMemoryLimit(host memlimit.Host, w workEnv, logger *slog.Logger) {
 		logger.Warn("memory limit not set; give the memory-backed directories a size "+
 			"below the container's memory limit, or set "+memlimit.EnvVar, "err", err)
 	}
+}
+
+// switchHandler serves one handler until set hands over to another: the
+// listener answers from before startup is done (api.Starting) and the API
+// takes over without the listener being replaced.
+type switchHandler struct{ current atomic.Pointer[http.Handler] }
+
+func newSwitchHandler(initial http.Handler) *switchHandler {
+	s := &switchHandler{}
+	s.set(initial)
+	return s
+}
+
+func (s *switchHandler) set(h http.Handler) { s.current.Store(&h) }
+
+func (s *switchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	(*s.current.Load()).ServeHTTP(w, r)
 }
 
 // chain composes cleanup functions, running them in the order given.

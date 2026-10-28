@@ -56,6 +56,7 @@ The Go runtime also reads `TZ` (the zone schedules are read in, unless `SCHEDULE
 | `STATE_SPACE_ID` | string |  | Id of the OpenCloud Space holding schedules, run history, wrapped key envelopes and target records. Create it with backupd provision-state-space. Required unless `STATE_BACKEND` is memory. |
 | `STATE_PREFIX` | string | `.backup-service-state` | Folder inside the state Space the records live under. |
 | `STATE_BACKEND` | one of `memory` |  | Set to memory for throwaway state that does not survive a restart (smoke tests only). |
+| `STARTUP_WAIT_SECONDS` | integer | `120` | Seconds the service waits at startup for OpenCloud to answer before it exits. It is alive but not ready meanwhile. 0 waits as long as it takes, for a runtime that does not restart it (Docker Compose). |
 
 ## Custody keys
 

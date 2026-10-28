@@ -334,7 +334,10 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 10
         readinessProbe:
-          # /readyz probes the CS3 gateway (Phase 2); 503 until it is reachable.
+          # /readyz probes the CS3 gateway (Phase 2); 503 until it is reachable,
+          # including while startup waits for OpenCloud (STARTUP_WAIT_SECONDS,
+          # then the container exits and is restarted). /healthz answers 200
+          # throughout that wait.
           httpGet:
             path: /readyz
             port: http

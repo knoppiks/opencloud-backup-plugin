@@ -450,7 +450,7 @@ func cleanRel(rel string) string {
 
 func statusErr(st *rpc.Status, op string) error {
 	if st.GetCode() != rpc.Code_CODE_OK {
-		return fmt.Errorf("cs3 %s: code=%s", op, st.GetCode())
+		return &StatusError{Op: op, Code: st.GetCode()}
 	}
 	return nil
 }
