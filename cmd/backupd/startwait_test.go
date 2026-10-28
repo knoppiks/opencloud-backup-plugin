@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -206,6 +207,45 @@ func TestServe_ListensBeforeOpenCloudAnswers(t *testing.T) {
 		t.Fatalf("API after startup = %d, want the API's own answer", got)
 	}
 	stopServe(t, done)
+}
+
+// afterReturn fails the test for every log record written once closed is
+// set: something of serve that outlived it. The listener's own line is held
+// up, so a listener serve does not wait for is caught every time.
+type afterReturn struct {
+	t      *testing.T
+	closed *atomic.Bool
+}
+
+func (h afterReturn) Enabled(context.Context, slog.Level) bool { return true }
+func (h afterReturn) WithAttrs([]slog.Attr) slog.Handler       { return h }
+func (h afterReturn) WithGroup(string) slog.Handler            { return h }
+func (h afterReturn) Handle(_ context.Context, r slog.Record) error {
+	if strings.HasPrefix(r.Message, "backupd listening") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if h.closed.Load() {
+		h.t.Errorf("logged after serve returned: %q", r.Message)
+	}
+	return nil
+}
+
+// A startup that fails closes the listener and waits for it, so nothing of
+// it logs after serve returned (the race that failed CI after #152).
+func TestServe_AFailedStartupLeavesNothingRunning(t *testing.T) {
+	failing := startupDeps{openState: func(context.Context, stateEnv, *cs3.Client, string, *slog.Logger) (state.Store, error) {
+		return nil, errors.New("no state for this test")
+	}}
+	for range 5 {
+		var closed atomic.Bool
+		cfg := testConfig(t, append(minimalServiceEnv(t), "BACKUPD_ADDR=127.0.0.1:0")...)
+		if err := serve(cfg, slog.New(afterReturn{t: t, closed: &closed}), failing); err == nil {
+			t.Fatal("serve succeeded without state")
+		}
+		closed.Store(true)
+		// Whatever was still running has had the time to log.
+		time.Sleep(40 * time.Millisecond)
+	}
 }
 
 // SIGTERM while waiting for OpenCloud is a clean stop.
