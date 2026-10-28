@@ -1947,6 +1947,38 @@ Amends #16's single-instance check; reopens nothing else.
   withdrawn unrenewed means take over. The wait is bounded by the record's
   own TTL, not by `STARTUP_WAIT_SECONDS`. Still a check, not a lock.
 
+### Amendments from Phase 12 (packaging; #156, the compose add-on)
+
+None reopens a locked decision.
+
+- **The add-on is distributed as a release archive (owner, 2026-10-28).**
+  The repository's copy names no version: images are
+  `${BACKUP_[WEB_]DOCKER_IMAGE:-ghcr.io/…}:${BACKUP_VERSION:?…}`. The
+  release (#160) stamps `:?…` into `:-<version>@sha256:<digest>`, each image
+  its own digest; the docs show the stamped form. `BACKUP_VERSION` stays an
+  override (a mirror, the fixture's CI build). A test holds the form.
+  `check-deploy-images.sh` and kubeconform cover `deploy/*.yaml` only.
+- **Own CA through `SSL_CERT_DIR`, not `SSL_CERT_FILE`.** The spike measured
+  `SSL_CERT_FILE`, which replaces the public bundle and would break a
+  publicly certified backup destination. `backup/ca/` (or `BACKUP_CA_DIR`)
+  is mounted as `SSL_CERT_DIR`, which adds. Measured with local certificates:
+  issuer discovery, token validation, Graph calls.
+- **Both proxy setups ship (owner, 2026-10-28):** `traefik/backup.yml` and
+  `external-proxy/backup.yml` (port on `127.0.0.1`, default 9280). Both
+  walked by hand (phase-0-findings.md, "Phase 12 spike" §5); CI covers the
+  Traefik one with #158.
+- **Keycloak / external IdPs: not supported yet (owner, 2026-10-28).**
+  Documented; admin detection with role claims is unmeasured (#162,
+  Roadmap).
+- **OpenCloud version (owner, 2026-10-28):** opencloud-compose `main`
+  defaults to OpenCloud 9.0.0 (2026-10-28), outside the tested window. The
+  add-on's README tells operators to set `OC_DOCKER_TAG` to a supported
+  version; `setup.sh` (#157) warns.
+- **All add-on variables are `BACKUP_*`** in opencloud-compose's `.env`,
+  including the service account (`BACKUP_OC_SERVICE_ACCOUNT_*`), so nothing
+  collides with OpenCloud's own variables. Mail settings are the add-on's
+  own, not upstream's `SMTP_*`: the two mailers differ in what they accept.
+
 ---
 
 ## Trust & key model

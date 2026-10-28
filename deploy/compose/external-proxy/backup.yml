@@ -1,0 +1,12 @@
+---
+# Without Traefik: your own proxy terminates TLS for OpenCloud's host and
+# routes /backup/api there to the backup service, prefix not stripped. The
+# service listens on localhost only, like external-proxy/opencloud.yml.
+#
+# The service still has to reach https://${OC_DOMAIN} from inside the compose
+# network, through your proxy, and trust its certificate (BACKUP_CA_DIR for
+# your own CA).
+services:
+  backupd:
+    ports:
+      - "127.0.0.1:${BACKUP_PORT:-9280}:8080"

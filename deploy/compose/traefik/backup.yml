@@ -1,0 +1,16 @@
+---
+# The route to the backup service on OpenCloud's own host: /backup/api, not
+# stripped. Not /backup, which would also catch the extension's own pages
+# under /backup-vault/. The longer rule wins over OpenCloud's Host() router
+# by Traefik's rule-length priority.
+services:
+  backupd:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${COMPOSE_PROJECT_NAME}_opencloud-net"
+      - "traefik.http.routers.backup-vault.entrypoints=https"
+      - "traefik.http.routers.backup-vault.rule=Host(`${OC_DOMAIN:-cloud.opencloud.test}`) && PathPrefix(`/backup/api`)"
+      - "traefik.http.routers.backup-vault.${TRAEFIK_SERVICES_TLS_CONFIG}"
+      - "traefik.http.routers.backup-vault.service=backup-vault"
+      - "traefik.http.routers.backup-vault.middlewares=hsts-header"
+      - "traefik.http.services.backup-vault.loadbalancer.server.port=8080"

@@ -39,7 +39,7 @@
   "osvVulnerabilityAlerts": true,
   "kubernetes": {
     "managerFilePatterns": [
-      "/^deploy/.+\\.ya?ml$/"
+      "/^deploy/[^/]+\\.ya?ml$/"
     ]
   },
   "customManagers": [

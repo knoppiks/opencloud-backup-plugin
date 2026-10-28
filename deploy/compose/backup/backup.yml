@@ -1,0 +1,114 @@
+---
+# Backup Vault for opencloud-compose: the backup service, and the one-shot
+# installer of its web extension. Add it to COMPOSE_FILE together with the
+# route of your proxy setup (traefik/backup.yml or external-proxy/backup.yml),
+# see README.md next to this directory.
+#
+# The images below name the version this add-on was released with. A copy
+# taken from the repository instead of a release names none: set
+# BACKUP_VERSION, or use the add-on from a release.
+services:
+
+  opencloud:
+    depends_on:
+      # The extension is copied into the apps directory before OpenCloud
+      # starts, because OpenCloud scans it at startup only. `restart: true`
+      # restarts OpenCloud when a new version of the extension was installed.
+      backup-vault-web:
+        condition: service_completed_successfully
+        restart: true
+    environment:
+      # The backup service reads Spaces through the CS3 gateway and the
+      # storage provider's data server. Both are plaintext and check the
+      # service account's token: they are opened on the compose network only,
+      # never published.
+      OC_GATEWAY_GRPC_ADDR: 0.0.0.0:9142
+      STORAGE_USERS_HTTP_ADDR: 0.0.0.0:9158
+
+  # Copies the web extension into OpenCloud's apps directory and exits. It
+  # runs as OpenCloud's user so the files are OpenCloud's to read.
+  backup-vault-web:
+    image: ${BACKUP_WEB_DOCKER_IMAGE:-ghcr.io/knoppiks/opencloud-backup-vault-web}:${BACKUP_VERSION:?set BACKUP_VERSION, or use the add-on from a release}
+    user: ${OC_CONTAINER_UID_GID:-1000:1000}
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ${OC_APPS_DIR:-./config/opencloud/apps}:/extensions
+    logging:
+      driver: ${LOG_DRIVER:-local}
+    restart: "no"
+
+  backupd:
+    image: ${BACKUP_DOCKER_IMAGE:-ghcr.io/knoppiks/opencloud-backupd}:${BACKUP_VERSION:?set BACKUP_VERSION, or use the add-on from a release}
+    networks:
+      opencloud-net:
+    # One instance only: two against one state Space are refused at startup
+    # (the service's instance guard). Do not scale this service.
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # The service derives Go's memory limit from this limit less the size of
+    # /tmp, which counts against it: kopia's per-run cache lives there.
+    mem_limit: ${BACKUP_MEM_LIMIT:-512m}
+    tmpfs:
+      - /tmp:size=${BACKUP_TMP_SIZE:-256m},mode=1777
+    environment:
+      BACKUPD_ADDR: ":8080"
+      # The route on OpenCloud's own host is /backup/api, not stripped.
+      BACKUPD_BASE_PATH: /backup
+      # OpenCloud's built-in IdP: the issuer is OpenCloud's own URL, and the
+      # browser's client id is `web`. Inside the compose network that URL
+      # resolves to the proxy (traefik/opencloud.yml gives Traefik the
+      # OC_DOMAIN alias).
+      OIDC_ISSUER: https://${OC_DOMAIN:-cloud.opencloud.test}${TRAEFIK_PORT_HTTPS:+:}${TRAEFIK_PORT_HTTPS:-}
+      OIDC_AUDIENCE: web
+      OC_BASE_URL: https://${OC_DOMAIN:-cloud.opencloud.test}${TRAEFIK_PORT_HTTPS:+:}${TRAEFIK_PORT_HTTPS:-}
+      CS3_GATEWAY_ADDR: opencloud:9142
+      CS3_DATA_SERVER_URL: http://opencloud:9158
+      # OpenCloud's service account, as `opencloud init` generated it. It
+      # reaches every Space's plaintext: the most valuable secret here.
+      OC_SERVICE_ACCOUNT_ID: ${BACKUP_OC_SERVICE_ACCOUNT_ID:?see deploy/compose/README.md, "Secrets"}
+      OC_SERVICE_ACCOUNT_SECRET: ${BACKUP_OC_SERVICE_ACCOUNT_SECRET:?see deploy/compose/README.md, "Secrets"}
+      # The two custody keys: base64 of 32 random bytes each, different.
+      SRW_KEY: ${BACKUP_SRW_KEY:?see deploy/compose/README.md, "Secrets"}
+      TW_KEY: ${BACKUP_TW_KEY:?see deploy/compose/README.md, "Secrets"}
+      # The Space the service keeps its own state in. The service refuses to
+      # start without it; `backupd provision-state-space` creates it.
+      STATE_SPACE_ID: ${BACKUP_STATE_SPACE_ID:-}
+      # Compose does not order restarts on OpenCloud's health, so after a
+      # reboot the service waits for OpenCloud as long as it takes.
+      STARTUP_WAIT_SECONDS: "0"
+      # Schedules are read in this zone: "nightly at 02:30" is the household's
+      # night.
+      TZ: ${BACKUP_TZ:-UTC}
+      # A certificate from your own CA (OC_DOMAIN with local certificates, or
+      # a backup destination): put the CA certificate into BACKUP_CA_DIR. It
+      # adds to the public CAs; certificate checks are never turned off.
+      SSL_CERT_DIR: /etc/backup/ca
+      # Operator notifications by email (optional). They never name a Space.
+      NOTIFY_OPERATOR_EMAIL: ${BACKUP_NOTIFY_EMAIL:-}
+      SMTP_HOST: ${BACKUP_SMTP_HOST:-}
+      SMTP_PORT: ${BACKUP_SMTP_PORT:-}
+      SMTP_USERNAME: ${BACKUP_SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${BACKUP_SMTP_PASSWORD:-}
+      SMTP_FROM: ${BACKUP_SMTP_FROM:-}
+    volumes:
+      - ${BACKUP_CA_DIR:-./backup/ca}:/etc/backup/ca:ro
+    healthcheck:
+      # The image has no shell: the binary asks itself whether it is ready.
+      test: ["CMD", "/backupd", "healthcheck"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 2m
+      start_interval: 5s
+    logging:
+      driver: ${LOG_DRIVER:-local}
+    restart: always

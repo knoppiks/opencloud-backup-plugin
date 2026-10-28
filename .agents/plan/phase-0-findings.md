@@ -643,3 +643,28 @@ Any CS3 status answer is OpenCloud speaking, so a wrong secret
 (`CODE_INTERNAL`), a missing state Space and an unsafe one stay fatal.
 Not measured: a cold first start (`init`) or a slow host; CS3
 `CODE_UNAVAILABLE` is included for that case.
+
+### 5. The add-on walked by hand (#156)
+
+2026-10-28, opencloud-compose `main` at 91911a5 with `OC_DOCKER_TAG=8.1.0`,
+local certificates from a throwaway CA, ports 4080/4443, images built from
+main (`BACKUP_VERSION` set to the local build).
+
+- **Traefik** (`traefik/opencloud.yml` + `traefik/backup.yml`): installer
+  copied the bundle as the host user; OpenCloud lists `backup-vault` in
+  `config.json`; the CSP carries `'wasm-unsafe-eval'` and WebAssembly
+  compiles in the page; `provision-state-space` through `docker compose run
+  -T` printed only the id; `backupd` healthy. Signed in as admin through the
+  real login: `/backup/api/v1/version`, `/spaces` and `/admin/targets` 200,
+  so issuer discovery and token validation over TLS work with the CA in
+  `SSL_CERT_DIR`, and admin detection works. A no-change `up -d` reruns the
+  installer without restarting OpenCloud.
+- **Own proxy** (`external-proxy/opencloud.yml` + `external-proxy/backup.yml`,
+  Caddy on the host routing `/backup/api` to `127.0.0.1:9280`, the domain
+  mapped to the host with `extra_hosts` in a walk-only file): the same calls
+  200. `backupd` started while OpenCloud's container could not and waited
+  2 min for it, then came up without a restart (#152).
+- Not walked: setup, backup and restore of a Space through the UI (#158's
+  E2E on the add-on), upgrades (spike §3).
+- upstream `traefik/opencloud.yml` now sets `traefik.docker.network`; the
+  add-on's router does the same.

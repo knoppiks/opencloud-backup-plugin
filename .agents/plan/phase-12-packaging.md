@@ -40,6 +40,12 @@ deploy/compose/
   backup/setup.sh            # optional helper, see 12.3
 ```
 
+*Landed in #156:* `backup/backup.yml`, `backup/.env.example`, `backup/ca/`
+(own CA, mounted as `SSL_CERT_DIR`), `traefik/backup.yml`,
+`external-proxy/backup.yml`, `README.md`; no CSP file (12.2: documented
+edit). Images carry a release placeholder the release stamps (decisions.md,
+"Amendments from Phase 12 … #156"). Keycloak: not supported yet.
+
 Used as:
 `COMPOSE_FILE=docker-compose.yml:backup/backup.yml:traefik/opencloud.yml:traefik/backup.yml`.
 
