@@ -151,6 +151,11 @@ upstream's entries), and an upstream PR to opencloud-compose's default
 It never prints keys to the terminal. Startup still never provisions
 implicitly (8c amendment) — the helper is an explicit operator act.
 
+*Landed in #157* as described, plus: it starts OpenCloud if needed, checks
+`OC_DOCKER_TAG` against the tested range, and refuses a service account in
+`.env` that is not OpenCloud's (decisions.md, "Amendments from Phase 12 …
+#157").
+
 ## 12.4 The Kustomize add-on (secondary)
 
 `deploy/kustomize/base` from the existing manifests, plus what review P2
@@ -197,7 +202,7 @@ contains it; the canary (Phase 9) runs against its `main` as well.
 ## 12.6 Docs
 
 Install guides (compose, Kustomize, Helm notes) are written in Phase 13 from
-this phase's artifacts; this phase leaves a short `deploy/compose/README.md`
+this phase's artifacts; this phase leaves a short `deploy/compose/backup/README.md` (under `backup/`: copied into an opencloud-compose checkout, a top-level one would replace upstream's)
 and `deploy/kustomize/README.md` that the docs site later absorbs.
 
 ## Exit criteria
@@ -205,7 +210,7 @@ and `deploy/kustomize/README.md` that the docs site later absorbs.
 - [ ] A fresh opencloud-compose checkout + the add-on + `setup.sh` gives a
       working Backup Vault (setup, backup, restore) — walked once by hand on
       a clean machine and automated in CI on every matrix leg.
-- [ ] The CSP edit documented for compose and checked by `setup.sh`.
+- [x] The CSP edit documented for compose and checked by `setup.sh` (#156, #157).
 - [ ] Kustomize base + example overlay render and validate; NetworkPolicy
       tested on a kind cluster with a CNI that enforces it (or recorded as
       untested — not claimed).

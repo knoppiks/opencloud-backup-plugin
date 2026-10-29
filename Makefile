@@ -435,6 +435,11 @@ image-stamp-check: ## Check both images report this tree's version everywhere (a
 k8s-validate: $(TOOLS)/kubeconform ## Validate K8s manifests offline (kubeconform).
 	$(TOOLS)/kubeconform -strict -summary deploy/*.yaml
 
+# The compose add-on's first-install helper (#157), against a fake docker.
+.PHONY: compose-test
+compose-test: ## Test the compose add-on's setup.sh (no Docker needed).
+	test/compose/setup-test.sh
+
 # deploy/ names only published versions of this project's images (#110);
 # needs the registry (docker buildx). The check's own test needs nothing.
 .PHONY: deploy-images

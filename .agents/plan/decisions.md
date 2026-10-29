@@ -1979,6 +1979,32 @@ None reopens a locked decision.
   collides with OpenCloud's own variables. Mail settings are the add-on's
   own, not upstream's `SMTP_*`: the two mailers differ in what they accept.
 
+### Amendments from Phase 12 (packaging; #157, setup.sh)
+
+None reopens a locked decision.
+
+- **`backup/setup.sh` fills in, never replaces.** Keys, service account and
+  state Space are written only into empty `.env` entries, single-quoted; a
+  configured `BACKUP_STATE_SPACE_ID` means no provisioning (decision #16's
+  orphaning rule). A service account in `.env` that differs from OpenCloud's
+  is refused, not corrected. It never prints a key or the secret.
+- **It checks, and does not edit, OpenCloud's files** (CSP, 12.2): a missing
+  `'wasm-unsafe-eval'` is a to-do, a wrong `COMPOSE_FILE` stops it before
+  anything is written, an untested `OC_DOCKER_TAG` and an `idm/*` overlay are
+  warnings. Its tested range is held to `versions.yaml` by a test.
+- **It starts OpenCloud when needed**, with stand-ins for the add-on's
+  required variables that are still empty: Compose refuses to read
+  `backup.yml` without them even for a command about `opencloud`, and those
+  commands never create `backupd`.
+- **Provisioning is retried while OpenCloud starts** (24 x 5 s), except after
+  "the Space was created but is not usable": a retry there would create a
+  second Space.
+- **The add-on's README is `backup/README.md`.** At the top level, copying the
+  add-on into an opencloud-compose checkout replaced upstream's README.
+- Tested against a fake `docker` (`make compose-test`, in CI); walked once on
+  a fresh opencloud-compose checkout that had never started OpenCloud
+  (phase-0-findings.md, "Phase 12 spike" §6).
+
 ---
 
 ## Trust & key model
