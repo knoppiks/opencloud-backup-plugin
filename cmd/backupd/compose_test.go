@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/knoppiks/opencloud-backup-plugin/internal/config"
+	"github.com/knoppiks/opencloud-backup-plugin/internal/ocversion"
 )
 
 // The opencloud-compose add-on (deploy/compose, #156). These tests hold what
@@ -128,6 +129,29 @@ func TestComposeAddOnHardening(t *testing.T) {
 	for _, port := range readCompose(t, "external-proxy/backup.yml")["backupd"].Ports {
 		if !strings.HasPrefix(port, "127.0.0.1:") {
 			t.Errorf("external-proxy/backup.yml publishes %q beyond localhost", port)
+		}
+	}
+}
+
+// setup.sh warns about an untested OpenCloud with the range the pin file
+// holds; a leg bump has to move it too.
+func TestComposeSetupNamesTheTestedRange(t *testing.T) {
+	pins, err := ocversion.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := os.ReadFile(composeDir + "backup/setup.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := pins.Window()
+	for name, want := range map[string]string{
+		"OPENCLOUD_OLDEST": window.Oldest.String(),
+		"OPENCLOUD_NEWEST": window.Newest.String(),
+	} {
+		line := name + "=" + want + "\n"
+		if !strings.Contains(string(script), "\n"+line) {
+			t.Errorf("backup/setup.sh must set %s", strings.TrimSpace(line))
 		}
 	}
 }

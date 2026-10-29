@@ -668,3 +668,20 @@ main (`BACKUP_VERSION` set to the local build).
   E2E on the add-on), upgrades (spike §3).
 - upstream `traefik/opencloud.yml` now sets `traefik.docker.network`; the
   add-on's router does the same.
+
+### 6. setup.sh walked by hand (#157)
+
+2026-10-28, a fresh opencloud-compose `main` (91911a5) whose OpenCloud had
+never started, `OC_DOCKER_TAG` unset (so 9.0.0), the add-on and its
+`.env.example` appended, `COMPOSE_FILE` set, images built from the branch.
+
+- One run, 17 s including the OpenCloud pull: warned about 9.0.0, generated
+  both keys, started OpenCloud, read the service account, retried
+  provisioning once ("not ready yet"), stored the id single-quoted, listed
+  the CSP line as left to do. `.env` kept mode 600; no key in the output.
+- After the CSP edit, a second run reported everything as set and left
+  `.env` byte for byte unchanged; `docker compose up -d` brought `backupd`
+  up healthy.
+- Found: upstream's `.env.example` has `COMPOSE_FILE` commented out, so the
+  operator must set it (setup.sh says so); copying `deploy/compose/.` over
+  the checkout replaced upstream's README.md, hence `backup/README.md`.

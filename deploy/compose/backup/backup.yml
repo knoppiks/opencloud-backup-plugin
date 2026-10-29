@@ -2,7 +2,7 @@
 # Backup Vault for opencloud-compose: the backup service, and the one-shot
 # installer of its web extension. Add it to COMPOSE_FILE together with the
 # route of your proxy setup (traefik/backup.yml or external-proxy/backup.yml),
-# see README.md next to this directory.
+# see backup/README.md.
 #
 # The images below name the version this add-on was released with. A copy
 # taken from the repository instead of a release names none: set
@@ -74,11 +74,11 @@ services:
       CS3_DATA_SERVER_URL: http://opencloud:9158
       # OpenCloud's service account, as `opencloud init` generated it. It
       # reaches every Space's plaintext: the most valuable secret here.
-      OC_SERVICE_ACCOUNT_ID: ${BACKUP_OC_SERVICE_ACCOUNT_ID:?see deploy/compose/README.md, "Secrets"}
-      OC_SERVICE_ACCOUNT_SECRET: ${BACKUP_OC_SERVICE_ACCOUNT_SECRET:?see deploy/compose/README.md, "Secrets"}
+      OC_SERVICE_ACCOUNT_ID: ${BACKUP_OC_SERVICE_ACCOUNT_ID:?run backup/setup.sh, or see backup/README.md}
+      OC_SERVICE_ACCOUNT_SECRET: ${BACKUP_OC_SERVICE_ACCOUNT_SECRET:?run backup/setup.sh, or see backup/README.md}
       # The two custody keys: base64 of 32 random bytes each, different.
-      SRW_KEY: ${BACKUP_SRW_KEY:?see deploy/compose/README.md, "Secrets"}
-      TW_KEY: ${BACKUP_TW_KEY:?see deploy/compose/README.md, "Secrets"}
+      SRW_KEY: ${BACKUP_SRW_KEY:?run backup/setup.sh, or see backup/README.md}
+      TW_KEY: ${BACKUP_TW_KEY:?run backup/setup.sh, or see backup/README.md}
       # The Space the service keeps its own state in. The service refuses to
       # start without it; `backupd provision-state-space` creates it.
       STATE_SPACE_ID: ${BACKUP_STATE_SPACE_ID:-}
