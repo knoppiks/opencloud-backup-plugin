@@ -182,6 +182,8 @@ check_opencloud_version() {
 		tag=$(grep -oE 'OC_DOCKER_TAG:-[^}]+' docker-compose.yml | head -n 1) || true
 		tag=${tag#OC_DOCKER_TAG:-}
 	fi
+	# A tag pinned by digest (8.1.0@sha256:…) is still that release.
+	tag=${tag%%@*}
 	if ! [[ $tag =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 		warn "OpenCloud's version (${tag:-unknown}) is not a release number; Backup Vault was tested with $OPENCLOUD_OLDEST to $OPENCLOUD_NEWEST"
 		return

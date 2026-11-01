@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
-# Tear down the test OpenCloud fixture.
-#   ./down.sh          stop + remove the container (keeps config/data)
-#   ./down.sh --purge  also delete generated config/, data/, apps/, fixture.env and
-#                      .env (the OpenCloud version up.sh picked)
+# Tear down the OpenCloud fixture.
+#   ./down.sh          stop and remove its containers; OpenCloud's data, the
+#                      stack and its .env stay
+#   ./down.sh --purge  also delete OpenCloud's volumes, the stack, fixture.env
+#                      and ca.crt
 set -euo pipefail
-cd "$(dirname "$0")"
+# shellcheck source=/dev/null # lib.sh: CI runs shellcheck without -x
+. "$(dirname "$0")/lib.sh"
+cd "${FIXTURE_DIR}"
 
-# Compose interpolates the whole file even to stop it, and OC_IMAGE normally
-# comes from the .env up.sh writes. A fixture started before that file existed
-# has none; the image does not matter for tearing down, so any value will do.
-OC_IMAGE="${OC_IMAGE:-unused-by-down}" docker compose down -v || true
+purge=
+[ "${1:-}" != "--purge" ] || purge=-v
 
-if [ "${1:-}" = "--purge" ]; then
-  # config/data are created inside the container as root; use a helper container
-  # to remove them so we don't need host root.
-  docker run --rm -v "$(pwd):/work" alpine:3 \
-    sh -c 'rm -rf /work/config /work/data /work/apps /work/fixture.env /work/ca.crt /work/.env' || \
-    rm -rf config data apps fixture.env ca.crt .env
-  echo "purged config/, data/, apps/, fixture.env, ca.crt, .env"
+if [ -f "${STACK_DIR}/.env" ]; then
+  fixture_compose down ${purge:+"${purge}"} || true
+fi
+
+if [ -n "${purge}" ]; then
+  # The apps directory was handed to OpenCloud's uid, which need not be the
+  # host user's: a root helper removes what the host user may not.
+  # config/, data/, apps/ and .env are the bespoke fixture's, from before
+  # #158.
+  docker run --rm -v "${FIXTURE_DIR}:/work" alpine:3 \
+    sh -c 'rm -rf /work/stack /work/fixture.env /work/ca.crt /work/config /work/data /work/apps /work/.env'
+  echo "purged the stack, OpenCloud's volumes, fixture.env and ca.crt"
 fi

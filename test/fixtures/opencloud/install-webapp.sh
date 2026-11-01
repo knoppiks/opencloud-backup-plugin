@@ -12,40 +12,53 @@
 #      with its config, plus a 200 on the entry chunk, is exactly what Spike 4
 #      verified by hand. Sub-phase 8f adds the in-browser half.
 #
+# With FIXTURE_BACKUPD=container the add-on's installer has put the extension
+# from its image in place; this only verifies it.
+#
 # Usage: ./install-webapp.sh [--no-build]
 set -euo pipefail
-cd "$(dirname "$0")"
+# shellcheck source=/dev/null # lib.sh: CI runs shellcheck without -x
+. "$(dirname "$0")/lib.sh"
+cd "${FIXTURE_DIR}"
 
 APP_ID="backup-vault"
-WEB_DIR="../../../web"
-BASE="https://localhost:9200"
+WEB_DIR="${REPO_ROOT}/web"
+BASE="${ORIGIN}"
+APPS_DIR="${STACK_DIR}/config/opencloud/apps"
 
-if [ "${1:-}" != "--no-build" ]; then
-  echo "building the extension..."
-  (cd "${WEB_DIR}" && corepack pnpm build >/dev/null)
+[ -f fixture.env ] || { echo "no fixture.env: run up.sh first" >&2; exit 1; }
+mode=$(sed -n "s/^export FIXTURE_BACKUPD='\(.*\)'$/\1/p" fixture.env)
+
+if [ "${mode}" = container ]; then
+  echo "the add-on's installer put the extension in place; verifying it..."
+else
+  if [ "${1:-}" != "--no-build" ]; then
+    echo "building the extension..."
+    (cd "${WEB_DIR}" && corepack pnpm build >/dev/null)
+  fi
+
+  if [ ! -f "${WEB_DIR}/dist/manifest.json" ]; then
+    echo "no ${WEB_DIR}/dist/manifest.json — run 'make web-build' first" >&2
+    exit 1
+  fi
+
+  echo "installing into ${APPS_DIR}/${APP_ID}/..."
+  # up.sh hands the apps directory to the container's uid 1000, so on a host
+  # whose uid is not 1000 (a GitHub runner is 1001) this script cannot write
+  # there. The whole install therefore runs in a root helper, and hands the
+  # result back to uid 1000 so OpenCloud can read it.
+  DIST="$(cd "${WEB_DIR}/dist" && pwd)"
+  docker run --rm -v "${APPS_DIR}:/apps" -v "${DIST}:/dist:ro" alpine:3 sh -c "
+    set -e
+    rm -rf '/apps/${APP_ID}'
+    mkdir -p '/apps/${APP_ID}'
+    cp -r /dist/. '/apps/${APP_ID}/'
+    chown -R 1000:1000 /apps
+  "
+
+  echo "restarting OpenCloud (the apps directory is scanned at startup only)..."
+  fixture_compose restart opencloud >/dev/null
 fi
-
-if [ ! -f "${WEB_DIR}/dist/manifest.json" ]; then
-  echo "no ${WEB_DIR}/dist/manifest.json — run 'make web-build' first" >&2
-  exit 1
-fi
-
-echo "installing into apps/${APP_ID}/..."
-# up.sh hands apps/ to the container's uid 1000, so on a host whose uid is not
-# 1000 (a GitHub runner is 1001) this script cannot write there. The whole
-# install therefore runs in a root helper, as up.sh's chown does, and hands
-# the result back to uid 1000 so OpenCloud can read it.
-DIST="$(cd "${WEB_DIR}/dist" && pwd)"
-docker run --rm -v "$(pwd)/apps:/apps" -v "${DIST}:/dist:ro" alpine:3 sh -c "
-  set -e
-  rm -rf '/apps/${APP_ID}'
-  mkdir -p '/apps/${APP_ID}'
-  cp -r /dist/. '/apps/${APP_ID}/'
-  chown -R 1000:1000 /apps
-"
-
-echo "restarting OpenCloud (the apps directory is scanned at startup only)..."
-docker compose restart opencloud >/dev/null
 
 echo -n "waiting for readiness"
 for _ in $(seq 1 60); do
@@ -85,16 +98,19 @@ echo "  entrypoint: ${ENTRY} (200)"
 
 # The page's CSP must allow WebAssembly compilation, or the Recovery Key
 # ceremony's Argon2id is blocked in the browser while everything above passes.
-# No supported OpenCloud's default policy allows it; ./csp.yaml adds it.
+# No supported OpenCloud's default policy allows it; up.sh adds it, as the
+# add-on's README tells an operator to.
 CSP=$(curl -sk -D - -o /dev/null "${BASE}/" | tr -d '\r' | grep -i '^content-security-policy:' || true)
 SCRIPT_SRC=$(printf '%s' "${CSP}" | tr ';' '\n' | grep -i 'script-src' || true)
 if ! printf '%s' "${SCRIPT_SRC}" | grep -q "'wasm-unsafe-eval'"; then
   echo "FAIL: OpenCloud's CSP script-src lacks 'wasm-unsafe-eval' (${SCRIPT_SRC:-no script-src})." >&2
-  echo "      The Recovery Key ceremony cannot run. See ./csp.yaml." >&2
+  echo "      The Recovery Key ceremony cannot run. See deploy/compose/backup/README.md, step 2." >&2
   exit 1
 fi
 echo "  csp:        script-src allows 'wasm-unsafe-eval'"
 
 echo
 echo "Backup Vault is installed. Open ${BASE} (admin / admin) and pick it from the app menu."
-echo "The API it calls needs backupd behind the same origin — see the Phase 8 runbook."
+if [ "${mode}" != container ]; then
+  echo "The API it calls is a backupd on the host's port 8080 (make e2e starts one)."
+fi

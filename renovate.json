@@ -88,6 +88,18 @@
       ],
       "depNameTemplate": "OpenCloud {{{leg}}} leg",
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "The opencloud-compose commit the OpenCloud fixture is built from (#158), moved to the head of main. The pull request runs every leg on it.",
+      "managerFilePatterns": [
+        "/^test/fixtures/opencloud/opencloud-compose\\.env$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=git-refs depName=(?<depName>\\S+)\\s*\\nOPENCLOUD_COMPOSE_COMMIT=(?<currentDigest>[0-9a-f]{40})"
+      ],
+      "datasourceTemplate": "git-refs",
+      "currentValueTemplate": "main"
     }
   ],
   "packageRules": [
@@ -206,7 +218,7 @@
       "groupName": "pipeline"
     },
     {
-      "description": "Container images (#133): the images' base images (the build stages follow the toolchain groups), and the Garage and Caddy images the tests run. Majors apart.",
+      "description": "Container images (#133): the images' base images (the build stages follow the toolchain groups), and the Garage image the tests run. Majors apart.",
       "matchManagers": [
         "dockerfile"
       ],
@@ -222,14 +234,13 @@
       ]
     },
     {
-      "description": "The test fixtures' images: Garage (dev compose and the integration tests' constant) and the OpenCloud fixture's Caddy.",
+      "description": "The test fixtures' images: Garage (dev compose and the integration tests' constant).",
       "matchManagers": [
         "docker-compose",
         "custom.regex"
       ],
       "matchDepNames": [
-        "dxflrs/garage",
-        "caddy"
+        "dxflrs/garage"
       ],
       "matchUpdateTypes": [
         "minor",

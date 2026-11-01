@@ -2,13 +2,14 @@
 # Go sources. Everything else is either irrelevant, large, or must never be
 # copied into an image.
 
-# The fixture directories hold OpenCloud's generated config — SECRETS — plus its
-# data and loaded apps. They are gitignored; they must not reach a build context
-# either.
+# The fixture's stack holds generated keys and the test CA's key — SECRETS. It
+# is gitignored; it must not reach a build context either. Nor must the
+# bespoke fixture's state from before #158, if still around.
+test/fixtures/opencloud/stack/
+test/fixtures/opencloud/fixture.env
 test/fixtures/opencloud/config/
 test/fixtures/opencloud/data/
 test/fixtures/opencloud/apps/
-test/fixtures/opencloud/fixture.env
 
 # Build output and local state, at any depth.
 **/dist/

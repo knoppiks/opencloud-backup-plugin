@@ -1,0 +1,16 @@
+---
+# With FIXTURE_BACKUPD=host, the route traefik/backup.yml gives the backupd
+# container, to a backupd on the host's port 8080 instead. up.sh copies it
+# into Traefik's dynamic configuration, and removes it in container mode.
+http:
+  routers:
+    backup-host:
+      entryPoints: [https]
+      rule: "Host(`cloud.opencloud.localhost`) && PathPrefix(`/backup/api`)"
+      service: backup-host
+      tls: {}
+  services:
+    backup-host:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:8080"

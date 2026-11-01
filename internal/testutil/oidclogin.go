@@ -26,7 +26,7 @@ import (
 const FixtureWebClientID = "web"
 
 // FixtureAccessToken logs user in at the fixture's IdP (base, e.g.
-// https://localhost:9200) and returns an access token for the web client.
+// https://cloud.opencloud.localhost:9200) and returns an access token for the web client.
 // client must trust the fixture's certificate.
 func FixtureAccessToken(t *testing.T, client *http.Client, base, user, password string) string {
 	t.Helper()

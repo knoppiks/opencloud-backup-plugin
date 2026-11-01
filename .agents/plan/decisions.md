@@ -2005,6 +2005,42 @@ None reopens a locked decision.
   a fresh opencloud-compose checkout that had never started OpenCloud
   (phase-0-findings.md, "Phase 12 spike" §6).
 
+### Amendments from Phase 12 (packaging; #158, the fixture)
+
+None reopens a locked decision; this is #27 applied to the tests.
+
+- **The OpenCloud fixture is opencloud-compose + the add-on + a test-only
+  overlay.** The bespoke compose file, its Caddy proxy and its own CSP file
+  are gone. `up.sh` fetches opencloud-compose by commit
+  (`test/fixtures/opencloud/opencloud-compose.env`; git verifies the
+  content), copies `deploy/compose/` in, appends the add-on's `.env.example`,
+  makes the README's CSP edit and sets the rest through `.env`, as an
+  operator does. `fixture.yml` adds only what no operator sets: the CS3 ports
+  on loopback, and Garage's name for the add-on's backupd. No sha256 of a
+  tarball: Renovate could not bump it, and a commit fetched by git is
+  checked anyway.
+- **Origin `https://cloud.opencloud.localhost:9200`.** The add-on's backupd
+  must reach the OIDC issuer from inside the network, which rules out
+  `localhost`; `*.localhost` resolves to loopback on the host
+  (systemd-resolved, Chrome, curl) and to Traefik inside (upstream's alias),
+  so no `/etc/hosts` edit. A test CA per stack signs the certificate; the
+  host trusts it through `SSL_CERT_FILE`, backupd through `backup/ca/`.
+- **Two modes (`FIXTURE_BACKUPD`).** `host` (`make dev-up`, the integration
+  job): `host-backupd.yml` leaves the add-on's containers out and Traefik
+  routes `/backup/api` to the host's :8080; the add-on's required variables
+  get stand-ins per command (`lib.sh`), never in `.env`. `container` (the
+  E2E job): images built in the job, `backup/setup.sh` run as an operator
+  would, the add-on's installer puts the extension in place, and the E2E
+  global-setup starts no backupd. The integration job stays in host mode:
+  its tests need OpenCloud, not backupd, and it saves the image builds.
+- **The dev Garage is `garage.opencloud.localhost:3900`** for both the
+  service and the take-out tool: loopback on the host, `host-gateway` in the
+  add-on's container.
+- **Renovate moves the commit to `main`'s head** (custom regex manager,
+  `git-refs`); the canary runs on `main` itself (`compose-ref: main`).
+- `setup.sh` reads a tag pinned by digest (`8.1.0@sha256:…`) as its release:
+  the fixture pins OpenCloud that way, and so may an operator.
+
 ---
 
 ## Trust & key model

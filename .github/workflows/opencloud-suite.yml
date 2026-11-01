@@ -4,6 +4,10 @@ name: OpenCloud suite
 # internal/ocversion/versions.yaml. Called by ci.yml once per supported leg
 # (blocking) and by canary.yml for the canary (not blocking). A version is
 # supported if and only if this passes on it (compatibility-policy.md §3).
+#
+# The OpenCloud is opencloud-compose with the shipped compose add-on and a
+# test-only overlay (test/fixtures/opencloud, #158): the thing tested is the
+# thing installed.
 
 on:
   workflow_call:
@@ -18,13 +22,19 @@ on:
       node-version:
         type: string
         required: true
+      compose-ref:
+        description: The opencloud-compose commit or branch; empty for the pinned commit (test/fixtures/opencloud/opencloud-compose.env).
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 env:
-  # up.sh reads it to pick the OpenCloud image.
+  # up.sh reads them to pick the OpenCloud image and the opencloud-compose
+  # commit.
   OC_LEG: ${{ inputs.leg }}
+  OPENCLOUD_COMPOSE_REF: ${{ inputs.compose-ref }}
 
 jobs:
   integration:
@@ -43,9 +53,11 @@ jobs:
         go-version: ${{ inputs.go-version }}
         cache: true
 
-    # up.sh generates the instance's secrets, starts it, waits for readiness
-    # and writes fixture.env; seed.sh adds the users, files, Space and grants
-    # the tests assert against.
+    # up.sh fetches opencloud-compose, adds the add-on, starts OpenCloud,
+    # waits for readiness and writes fixture.env; seed.sh adds the users,
+    # files, Space and grants the tests assert against. The tests here need
+    # no backupd, so it is left to the host (FIXTURE_BACKUPD=host): no images
+    # to build.
     - name: start the OpenCloud fixture
       run: |
         cd test/fixtures/opencloud
@@ -102,21 +114,28 @@ jobs:
 
     - name: fixture logs on failure
       if: failure()
-      run: docker logs opencloud-fixture --tail 200 || true
+      run: test/fixtures/opencloud/compose.sh logs --tail 200 opencloud || true
 
   # The whole flow in a real browser (phase-8 sub-phase 8f, issue #42): an
   # admin sets up the destination, a family member protects their Space,
   # backs up, restores, and opens a take-out with the browser-made Recovery
   # Key, before and after replacing it. Its own job: `integration` stops
-  # OpenCloud in its last step.
+  # OpenCloud in its last step. The backupd and the extension are the
+  # add-on's containers, from images built here and set up by
+  # backup/setup.sh, as an operator does (FIXTURE_BACKUPD=container).
   e2e:
     name: e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
+    env:
+      FIXTURE_BACKUPD: container
+      FIXTURE_IMAGE_TAG: ci
     steps:
+    # Full history: the images are stamped with the version git describes.
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
+        fetch-depth: 0
 
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
@@ -161,18 +180,24 @@ jobs:
         done
         echo "Garage did not answer on :3900" >&2; exit 1
 
+    - name: build the images
+      run: |
+        make image IMAGE_TAG="$FIXTURE_IMAGE_TAG"
+        make web-image IMAGE_TAG="$FIXTURE_IMAGE_TAG"
+
     - name: start the OpenCloud fixture
       run: |
         cd test/fixtures/opencloud
         ./up.sh
         ./seed.sh
 
-    # Builds the extension, installs it into the fixture and asserts that
-    # OpenCloud serves it, with the CSP it needs.
-    - name: install Backup Vault into the fixture
+    # Asserts that OpenCloud serves the extension the add-on installed, with
+    # the CSP it needs.
+    - name: verify Backup Vault in the fixture
       run: test/fixtures/opencloud/install-webapp.sh
 
-    # globalSetup builds and starts backupd itself (web/e2e/global-setup.ts).
+    # globalSetup builds the take-out tools (web/e2e/global-setup.ts); the
+    # backupd is the add-on's.
     - name: e2e
       working-directory: web
       env:
@@ -199,9 +224,8 @@ jobs:
         path: |
           web/playwright-report
           web/e2e-results
-          ${{ runner.temp }}/e2e/*/backupd.log
         if-no-files-found: ignore
 
     - name: fixture logs on failure
       if: failure()
-      run: docker logs opencloud-fixture --tail 200 || true
+      run: test/fixtures/opencloud/compose.sh logs --tail 200 opencloud backupd backup-vault-web || true

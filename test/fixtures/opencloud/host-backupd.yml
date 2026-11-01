@@ -1,0 +1,23 @@
+---
+# The development loop's overlay (#158): backupd runs on the host (`go run`,
+# the E2E global-setup), not in a container. Last in COMPOSE_FILE, and only
+# with FIXTURE_BACKUPD=host (up.sh).
+#
+# The add-on's two services are left out, and with them OpenCloud's wait for
+# the extension's installer: install-webapp.sh copies a fresh build instead.
+# /backup/api reaches the host through traefik-host-backupd.yml, which up.sh
+# puts into Traefik's dynamic configuration.
+services:
+
+  opencloud:
+    depends_on: !reset {}
+
+  backup-vault-web:
+    profiles: [container]
+
+  backupd:
+    profiles: [container]
+
+  traefik:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

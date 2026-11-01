@@ -1,0 +1,21 @@
+---
+# The test-only overlay (#158): what the tests need from opencloud-compose
+# and the add-on that no operator would set. Last in COMPOSE_FILE but for
+# host-backupd.yml. Everything else the fixture changes goes through .env,
+# as an operator would (up.sh).
+services:
+
+  opencloud:
+    # The integration tests run on the host and read Spaces as backupd does,
+    # through the CS3 gateway and the data server. The add-on opens both on
+    # the compose network only; here they are published, on loopback.
+    ports:
+      - "127.0.0.1:9142:9142"
+      - "127.0.0.1:9158:9158"
+
+  backupd:
+    # The dev Garage (docker-compose.dev.yml) is published on the host. The
+    # backup destination the E2E admin creates names it so that both the
+    # service in here and the take-out tool on the host reach it.
+    extra_hosts:
+      - "garage.opencloud.localhost:host-gateway"

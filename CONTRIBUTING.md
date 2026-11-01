@@ -34,7 +34,7 @@ You need:
 ```sh
 make build                      # every binary into dist/ (DEBUG=1 keeps symbols)
 make test                       # Go unit tests, with the race detector
-make dev-up                     # Garage + OpenCloud + the fixture proxy, seeded
+make dev-up                     # Garage + OpenCloud with the compose add-on, seeded
 make test-integration           # Go tests against Garage (needs Docker)
 make test-opencloud             # Go tests against the OpenCloud fixture (after dev-up)
 make web-install                # the web extension's dependencies

@@ -199,6 +199,10 @@ Risk: opencloud-compose changes shape (it is under active development —
 the WOPI service was folded into OpenCloud recently). Pinning by commit
 contains it; the canary (Phase 9) runs against its `main` as well.
 
+*Landed in #158* as described, with two modes: `make dev-up` and the
+integration job run backupd on the host, the E2E job the add-on's containers
+set up by `setup.sh` (decisions.md, "Amendments from Phase 12 … #158").
+
 ## 12.6 Docs
 
 Install guides (compose, Kustomize, Helm notes) are written in Phase 13 from
@@ -214,6 +218,6 @@ and `deploy/kustomize/README.md` that the docs site later absorbs.
 - [ ] Kustomize base + example overlay render and validate; NetworkPolicy
       tested on a kind cluster with a CNI that enforces it (or recorded as
       untested — not claimed).
-- [ ] The bespoke fixture is gone; integration and E2E run on
-      opencloud-compose + add-on.
+- [x] The bespoke fixture is gone; integration and E2E run on
+      opencloud-compose + add-on (#158).
 - [ ] Release archives for both add-ons attached by the release workflow.
