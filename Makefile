@@ -484,7 +484,7 @@ editorconfig: $(TOOLS)/editorconfig-checker ## Check every tracked file against 
 		| xargs -0 $(TOOLS)/editorconfig-checker -no-color -disable-indentation
 
 .PHONY: dev-up
-dev-up: ## Start dev Garage, then the test OpenCloud fixture (and seed it).
+dev-up: ## Start dev Garage, then the OpenCloud fixture (opencloud-compose + add-on; seeded).
 	docker compose -f $(DEV_COMPOSE) up -d
 	cd $(OPENCLOUD_DIR) && ./up.sh
 	# up.sh rewrites fixture.env from scratch, so the seeded ids have to be

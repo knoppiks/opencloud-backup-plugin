@@ -30,7 +30,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: FIXTURE_ORIGIN,
-    // The fixture's Caddy serves a certificate from its own local CA.
+    // The fixture's proxy serves a certificate from its own test CA.
     ignoreHTTPSErrors: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

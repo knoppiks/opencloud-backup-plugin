@@ -19,9 +19,11 @@
 #   OC_SHARED_VIEWER_ID, OC_SHARED_EDITOR_ID, OC_SHARED_MANAGER_ID,
 #   OC_SHARED_GROUPED_ID, OC_SHARED_GRANT_EXPIRY
 set -euo pipefail
-cd "$(dirname "$0")"
+# shellcheck source=/dev/null # lib.sh: CI runs shellcheck without -x
+. "$(dirname "$0")/lib.sh"
+cd "${FIXTURE_DIR}"
 
-OC="https://localhost:9200"
+OC="${ORIGIN}"
 ADMIN="admin:admin"
 
 # json_field extracts the first "<key>":"<value>" scalar from a JSON blob. The
@@ -35,13 +37,13 @@ json_field() {
 # gets the default "User" app role (appRoleId d7beeea8-…), i.e. isAdmin=false.
 NORMAL_USER="testuser"
 NORMAL_PASS="Test-User-1!"
-curl -sk -u admin:admin -X POST "https://localhost:9200/graph/v1.0/users" \
+curl -sk -u "${ADMIN}" -X POST "${OC}/graph/v1.0/users" \
   -H "Content-Type: application/json" \
   -d "{\"onPremisesSamAccountName\":\"${NORMAL_USER}\",\"displayName\":\"Test User\",\"mail\":\"${NORMAL_USER}@example.org\",\"passwordProfile\":{\"password\":\"${NORMAL_PASS}\"}}" \
   -o /dev/null -w "seed user '${NORMAL_USER}' http=%{http_code}\n" || true
 
 normal_uid=$(curl -sk -u "${NORMAL_USER}:${NORMAL_PASS}" \
-  "https://localhost:9200/graph/v1.0/me" \
+  "${OC}/graph/v1.0/me" \
   | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//; s/"//')
 
 FILE="${1:-spike3.txt}"
@@ -50,14 +52,14 @@ printf 'spike-3 cs3 read path payload\n%s\n' "$(head -c 2048 /dev/urandom | base
 SHA=$(sha256sum "${LOCAL}" | cut -d' ' -f1)
 
 # Resolve admin's user id + personal space id via the graph API.
-me=$(curl -sk -u admin:admin "https://localhost:9200/graph/v1.0/me")
+me=$(curl -sk -u "${ADMIN}" "${OC}/graph/v1.0/me")
 uid=$(printf '%s' "${me}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//; s/"//')
 
-drives=$(curl -sk -u admin:admin "https://localhost:9200/graph/v1.0/me/drives")
+drives=$(curl -sk -u "${ADMIN}" "${OC}/graph/v1.0/me/drives")
 space=$(printf '%s' "${drives}" | grep -o '"driveType":"personal","id":"[^"]*"' | sed 's/.*"id":"//; s/"//')
 
-curl -sk -u admin:admin -T "${LOCAL}" \
-  "https://localhost:9200/dav/spaces/${space}/${FILE}" -o /dev/null -w "seed upload http=%{http_code}\n"
+curl -sk -u "${ADMIN}" -T "${LOCAL}" \
+  "${OC}/dav/spaces/${space}/${FILE}" -o /dev/null -w "seed upload http=%{http_code}\n"
 rm -f "${LOCAL}"
 
 # --- nested, non-ASCII path (Phase-4 walk + structure preservation) --------
@@ -65,15 +67,15 @@ rm -f "${LOCAL}"
 # which is fine.
 NESTED_DIR="ordner-фото"
 NESTED_NAME="café.bin"
-curl -sk -u admin:admin -X MKCOL \
-  "https://localhost:9200/dav/spaces/${space}/${NESTED_DIR}" \
+curl -sk -u "${ADMIN}" -X MKCOL \
+  "${OC}/dav/spaces/${space}/${NESTED_DIR}" \
   -o /dev/null -w "seed mkcol http=%{http_code}\n" || true
 
 NESTED_LOCAL="$(mktemp)"
 printf 'phase-4 nested payload\n%s\n' "$(head -c 4096 /dev/urandom | base64)" > "${NESTED_LOCAL}"
 NESTED_SHA=$(sha256sum "${NESTED_LOCAL}" | cut -d' ' -f1)
-curl -sk -u admin:admin -T "${NESTED_LOCAL}" \
-  "https://localhost:9200/dav/spaces/${space}/${NESTED_DIR}/${NESTED_NAME}" \
+curl -sk -u "${ADMIN}" -T "${NESTED_LOCAL}" \
+  "${OC}/dav/spaces/${space}/${NESTED_DIR}/${NESTED_NAME}" \
   -o /dev/null -w "seed nested upload http=%{http_code}\n"
 rm -f "${NESTED_LOCAL}"
 

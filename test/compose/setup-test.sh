@@ -252,6 +252,12 @@ setup "$d"
 grep -q 'chmod 600' "$d/out" || fail "world-readable .env: not warned"
 [ "$(stat -c %a "$d/.env")" = 644 ] || fail "world-readable .env: mode changed behind the operator's back"
 
+d=$(stack by-digest "$traefik_stack")
+newest=$(sed -n 's/^OPENCLOUD_NEWEST=//p' "$addon/backup/setup.sh")
+echo "OC_DOCKER_TAG=$newest@sha256:$(printf '%064d' 0)" >>"$d/.env"
+setup "$d"
+grep -q "ok: OpenCloud $newest is a tested version" "$d/out" || fail "tag pinned by digest: not read as its release: $(cat "$d/out")"
+
 d=$(stack new-opencloud "$traefik_stack")
 echo "OC_DOCKER_TAG=99.0.0" >>"$d/.env"
 setup "$d"

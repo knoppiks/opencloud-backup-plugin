@@ -10,21 +10,41 @@ import { join, resolve } from 'node:path'
 
 export const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..')
 export const FIXTURE_DIR = join(REPO_ROOT, 'test', 'fixtures', 'opencloud')
-export const FIXTURE_ORIGIN = 'https://localhost:9200'
+/** FIXTURE_ORIGIN is the fixture's OpenCloud (test/fixtures/opencloud/lib.sh). */
+export const FIXTURE_ORIGIN = 'https://cloud.opencloud.localhost:9200'
 export const API_BASE = `${FIXTURE_ORIGIN}/backup/api/v1`
 
-/** BACKUPD_PORT is where the fixture's Caddy sends /backup/*. */
+/** BACKUPD_PORT is where the fixture sends /backup/api in host mode. */
 export const BACKUPD_PORT = 8080
 
 export const ADMIN = { user: 'admin', password: 'admin' }
 /** FAMILY is the "family member": a normal user with no admin role. */
 export const FAMILY = { user: 'testuser', password: 'Test-User-1!' }
 
-/** Garage is the dev Garage from docker-compose.dev.yml, as backupd reaches it. */
+/**
+ * Garage is the dev Garage from docker-compose.dev.yml. The name reaches it
+ * from the host (any *.localhost is loopback) and from the add-on's backupd
+ * container (test/fixtures/opencloud/fixture.yml), so the destination the
+ * admin creates works for the service and for the take-out tool alike.
+ */
 export const GARAGE = {
-  endpoint: '127.0.0.1:3900',
+  endpoint: 'garage.opencloud.localhost:3900',
   region: 'garage',
   bucket: 'opencloud-backup'
+}
+
+/**
+ * BackupdMode is where the fixture runs backupd (up.sh, FIXTURE_BACKUPD):
+ * on the host, started by global-setup.ts, or as the add-on's container.
+ */
+export type BackupdMode = 'host' | 'container'
+
+export function backupdMode(): BackupdMode {
+  const mode = fixtureEnv().FIXTURE_BACKUPD ?? 'host'
+  if (mode !== 'host' && mode !== 'container') {
+    throw new Error(`fixture.env: FIXTURE_BACKUPD is '${mode}', want host or container`)
+  }
+  return mode
 }
 
 /**

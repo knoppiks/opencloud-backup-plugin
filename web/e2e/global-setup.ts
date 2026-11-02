@@ -1,10 +1,16 @@
-// Brings up what the fixture does not: backupd itself (8f decision 3).
+// Brings up what the fixture does not: backupd itself (8f decision 3), when
+// the fixture runs it on the host (FIXTURE_BACKUPD=host, `make dev-up`).
 //
 // Checks the preconditions first and says which one is missing, then builds
-// backupd, takeout and decrypt, and starts backupd on the host where the
-// fixture's Caddy expects it. The returned function is the teardown.
+// takeout and decrypt, and in host mode backupd, which it starts where the
+// fixture routes /backup/api. The returned function is the teardown.
 //
-// Per run, fresh:
+// In container mode (CI) the add-on's backupd is the one under test, set up
+// by backup/setup.sh with its own keys and state Space; nothing is started
+// here. That stack is meant for one run: a second finds the first run's
+// Spaces already set up.
+//
+// Per run in host mode, fresh:
 //   - SRW and TW keys, generated here and handed to backupd's environment
 //     only. They are never written to disk or logged.
 //   - A state prefix in the fixture's state Space, which is durable like a
@@ -21,12 +27,15 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileS
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  API_BASE,
   BACKUPD_PORT,
   FIXTURE_DIR,
   FIXTURE_ORIGIN,
   GARAGE,
   REPO_ROOT,
-  fixtureEnv
+  backupdMode,
+  fixtureEnv,
+  type BackupdMode
 } from './support/env'
 import { http } from './support/http'
 
@@ -34,6 +43,7 @@ const READY_TIMEOUT_MS = 60_000
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
   await checkPreconditions()
+  const mode = backupdMode()
 
   // E2E_RUN_ROOT lets CI keep the run directory somewhere it can upload
   // backupd.log from after a failure.
@@ -42,20 +52,22 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const runDir = mkdtempSync(join(runRoot, 'ocbp-e2e-'))
   const binDir = join(runDir, 'bin')
   mkdirSync(binDir)
-  buildBinaries(binDir)
+  buildBinaries(binDir, mode)
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const runId = `${stamp}-${randomBytes(3).toString('hex')}`
   const prefix = `e2e/${runId}/`
-  const state = { spaceId: stateSpace(binDir), prefix: `${STATE_PREFIX_ROOT}/${runId}` }
-
-  const backupd = startBackupd(binDir, runDir, state)
-  await waitForReady(backupd, runDir)
-
   process.env.E2E_RUN_DIR = runDir
   process.env.E2E_PREFIX = prefix
-  console.log(`e2e: run directory ${runDir}, repository prefix ${prefix}`)
+  console.log(`e2e: run directory ${runDir}, repository prefix ${prefix}, ${mode} backupd`)
 
+  if (mode === 'container') {
+    return async () => {}
+  }
+
+  const state = { spaceId: stateSpace(binDir), prefix: `${STATE_PREFIX_ROOT}/${runId}` }
+  const backupd = startBackupd(binDir, runDir, state)
+  await waitForReady(backupd, runDir)
   return () => stop(backupd)
 }
 
@@ -79,6 +91,18 @@ async function checkPreconditions(): Promise<void> {
     throw new Error(`the dev Garage does not answer on ${GARAGE.endpoint}: run 'make dev-up'`)
   }
 
+  if (backupdMode() === 'container') {
+    // Unauthenticated, the API answers 401: routed, and backupd is up.
+    const api = await http(`${API_BASE}/version`).catch(() => undefined)
+    if (api?.status !== 401) {
+      throw new Error(
+        `the add-on's backupd does not answer behind ${API_BASE} (status ${api?.status}): ` +
+          'see test/fixtures/opencloud/compose.sh logs backupd'
+      )
+    }
+    return
+  }
+
   const occupied = await http(`http://127.0.0.1:${BACKUPD_PORT}/healthz`, {
     timeoutMs: 2000
   }).catch(() => undefined)
@@ -90,12 +114,15 @@ async function checkPreconditions(): Promise<void> {
   }
 }
 
-function buildBinaries(binDir: string): void {
-  const result = spawnSync(
-    'go',
-    ['build', '-o', `${binDir}/`, './cmd/backupd', './cmd/takeout', './cmd/decrypt'],
-    { cwd: REPO_ROOT, stdio: 'inherit' }
-  )
+function buildBinaries(binDir: string, mode: BackupdMode): void {
+  const packages = ['./cmd/takeout', './cmd/decrypt']
+  if (mode === 'host') {
+    packages.unshift('./cmd/backupd')
+  }
+  const result = spawnSync('go', ['build', '-o', `${binDir}/`, ...packages], {
+    cwd: REPO_ROOT,
+    stdio: 'inherit'
+  })
   if (result.status !== 0) {
     throw new Error('go build failed')
   }

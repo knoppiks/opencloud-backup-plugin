@@ -1,10 +1,11 @@
 # Local dev environment for the backup plugin.
 #
 # Brings up a single-node Garage S3 target for manual/dev work. The test
-# OpenCloud instance is NOT a plain service here: it needs a one-time `init`
-# (secret generation) before the server starts, handled by the existing fixture
-# at test/fixtures/opencloud/up.sh (Phase 0, Spikes 3 & 4). Use `make dev-up`,
-# which starts Garage and then the OpenCloud fixture.
+# OpenCloud is not here: it is opencloud-compose with the compose add-on,
+# built by test/fixtures/opencloud/up.sh (#158). Use `make dev-up`, which
+# starts Garage and then the OpenCloud fixture. The fixture's backupd, on the
+# host or in the add-on's container, reaches this Garage as
+# garage.opencloud.localhost:3900.
 #
 # The Garage image is the one the integration tests start
 # (internal/testutil.GarageImage); a test keeps the two equal, and Renovate

@@ -685,3 +685,19 @@ never started, `OC_DOCKER_TAG` unset (so 9.0.0), the add-on and its
 - Found: upstream's `.env.example` has `COMPOSE_FILE` commented out, so the
   operator must set it (setup.sh says so); copying `deploy/compose/.` over
   the checkout replaced upstream's README.md, hence `backup/README.md`.
+
+### 7. The fixture on opencloud-compose (#158)
+
+2026-10-30, opencloud-compose 91911a5, on this machine:
+
+- Host mode, `newest` (8.1.0): `up.sh` 6 s from a cached image; seed,
+  `make test-opencloud` (every package) and `make e2e` (17 tests) pass.
+- Container mode, images built from the branch: `up.sh` 19 s, of which
+  `setup.sh` (keys, service account, state Space after one retry) most;
+  backupd healthy, `make e2e` 17 passed against the add-on's backupd and
+  its installer's extension. Path A with `OC_FIXTURE_DOWN_CMD=down.sh`
+  passes.
+- `oldest` (7.3.0) on the same commit: OpenCloud starts with upstream's
+  environment, the CSP edit takes, the cs3, cs3state, api and ocversion
+  integration tests pass.
+- The leg, commit and mode guards refuse as intended.

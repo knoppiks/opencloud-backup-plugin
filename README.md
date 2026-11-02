@@ -278,8 +278,7 @@ directives:
 OpenCloud uses that file **instead of** its default, so start from your current
 version's policy and add the one line. The defaults differ: 8.1 adds `blob:` to
 `style-src`, which a file copied from 7.x would take away again.
-[`test/fixtures/opencloud/csp.yaml`](test/fixtures/opencloud/csp.yaml) is the
-8.1.0 default plus that line. `'wasm-unsafe-eval'` allows WebAssembly
+`'wasm-unsafe-eval'` allows WebAssembly
 compilation only. It is not `'unsafe-eval'`: `eval()` and `new Function()` stay
 blocked.
 
@@ -751,26 +750,35 @@ make web-lint web-typecheck web-test web-build
 To see it in a browser, against the pinned OpenCloud:
 
 ```sh
-make dev-up                      # Garage + OpenCloud + the fixture proxy, seeded
+make dev-up                      # Garage + OpenCloud with the compose add-on, seeded
 make web-install-fixture         # build, install into the fixture, verify it registered
 ```
 
-The fixture needs [`yq`](https://github.com/mikefarah/yq) v4 to read the pin
-file. It starts the pin file's default leg (`newest`, the newest release); pick
-another with `OC_LEG`, e.g. `OC_LEG=canary make dev-up`. A fixture keeps
-the version it was initialised with, so switching needs
-`test/fixtures/opencloud/down.sh --purge` first.
+The fixture is what operators install: [opencloud-compose](https://github.com/opencloud-eu/opencloud-compose)
+at the commit in `test/fixtures/opencloud/opencloud-compose.env`, with the
+add-on from `deploy/compose/` and a test-only overlay (`fixture.yml`: the CS3
+ports on loopback, basic auth for seeding, a test CA). `up.sh` builds it in
+`test/fixtures/opencloud/stack/`, an opencloud-compose checkout; run
+`docker compose` on it with `test/fixtures/opencloud/compose.sh`.
+
+It needs [`yq`](https://github.com/mikefarah/yq) v4 to read the pin file, and
+a host that resolves `*.localhost` to loopback (systemd-resolved does; so do
+Chrome and curl): OpenCloud is at `https://cloud.opencloud.localhost:9200`,
+admin / admin. It starts the pin file's default leg (`newest`, the newest
+release); pick another with `OC_LEG`, e.g. `OC_LEG=canary make dev-up`. A
+fixture keeps the version and the opencloud-compose commit it was created
+with, so switching needs `test/fixtures/opencloud/down.sh --purge` first.
 
 `web-install-fixture` restarts OpenCloud, because the apps directory is scanned
 at startup only — a bundle dropped in while it is running is invisible, with no
 error anywhere. It then checks that the app appears in `config.json`'s
-`external_apps` carrying its `config.apiPath`, and that the entry chunk serves
-200. `make web-verify-fixture` repeats the check without rebuilding.
+`external_apps` carrying its `config.apiPath`, that the entry chunk serves
+200, and that the policy allows WebAssembly. `make web-verify-fixture` repeats
+the check without rebuilding.
 
-The fixture's `:9200` is a Caddy proxy providing the single origin: OpenCloud
-everywhere, and `/backup/*` to a `backupd` on the host at port 8080. OpenCloud
-itself is on `:9201` if you need to bypass the proxy. To run the service behind
-it:
+`make dev-up` leaves the add-on's two containers out (`host-backupd.yml`) and
+routes `/backup/api` to a `backupd` on the host at port 8080, which is what
+makes iterating fast. To run the service there:
 
 ```sh
 source test/fixtures/opencloud/fixture.env   # written by up.sh
@@ -780,13 +788,19 @@ go run ./cmd/backupd
 ```
 
 `fixture.env` carries `OIDC_AUDIENCE=web` (the SPA's client id — anything else
-401s every request), `BACKUPD_BASE_PATH=/backup` to match the proxy, and
-`SSL_CERT_FILE` pointing at the proxy's extracted CA root so the service can
-verify the OIDC issuer without turning verification off.
+401s every request), `BACKUPD_BASE_PATH=/backup` to match the route, and
+`SSL_CERT_FILE` pointing at the fixture's test CA so the service can verify
+the OIDC issuer without turning verification off.
 
-`backupd` runs on the host rather than in the compose stack on purpose: tokens
-carry `iss: https://localhost:9200`, and inside a container `localhost` is that
-container.
+To run the add-on's own containers instead, as CI's browser tests do, build
+the images and start the fixture in container mode. `up.sh` then runs
+`backup/setup.sh` as an operator would:
+
+```sh
+make image web-image
+test/fixtures/opencloud/down.sh --purge
+FIXTURE_BACKUPD=container make dev-up        # images tagged dev; FIXTURE_IMAGE_TAG for others
+```
 
 ### End-to-end tests in a real browser
 
@@ -802,6 +816,9 @@ does, under a fresh prefix per run. It generates wrap keys per run and uses a
 fresh repository prefix in the dev Garage. If `fixture.env` has no
 `STATE_SPACE_ID`, the first run provisions a state Space and appends its id
 there. It builds `takeout` and `decrypt` alongside.
+
+In container mode it starts no `backupd` and tests the add-on's. That stack is
+good for one run: a second finds the first run's Space already protected.
 
 The run goes through the flow in order:
 

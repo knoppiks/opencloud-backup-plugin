@@ -112,21 +112,23 @@ func TestREADMESupportedSentence(t *testing.T) {
 	}
 }
 
-// The fixture must take its image from up.sh, which reads the pin file. The
-// pin check above catches a literal; this catches a hard-coded variable name
-// drifting apart between the two scripts.
+// The fixture must take its image from up.sh, which reads the pin file and
+// hands it to opencloud-compose through the two variables its
+// docker-compose.yml builds the image from. The pin check above catches a
+// literal; this catches up.sh losing the pin file or the variables.
 func TestFixtureReadsThePinnedImage(t *testing.T) {
-	root := repoRoot(t)
-	for path, want := range map[string]string{
-		"test/fixtures/opencloud/docker-compose.yml": "image: ${OC_IMAGE:?",
-		"test/fixtures/opencloud/up.sh":              pinFile,
+	const upSh = "test/fixtures/opencloud/up.sh"
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), upSh))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		pinFile,
+		`env_set OC_DOCKER_IMAGE "${oc_image}"`,
+		`env_set OC_DOCKER_TAG "${oc_tag}"`,
 	} {
-		data, err := os.ReadFile(filepath.Join(root, path))
-		if err != nil {
-			t.Fatal(err)
-		}
 		if !bytes.Contains(data, []byte(want)) {
-			t.Errorf("%s does not contain %q", path, want)
+			t.Errorf("%s does not contain %q", upSh, want)
 		}
 	}
 }
