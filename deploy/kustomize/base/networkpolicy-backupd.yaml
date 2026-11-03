@@ -1,0 +1,71 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opencloud-backupd
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: backupd
+# What the backup service may reach, and who may reach it. Tested on a cluster
+# that enforces NetworkPolicy (kind with Calico, `make k8s-netpol-test`).
+#
+# The two namespaces below are your cluster's: your overlay names them
+# (overlays/example). Left as they are, nothing reaches the service and it
+# reaches no OpenCloud: it fails closed.
+#
+# Probes are not listed: the kubelet's own traffic to the pod is not subject
+# to NetworkPolicy on common CNIs (Calico, Cilium); the test checks that the
+# readiness probe still passes.
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: opencloud-backup
+      app.kubernetes.io/component: backupd
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # The ingress controller, for /backup/api on OpenCloud's host. Nothing
+  # else: the listener is plain HTTP and a Data Key crosses it at key setup.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: REPLACE_ME_WITH_THE_INGRESS_NAMESPACE
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Cluster DNS.
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # OpenCloud's CS3 gateway and data server: plaintext, so only to its
+  # namespace. Whether OpenCloud admits only this service on those ports is
+  # OpenCloud's own policy (decisions.md, 7.5.0 amendment).
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: REPLACE_ME_WITH_THE_OPENCLOUD_NAMESPACE
+    ports:
+    - protocol: TCP
+      port: 9142
+    - protocol: TCP
+      port: 9158
+  # HTTPS anywhere: OpenCloud's public URL (the OIDC issuer, graph, and the
+  # /data gateway reva hands out) and the backup destinations, which an admin
+  # adds at run time. 3900 is Garage's S3 port. Narrowing these to your
+  # ingress and your destinations is yours to do; the service cannot know
+  # them in advance. Add 587 (or your SMTP port) for operator mail.
+  - ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 3900

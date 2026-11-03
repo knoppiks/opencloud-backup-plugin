@@ -202,7 +202,7 @@ func TestChainRunsEveryCleanupInOrder(t *testing.T) {
 
 // The shipped manifests must be caught by the check that exists for them.
 func TestShippedManifestPlaceholdersAreRefused(t *testing.T) {
-	for _, path := range []string{"../../deploy/deployment-backupd.yaml", "../../deploy/secret-wrap-keys.yaml"} {
+	for _, path := range []string{kustomizeBase + "backupd.env", kustomizeExample + "backupd.env", kustomizeExample + "secret-wrap-keys.yaml"} {
 		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
@@ -213,18 +213,20 @@ func TestShippedManifestPlaceholdersAreRefused(t *testing.T) {
 		}
 	}
 
-	manifest, err := os.ReadFile("../../deploy/deployment-backupd.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	placeholders := regexp.MustCompile(`- name: ([A-Z0-9_]+)\s+value: "([^"]*`+config.PlaceholderMarker+`[^"]*)"`).
-		FindAllStringSubmatch(string(manifest), -1)
-	if len(placeholders) == 0 {
-		t.Fatal("the manifest has no placeholder in a plain env value any more; this test checks nothing")
-	}
-	for _, m := range placeholders {
-		if _, err := loadServiceEnv([]string{m[1] + "=" + m[2]}); !errors.Is(err, config.ErrPlaceholder) {
-			t.Errorf("%s=%s from the manifest is not refused: %v", m[1], m[2], err)
+	for _, path := range []string{kustomizeBase + "backupd.env", kustomizeExample + "backupd.env"} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		placeholders := regexp.MustCompile(`(?m)^([A-Z0-9_]+)=(.*`+config.PlaceholderMarker+`.*)$`).
+			FindAllStringSubmatch(string(body), -1)
+		if len(placeholders) == 0 {
+			t.Fatalf("%s has no placeholder any more; this test checks nothing", path)
+		}
+		for _, m := range placeholders {
+			if _, err := loadServiceEnv([]string{m[1] + "=" + m[2]}); !errors.Is(err, config.ErrPlaceholder) {
+				t.Errorf("%s: %s=%s is not refused: %v", path, m[1], m[2], err)
+			}
 		}
 	}
 }
@@ -241,9 +243,22 @@ func TestShippedManifestsNameOnlyKnownVariables(t *testing.T) {
 	for _, name := range config.Names(&env) {
 		known[name] = true
 	}
+	// The take-out CronJob runs the other binary in the image; its
+	// variables are in its generated reference.
+	takeout, err := os.ReadFile("../../docs/reference/environment-takeout.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range regexp.MustCompile("(?m)^\\| `([A-Z][A-Z0-9_]+)` \\|").FindAllStringSubmatch(string(takeout), -1) {
+		known[m[1]] = true
+	}
 	for path, pattern := range map[string]string{
-		"../../deploy/deployment-backupd.yaml":         `(?m)- name: ([A-Z][A-Z0-9_]+)\s*$`,
-		"../../deploy/configmap-bootstrap-target.yaml": `(?m)^  ([A-Z][A-Z0-9_]+):`,
+		kustomizeBase + "deployment-backupd.yaml":         `(?m)- name: ([A-Z][A-Z0-9_]+)\s*$`,
+		kustomizeBase + "operator-jobs.yaml":              `(?m)- name: ([A-Z][A-Z0-9_]+)\s*$`,
+		kustomizeBase + "configmap-bootstrap-target.yaml": `(?m)^  ([A-Z][A-Z0-9_]+):`,
+		// Set, or offered as `# NAME=value`.
+		kustomizeBase + "backupd.env":    `(?m)^(?:# )?([A-Z][A-Z0-9_]+)=`,
+		kustomizeExample + "backupd.env": `(?m)^(?:# )?([A-Z][A-Z0-9_]+)=`,
 	} {
 		body, err := os.ReadFile(path)
 		if err != nil {
@@ -280,7 +295,7 @@ func TestImageEntrypointTakesNoArguments(t *testing.T) {
 		t.Error("the service image must not ship the decrypt CLI (decisions.md #2, #15)")
 	}
 
-	manifest, err := os.ReadFile("../../deploy/deployment-backupd.yaml")
+	manifest, err := os.ReadFile(kustomizeBase + "deployment-backupd.yaml")
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}

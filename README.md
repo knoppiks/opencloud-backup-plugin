@@ -231,9 +231,12 @@ nothing else.
 ## Deployment: installing Backup Vault
 
 The extension ships as an image, `ghcr.io/knoppiks/opencloud-backup-vault-web`,
-with the same version as the service; run the two at the same version. It
-carries the bundle at the path OpenCloud's own `web-extensions` images use, so
-it drops into the same initContainer pattern:
+with the same version as the service; run the two at the same version. On
+Kubernetes, the Component in `deploy/kustomize/components/web-extension` adds
+it to OpenCloud's Deployment, and [`deploy/kustomize/README.md`](deploy/kustomize/README.md)
+says how with OpenCloud's Helm charts. The image carries the bundle at the
+path OpenCloud's own `web-extensions` images use, so it drops into the same
+initContainer pattern:
 
 ```yaml
 initContainers:
@@ -246,11 +249,13 @@ initContainers:
 # <OC_DATA_DIR>/web/assets/apps/ (default /var/lib/opencloud/web/assets/apps/).
 ```
 
-**Do not set `command` or `args` on this container.** OpenCloud's own
+**Do not set `command` on this container.** OpenCloud's own
 `web-extensions` images are usually run with a shell one-liner,
 `sh -c "mkdir -p /extensions/… && cp -R …"`. This image has no shell, so that
-command fails. The image's entrypoint does the same copy by itself, and an
-argument it does not know stops it with an error.
+command fails. The image's entrypoint does the same copy by itself; its only
+arguments are `-to DIR`, to copy somewhere else than
+`/extensions/backup-vault`, and `-from DIR`. Anything else stops it with an
+error.
 
 OpenCloud scans the apps directory **at startup only**, which an initContainer
 gets for free. Copying into a running pod does nothing until it restarts.
@@ -287,8 +292,11 @@ blocked.
 With [opencloud-compose](https://github.com/opencloud-eu/opencloud-compose),
 use the add-on in [`deploy/compose/`](deploy/compose/backup/README.md) instead.
 
-In order, for a Kubernetes deployment next to an existing OpenCloud. `deploy/`
-holds the manifests; every `REPLACE_ME` in them is refused at startup. Every
+In order, for a Kubernetes deployment next to an existing OpenCloud. The
+manifests are a Kustomize base and an example overlay in
+[`deploy/kustomize/`](deploy/kustomize/README.md), which walks through the
+Kubernetes side in detail; every `REPLACE_ME` in the service's settings is
+refused at startup. Every
 environment variable, its default and what it does is listed in the
 [environment reference](docs/reference/environment-backupd.md), which is
 generated from the code. The service logs the configuration it ended up with at startup, with
@@ -314,20 +322,21 @@ secrets shown only as set or unset.
    service account id and secret (`service_account_id` and
    `service_account_secret` in `opencloud.yaml`, or `OC_SERVICE_ACCOUNT_ID` and
    `OC_SERVICE_ACCOUNT_SECRET` if you set them). See
-   `deploy/secret-wrap-keys.yaml`.
-4. **The state Space.** Run `backupd provision-state-space` once, from the
-   service image with the service account and `CS3_GATEWAY_ADDR` set, and put
-   the id it prints into `STATE_SPACE_ID` (see "the state Space" above).
-5. **The service.** `deploy/deployment-backupd.yaml` and
-   `deploy/service-backupd.yaml`. With OpenCloud's built-in IdP,
+   `deploy/kustomize/overlays/example/secret-wrap-keys.yaml`.
+4. **The state Space.** Run `backupd provision-state-space` once (the CronJob
+   `opencloud-backup-provision-state-space`), and put the id it prints into
+   `STATE_SPACE_ID` (see "the state Space" above).
+5. **The service.** Your overlay of `deploy/kustomize/base`, its settings in
+   the overlay's `backupd.env`. With OpenCloud's built-in IdP,
    `OIDC_ISSUER` and `OC_BASE_URL` are OpenCloud's URL and `OIDC_AUDIENCE` is
    `web`. Set `TZ` to the household's zone. The pod has to reach OpenCloud's
    public URL (issuer, graph, and the `/data` gateway reva hands out) and trust
    its certificate.
-6. **The route.** `deploy/ingress-backupd.yaml`: path `/backup/api` on
+6. **The route.** The base's Ingress: path `/backup/api` on
    OpenCloud's own host, to the service, prefix not stripped. It must not be
    `/backup`, because the extension's own pages live under `/backup-vault/`.
-7. **The extension** (above), then restart OpenCloud.
+7. **The extension** (above; `deploy/kustomize/components/web-extension`
+   for OpenCloud's own Deployment), then restart OpenCloud.
 8. **A target.** Seed one with `BOOTSTRAP_*` (granted to all users), or add one
    as an OpenCloud admin through `/backup/api/v1/admin/targets` or Backup
    Vault's admin view. The bucket key needs read and write.

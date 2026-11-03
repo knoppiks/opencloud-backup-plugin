@@ -1,0 +1,44 @@
+# The Kustomize base for Backup Vault's backup service (phase-12 §12.4).
+# Use it through an overlay of your own, starting from overlays/example;
+# deploy/kustomize/README.md walks through it.
+#
+# Not here, on purpose:
+#   - the Secret opencloud-backup-wrap-keys: a placeholder in a base would
+#     replace your real keys on the next `kubectl apply -k`. The example
+#     overlay has one to fill in, or create it imperatively;
+#   - the web extension: it goes into OpenCloud's pod, which is not this
+#     base's (deploy/kustomize/README.md, "The web extension").
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- serviceaccount.yaml
+- configmap-bootstrap-target.yaml
+- deployment-backupd.yaml
+- service-backupd.yaml
+- ingress-backupd.yaml
+- networkpolicy-backupd.yaml
+- operator-jobs.yaml
+
+# The settings that are not secrets. Your overlay merges its own backupd.env
+# in; the name gets a hash of the content, so a change rolls the Deployment.
+configMapGenerator:
+- name: opencloud-backup-env
+  envs:
+  - backupd.env
+
+# Not on selectors: a selector cannot change on an existing Deployment, and
+# the version does with every release.
+labels:
+- pairs:
+    app.kubernetes.io/part-of: opencloud
+    app.kubernetes.io/version: unreleased
+  includeTemplates: true
+
+# One place for the image of the service and of its operator commands. A
+# release archive names its release here, by digest. This copy names none:
+# `unreleased` exists in no registry, so a pod from it does not start. Use a
+# release archive, or set the version in your overlay's `images:`.
+images:
+- name: ghcr.io/knoppiks/opencloud-backupd
+  newTag: unreleased

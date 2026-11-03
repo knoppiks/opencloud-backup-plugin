@@ -1,0 +1,56 @@
+# An overlay to copy and fill in: every REPLACE_ME here is a value only your
+# cluster knows. Those in backupd.env and secret-wrap-keys.yaml are refused at
+# startup when left; those in the patches below fail closed (no route, no
+# traffic). deploy/kustomize/README.md walks through it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: opencloud-backup
+
+resources:
+- ../../base
+# Fill it in, or delete this line and create the Secret imperatively
+# (secret-wrap-keys.yaml says how), which keeps the keys out of any file.
+- secret-wrap-keys.yaml
+
+configMapGenerator:
+- name: opencloud-backup-env
+  behavior: merge
+  envs:
+  - backupd.env
+
+# From the repository rather than a release archive, name a release here:
+# images:
+# - name: ghcr.io/knoppiks/opencloud-backupd
+#   newTag: X.Y.Z
+#   digest: sha256:…
+
+patches:
+# OpenCloud's own host, and the certificate its Ingress already uses for it.
+- target:
+    kind: Ingress
+    name: opencloud-backupd
+  patch: |-
+    - op: add
+      path: /spec/ingressClassName
+      value: REPLACE_ME_WITH_YOUR_INGRESS_CLASS
+    - op: replace
+      path: /spec/rules/0/host
+      value: REPLACE_ME_WITH_THE_OPENCLOUD_HOST
+    - op: replace
+      path: /spec/tls/0/hosts/0
+      value: REPLACE_ME_WITH_THE_OPENCLOUD_HOST
+    - op: replace
+      path: /spec/tls/0/secretName
+      value: REPLACE_ME_WITH_THE_OPENCLOUD_TLS_SECRET
+# The namespaces of your ingress controller and of OpenCloud.
+- target:
+    kind: NetworkPolicy
+    name: opencloud-backupd
+  patch: |-
+    - op: replace
+      path: /spec/ingress/0/from/0/namespaceSelector/matchLabels/kubernetes.io~1metadata.name
+      value: REPLACE_ME_WITH_THE_INGRESS_NAMESPACE
+    - op: replace
+      path: /spec/egress/1/to/0/namespaceSelector/matchLabels/kubernetes.io~1metadata.name
+      value: REPLACE_ME_WITH_THE_OPENCLOUD_NAMESPACE

@@ -2041,6 +2041,55 @@ None reopens a locked decision; this is #27 applied to the tests.
 - `setup.sh` reads a tag pinned by digest (`8.1.0@sha256:…`) as its release:
   the fixture pins OpenCloud that way, and so may an operator.
 
+### Amendments from Phase 12 (packaging; #159, Kustomize)
+
+None reopens a locked decision.
+
+- **`deploy/*.yaml` moved into `deploy/kustomize/base`**, with
+  `overlays/example` (every `REPLACE_ME`) and `components/web-extension`. One
+  copy; the Secret is in the example overlay only, because a placeholder
+  Secret in a base would overwrite real keys on the next `apply -k`.
+- **The base names no release, like the compose add-on (#156):**
+  `images:` sets `newTag: unreleased` and `app.kubernetes.io/version:
+  unreleased` (not on selectors). #160 stamps both, `newTag` plus `digest`
+  (Kustomize 5.8 renders `name:tag@digest`). The post-release Renovate bump
+  of `deploy/` (#110) is gone; `check-deploy-images.sh` stays, for #160's
+  archives, and CI runs only its own test.
+- **Settings move into `backupd.env`** → a generated ConfigMap
+  (`opencloud-backup-env`, hashed, so a change rolls the pod), shared by the
+  Deployment and the operator commands; secrets stay `secretKeyRef`.
+- **Operator commands are suspended CronJobs** (`kubectl create job
+  --from=cronjob/…`), not suspended Jobs: a Job's template is immutable, so
+  the next `apply -k` after any image or ConfigMap change would fail. Their
+  pods are `component: operator-command`, so the Service never routes to
+  them and the service's NetworkPolicy does not cover them. Walked with the
+  binary and exactly their environment against the fixture: provision with
+  `STATE_SPACE_ID=""` overriding the placeholder, then both rotations.
+- **NetworkPolicy**: ingress from the ingress controller's namespace on
+  8080; egress DNS, OpenCloud's namespace on 9142/9158, 443 and 3900
+  anywhere. Probes are not listed (kubelet traffic is exempt on Calico and
+  Cilium; the test checks readiness survives). Tested in CI on kind + Calico
+  with stand-in pods, every connection shown to work before the policy is
+  applied (`make k8s-kind-test`).
+- **Web extension**: the Component's initContainer runs as OpenCloud's uid
+  and copies into the data volume (`install-bundle -to`), like the compose
+  add-on. A first design mounted an emptyDir with `subPath` under the apps
+  directory; on a fresh data volume the runtime then creates
+  `web/assets/apps` as root, and OpenCloud (uid 1000) could no longer write
+  under `web/assets`. The kind test checks both.
+- **Helm (12.4 spike)**: `opencloud-eu/helm` is archived (community charts;
+  supported charts are commercial). `opencloud-microservices` takes
+  `services.web.additionalInitContainers` with its `apps` volume;
+  `opencloud` has no hook, so a post-renderer with the Component. Read from
+  the chart source (72de94b), not deployed.
+- **`GOMEMLIMIT` from the downward API is not done**: the service already
+  derives the limit from the cgroup, less the memory-backed volumes
+  (internal/memlimit), which the downward API value would override with a
+  worse one.
+- **Kubernetes 1.35 to 1.37**, the minors upstream maintains on 2026-11-02;
+  kubeconform validates oldest and newest, a test holds README and Makefile
+  together.
+
 ---
 
 ## Trust & key model

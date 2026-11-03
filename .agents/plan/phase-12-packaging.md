@@ -180,6 +180,11 @@ lists as missing:
 `kubeconform` validates the rendered output against the oldest and newest
 Kubernetes versions the docs claim.
 
+*Landed in #159*, with: operator commands as suspended CronJobs, settings in
+a generated ConfigMap, the web extension as a Component, no `GOMEMLIMIT`
+from the downward API, Kubernetes 1.35 to 1.37 (decisions.md, "Amendments
+from Phase 12 … #159").
+
 ## 12.5 The fixture becomes what ships
 
 Replace the bespoke `test/fixtures/opencloud/docker-compose.yml` + Caddy
@@ -215,7 +220,7 @@ and `deploy/kustomize/README.md` that the docs site later absorbs.
       working Backup Vault (setup, backup, restore) — walked once by hand on
       a clean machine and automated in CI on every matrix leg.
 - [x] The CSP edit documented for compose and checked by `setup.sh` (#156, #157).
-- [ ] Kustomize base + example overlay render and validate; NetworkPolicy
+- [x] Kustomize base + example overlay render and validate; NetworkPolicy
       tested on a kind cluster with a CNI that enforces it (or recorded as
       untested — not claimed).
 - [x] The bespoke fixture is gone; integration and E2E run on

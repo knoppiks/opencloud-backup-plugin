@@ -701,3 +701,18 @@ never started, `OC_DOCKER_TAG` unset (so 9.0.0), the add-on and its
   environment, the CSP edit takes, the cs3, cs3state, api and ocversion
   integration tests pass.
 - The leg, commit and mode guards refuse as intended.
+
+### 8. The Kustomize base on kind (#159)
+
+2026-11-02, kind v0.33.0 (node 1.37.0), Calico v3.33.0:
+
+- `make k8s-kind-test` 1 m 40 s including cluster and Calico. Without the
+  policy all ten probes connect; with it the five allowed connect, the five
+  refused time out, DNS resolves, and the stand-in's readiness probe keeps
+  passing. Dropping the ingress `from:` fails it on two cases.
+- Web extension Component: with an emptyDir `subPath`-mounted under the
+  apps directory, a fresh data volume's `web/assets` came out root-owned
+  0755 and uid 1000 could not write there. Copying as uid 1000 into the data
+  volume instead passes.
+- The CronJobs' environment, run with the binary against the fixture:
+  provision (with `STATE_SPACE_ID=""`), `rotate-srw`, `rotate-tw` succeed.

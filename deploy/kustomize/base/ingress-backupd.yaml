@@ -9,7 +9,7 @@ metadata:
   # and read/write timeouts of at least two minutes (the service's own write
   # timeout), for the few requests that wait on OpenCloud.
 spec:
-  # ingressClassName: REPLACE_ME_WITH_YOUR_INGRESS_CLASS
+  # The class, host and certificate are your overlay's (overlays/example).
   #
   # This Ingress must serve THE SAME HOST as OpenCloud's own. The Backup Vault
   # extension runs inside the OpenCloud SPA and calls this service with the
