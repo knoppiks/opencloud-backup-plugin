@@ -70,8 +70,8 @@ import (
 // and give its lock back (review-2026-10.md F7).
 //
 // The whole budget, HTTP shutdown included, must fit in the deployment's
-// terminationGracePeriodSeconds (deploy/deployment-backupd.yaml; a test holds
-// the two together).
+// terminationGracePeriodSeconds (deploy/kustomize/base/deployment-backupd.yaml;
+// a test holds the two together).
 const (
 	httpShutdownTimeout = 10 * time.Second
 	drainMargin         = 5 * time.Second

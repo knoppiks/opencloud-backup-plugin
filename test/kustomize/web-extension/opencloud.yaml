@@ -1,0 +1,30 @@
+# A stand-in for OpenCloud's Deployment, shaped like a single-container
+# install. Not OpenCloud's configuration: only what the patch meets.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencloud
+spec:
+  selector:
+    matchLabels:
+      app: opencloud
+  template:
+    metadata:
+      labels:
+        app: opencloud
+    spec:
+      # OpenCloud's image runs as uid 1000.
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: opencloud
+        image: opencloud-stand-in
+        command: ["sleep", "100000"]
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/opencloud
+      volumes:
+      - name: data
+        emptyDir: {}

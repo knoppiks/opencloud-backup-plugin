@@ -1,0 +1,297 @@
+# The operator commands, as templates: CronJobs that never run by themselves
+# (suspended, and scheduled for 31 February). Run one with
+#
+#   kubectl create job --from=cronjob/opencloud-backup-provision-state-space provision-1
+#   kubectl logs job/provision-1
+#
+# They are not Jobs because a Job's template is immutable: the next
+# `kubectl apply -k` after a change to the image or the configuration would
+# fail on it. deploy/kustomize/README.md says when to run which.
+#
+# Their pods are not the service's (component operator-command): the Service
+# does not route to them, and the service's NetworkPolicy does not restrict
+# them.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: opencloud-backup-provision-state-space
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: operator-command
+spec:
+  suspend: true
+  schedule: "0 0 31 2 *"
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: opencloud-backup
+            app.kubernetes.io/component: operator-command
+        spec:
+          restartPolicy: Never
+          serviceAccountName: opencloud-backupd
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          # Creates the state Space and prints its id, the one line on
+          # stdout: put it into STATE_SPACE_ID in your overlay's backupd.env.
+          # Run it once, after everything else in backupd.env is filled in
+          # (it reads the whole configuration): it refuses while
+          # STATE_SPACE_ID is set, and a second run would create a second,
+          # empty Space.
+          - name: provision-state-space
+            image: ghcr.io/knoppiks/opencloud-backupd
+            args: ["provision-state-space"]
+            envFrom:
+            - configMapRef:
+                name: opencloud-backup-env
+            env:
+            # The placeholder in backupd.env would make it refuse.
+            - name: STATE_SPACE_ID
+              value: ""
+            - name: OC_SERVICE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: service-account-id
+            - name: OC_SERVICE_ACCOUNT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: service-account-secret
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: opencloud-backup-rotate-srw
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: operator-command
+spec:
+  suspend: true
+  schedule: "0 0 31 2 *"
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: opencloud-backup
+            app.kubernetes.io/component: operator-command
+        spec:
+          restartPolicy: Never
+          serviceAccountName: opencloud-backupd
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          # Re-wraps every Space's server key envelope from the retiring SRW
+          # key to the new one (decisions.md #18). With the service STOPPED
+          # (scale the Deployment to 0): the new key in srw-wrapping-key, the
+          # retiring one in srw-wrapping-key-old. Re-running finishes an
+          # interrupted rotation. Remove the old key afterwards.
+          - name: rotate-srw
+            image: ghcr.io/knoppiks/opencloud-backupd
+            args: ["rotate-srw", "-service-stopped"]
+            envFrom:
+            - configMapRef:
+                name: opencloud-backup-env
+            env:
+            - name: OC_SERVICE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: service-account-id
+            - name: OC_SERVICE_ACCOUNT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: service-account-secret
+            - name: SRW_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: srw-wrapping-key
+            - name: SRW_KEY_OLD
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: srw-wrapping-key-old
+            - name: TW_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: tw-wrapping-key
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: opencloud-backup-rotate-tw
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: operator-command
+spec:
+  suspend: true
+  schedule: "0 0 31 2 *"
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: opencloud-backup
+            app.kubernetes.io/component: operator-command
+        spec:
+          restartPolicy: Never
+          serviceAccountName: opencloud-backupd
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          # Re-wraps every target's credentials from the retiring TW key to
+          # the new one, like rotate-srw: service stopped, the new key in
+          # tw-wrapping-key, the retiring one in tw-wrapping-key-old.
+          - name: rotate-tw
+            image: ghcr.io/knoppiks/opencloud-backupd
+            args: ["rotate-tw", "-service-stopped"]
+            envFrom:
+            - configMapRef:
+                name: opencloud-backup-env
+            env:
+            - name: OC_SERVICE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: service-account-id
+            - name: OC_SERVICE_ACCOUNT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: service-account-secret
+            - name: SRW_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: srw-wrapping-key
+            - name: TW_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: tw-wrapping-key
+            - name: TW_KEY_OLD
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-wrap-keys
+                  key: tw-wrapping-key-old
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: opencloud-backup-takeout
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: operator-command
+spec:
+  suspend: true
+  schedule: "0 0 31 2 *"
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: opencloud-backup
+            app.kubernetes.io/component: operator-command
+        spec:
+          restartPolicy: Never
+          serviceAccountName: opencloud-backupd
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          # Copies one Space's backups out of the bucket, still encrypted,
+          # for its owner to open with their Recovery Key (README.md, "Take-
+          # Out"). It needs neither OpenCloud nor the service, nor any key.
+          # Your overlay sets the flags; the bucket's credentials come from
+          # the Secret opencloud-backup-takeout (access-key-id,
+          # secret-access-key), the output goes to the volume claim
+          # opencloud-backup-takeout. Both are yours to create.
+          - name: takeout
+            image: ghcr.io/knoppiks/opencloud-backupd
+            command: ["/takeout"]
+            args:
+            - -endpoint
+            - REPLACE_ME_WITH_THE_S3_ENDPOINT
+            - -bucket
+            - REPLACE_ME_WITH_THE_BUCKET
+            - -prefix
+            - ""
+            - -space
+            - REPLACE_ME_WITH_THE_SPACE_ID
+            - -out
+            - /takeout/out
+            - -v
+            env:
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-takeout
+                  key: access-key-id
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opencloud-backup-takeout
+                  key: secret-access-key
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]
+            volumeMounts:
+            - name: takeout
+              mountPath: /takeout
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: takeout
+            persistentVolumeClaim:
+              claimName: opencloud-backup-takeout
+          - name: tmp
+            emptyDir:
+              medium: Memory
+              sizeLimit: 64Mi

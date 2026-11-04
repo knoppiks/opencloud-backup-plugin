@@ -1,0 +1,22 @@
+# The base as test/kustomize/networkpolicy-test.sh deploys it: the
+# namespaces its NetworkPolicy names are the test cluster's. Only the policy
+# is applied; the probes stand in for the pods.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: backup
+
+resources:
+- ../../../deploy/kustomize/base
+
+patches:
+- target:
+    kind: NetworkPolicy
+    name: opencloud-backupd
+  patch: |-
+    - op: replace
+      path: /spec/ingress/0/from/0/namespaceSelector/matchLabels/kubernetes.io~1metadata.name
+      value: ingress
+    - op: replace
+      path: /spec/egress/1/to/0/namespaceSelector/matchLabels/kubernetes.io~1metadata.name
+      value: opencloud

@@ -9,7 +9,7 @@ describe('resolveApiBase', () => {
   })
 
   it('keeps the default in step with the service', () => {
-    // BACKUPD_BASE_PATH is "/backup" in deploy/deployment-backupd.yaml and the
+    // BACKUPD_BASE_PATH is "/backup" in deploy/kustomize/base/backupd.env and the
     // routes beneath it are "/api/v1/...". If one side moves, both must.
     expect(DEFAULT_API_PATH).toBe('/backup/api/v1')
   })

@@ -1,0 +1,221 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencloud-backupd
+  labels:
+    app.kubernetes.io/name: opencloud-backup
+    app.kubernetes.io/component: backupd
+spec:
+  # Single replica, enforced through the rollout as well as the count. The
+  # backup service must never run twice against one state Space (decisions.md
+  # #16): the state backend has no compare-and-set, so two instances can mark
+  # each other's runs failed and dispatch the same Space at once. The default
+  # RollingUpdate strategy starts the new pod before stopping the old one and
+  # would do exactly that on every image update.
+  #
+  # The service also checks this itself and REFUSES TO START while another
+  # instance's record is live, so a mistake here costs a failed rollout rather
+  # than a corrupted run history.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencloud-backup
+      app.kubernetes.io/component: backupd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opencloud-backup
+        app.kubernetes.io/component: backupd
+    spec:
+      # Long enough for the scheduler to drain (30 s) and HTTP to finish (10 s),
+      # plus margin. A run cut short by the deadline fails through the normal
+      # path and is recovered from its lease on the next start.
+      terminationGracePeriodSeconds: 60
+      # The service never talks to the Kubernetes API: no token in the pod.
+      serviceAccountName: opencloud-backupd
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: backupd
+        # The version comes from kustomization.yaml's `images:`: a release
+        # archive names its release by digest; the repository's copy names
+        # none (`unreleased`), and your overlay sets one. Choose when to move:
+        # a single-instance service with Recreate is down while it rolls.
+        #
+        # NO `args` HERE, on purpose. The image's entrypoint is the service with
+        # an empty argument list; the first argument is read as an operator
+        # subcommand (the CronJobs in operator-jobs.yaml use exactly that), so
+        # anything set here would run a command instead of the service.
+        image: ghcr.io/knoppiks/opencloud-backupd
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        # The settings that are not secrets come from the ConfigMap
+        # opencloud-backup-env, generated from backupd.env and your overlay's
+        # (kustomization.yaml). Only what is specific to this container, and
+        # the secrets, are set here.
+        env:
+        - name: BACKUPD_ADDR
+          value: ":8080"
+        # THE LISTENER IS PLAIN HTTP. A Space's Data Key crosses it once, at key
+        # setup, so it MUST sit behind a TLS-terminating ingress on the same
+        # origin as OpenCloud. A deployment with nothing in front of it sets
+        # TLS_CERT_FILE and TLS_KEY_FILE instead (both, or neither).
+        # - name: TLS_CERT_FILE
+        #   value: "/etc/backupd-tls/tls.crt"
+        # - name: TLS_KEY_FILE
+        #   value: "/etc/backupd-tls/tls.key"
+        #
+        # The service account the worker reads every Space with, and the
+        # state Space behind it (decisions.md #11). Its secret grants owner
+        # scope on every Space in the deployment: the highest-value
+        # credential here, ahead of the wrapping keys, because it reaches
+        # plaintext.
+        - name: OC_SERVICE_ACCOUNT_ID
+          valueFrom:
+            secretKeyRef:
+              name: opencloud-backup-wrap-keys
+              key: service-account-id
+        - name: OC_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: opencloud-backup-wrap-keys
+              key: service-account-secret
+        # The Server Runtime Wrap key wraps per-Space Data Keys so unattended
+        # runs are possible (decisions.md #1). Base64 of 32 random bytes.
+        # Cluster/KMS custody: never in the admin UI, never logged.
+        - name: SRW_KEY
+          valueFrom:
+            secretKeyRef:
+              name: opencloud-backup-wrap-keys
+              key: srw-wrapping-key
+        # The Target Wrap key decrypts the stored S3 target credentials in
+        # worker memory at run time (decisions.md #14). Distinct from SRW so
+        # the two rotate independently: the service REFUSES TO START if the
+        # two are the same. Retiring either is the CronJob
+        # opencloud-backup-rotate-srw / -rotate-tw (README.md, runbook).
+        - name: TW_KEY
+          valueFrom:
+            secretKeyRef:
+              name: opencloud-backup-wrap-keys
+              key: tw-wrapping-key
+        # The parent of the per-run kopia config and cache. It MUST be
+        # memory-backed: the cache holds repository content, and nothing
+        # about a run should be recoverable from a disk after the pod is
+        # gone. The service REFUSES TO START otherwise, unless
+        # BACKUP_WORK_DIR_ALLOW_DISK=true says the operator accepts it.
+        - name: BACKUP_WORK_DIR
+          value: "/work"
+        # A backup destination, or OpenCloud, whose certificate comes from a
+        # private CA: mount the CA (e.g. a ConfigMap at /etc/ssl/private-ca)
+        # and add the directory. SSL_CERT_DIR ADDS to the image's public
+        # bundle; SSL_CERT_FILE would REPLACE it. Without the CA, "Check
+        # connection" says the endpoint is not reachable, and the log line
+        # "target connection check failed" says the certificate is not
+        # trusted.
+        # - name: SSL_CERT_DIR
+        #   value: "/etc/ssl/private-ca"
+        #
+        # The password for operator notification mail (backupd.env).
+        # - name: SMTP_PASSWORD
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: smtp-password } }
+        #
+        # Bootstrap credentials for the optional default target
+        # (configmap-bootstrap-target.yaml). They are sealed with the TW key
+        # on first start and only ciphertext is kept (decisions.md #14).
+        # Admin-managed targets need none of this.
+        # - name: BOOTSTRAP_S3_ACCESS_KEY_ID
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: bootstrap-s3-access-key-id } }
+        # - name: BOOTSTRAP_S3_SECRET_ACCESS_KEY
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: bootstrap-s3-secret-access-key } }
+        #
+        # OPTIONAL second credential for the same target, used only by prune
+        # runs (decisions.md #9, Tier 2). A backup run never holds it and a
+        # prune run never holds the pair above. Set both halves or neither:
+        # half of it is refused at startup. On Garage this separates *who*
+        # acts, not *what they may do*; see the immutability runbook in
+        # README.md before relying on it.
+        # - name: BOOTSTRAP_S3_MAINTENANCE_ACCESS_KEY_ID
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: bootstrap-s3-maintenance-access-key-id } }
+        # - name: BOOTSTRAP_S3_MAINTENANCE_SECRET_ACCESS_KEY
+        #   valueFrom: { secretKeyRef: { name: opencloud-backup-wrap-keys, key: bootstrap-s3-maintenance-secret-access-key } }
+        #
+        # Target S3 credentials for admin-managed targets are NOT injected
+        # here: they are admin-entered and stored TW-wrapped in the app
+        # (decisions.md #12/#14).
+        envFrom:
+        - configMapRef:
+            name: opencloud-backup-env
+        - configMapRef:
+            name: opencloud-backup-bootstrap-target
+        # The service sets Go's memory limit from this limit, less the
+        # sizeLimits of the memory-backed volumes below (tmpfs counts against
+        # it too): 512Mi - 256Mi - 16Mi, 90% of that, ~216Mi. Raise the limit
+        # with the work volume's sizeLimit. GOMEMLIMIT overrides it.
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+        # /healthz answers once the process listens, before OpenCloud is
+        # reachable. The startup probe gives that a minute before the liveness
+        # probe takes over.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 2
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 10
+        readinessProbe:
+          # /readyz probes the CS3 gateway (Phase 2); 503 until it is reachable,
+          # including while startup waits for OpenCloud (STARTUP_WAIT_SECONDS,
+          # then the container exits and is restarted). /healthz answers 200
+          # throughout that wait.
+          httpGet:
+            path: /readyz
+            port: http
+          initialDelaySeconds: 2
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ "ALL" ]
+        volumeMounts:
+        - name: work
+          mountPath: /work
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      # kopia connect writes a local config + cache per run; a writable directory
+      # is required since the root filesystem is read-only
+      # (phase-0-findings.md Spike 2, "Repo connect is stateful on local disk").
+      #
+      # Memory-backed on purpose: the cache holds repository content, and a
+      # memory medium means a killed pod leaves nothing behind to find. The
+      # service checks this at startup. sizeLimit counts against the pod's memory
+      # limit, so raise both together for very large Spaces.
+      - name: work
+        emptyDir:
+          medium: Memory
+          sizeLimit: 256Mi
+      - name: tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Mi

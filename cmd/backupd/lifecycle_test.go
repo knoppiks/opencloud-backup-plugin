@@ -143,7 +143,7 @@ func TestShutdownBudgetCoversTheOutcomeWriteAndFitsTheGracePeriod(t *testing.T) 
 		t.Fatalf("drain %v is shorter than the outcome write's worst case %v", drainTimeout, jobs.OutcomeWorstCase)
 	}
 
-	manifest, err := os.ReadFile("../../deploy/deployment-backupd.yaml")
+	manifest, err := os.ReadFile(kustomizeBase + "deployment-backupd.yaml")
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}

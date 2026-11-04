@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencloud
+spec:
+  template:
+    spec:
+      initContainers:
+      # Copies the extension into OpenCloud's apps directory on its data
+      # volume, as OpenCloud's own user, so the directories it creates are
+      # OpenCloud's. A new version replaces the files it ships. No `command`:
+      # the image has no shell, and its entrypoint does the copy.
+      - name: backup-vault-web
+        image: ghcr.io/knoppiks/opencloud-backup-vault-web
+        args: ["-to", "/var/lib/opencloud/web/assets/apps/backup-vault"]
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        # OpenCloud's data volume, mounted where OpenCloud mounts it.
+        - name: data
+          mountPath: /var/lib/opencloud

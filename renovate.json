@@ -37,11 +37,6 @@
     "minimumReleaseAge": null
   },
   "osvVulnerabilityAlerts": true,
-  "kubernetes": {
-    "managerFilePatterns": [
-      "/^deploy/[^/]+\\.ya?ml$/"
-    ]
-  },
   "customManagers": [
     {
       "customType": "regex",
@@ -250,15 +245,14 @@
       "groupName": "container images"
     },
     {
-      "description": "This project's own images in deploy/: the bump after a release (#110). check-deploy-images.sh refuses anything unpublished.",
+      "description": "This project's own image in the Kustomize base names no release (`unreleased`); a release archive stamps it (#159, #160). Nothing to bump.",
       "matchManagers": [
-        "kubernetes"
+        "kustomize"
       ],
       "matchPackageNames": [
         "ghcr.io/knoppiks/**"
       ],
-      "groupName": "deploy manifests",
-      "pinDigests": false
+      "enabled": false
     },
     {
       "description": "OpenCloud: every release may change CS3, which is not a public interface (compatibility-policy §4). Never automerged; a bump updates README's supported range and the policy's table too.",

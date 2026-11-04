@@ -1,0 +1,25 @@
+# The Backup Vault web extension, for OpenCloud's own Deployment: a Kustomize
+# Component to add to the kustomization that deploys OpenCloud, or to a Helm
+# post-renderer (deploy/kustomize/README.md, "The web extension").
+#
+# An initContainer copies the extension from its image into OpenCloud's apps
+# directory, <data volume>/web/assets/apps/backup-vault, as OpenCloud's user
+# (uid 1000), the way the compose add-on does. The other apps there stay as
+# they are. OpenCloud scans that directory at startup only; a new version of
+# the image rolls the pod, and the initContainer runs first.
+#
+# The patch targets a Deployment named `opencloud` whose data volume, mounted
+# at /var/lib/opencloud, is named `data`. Change the two names in patch.yaml
+# to yours; with OpenCloud's data elsewhere, the mount path and the `-to`
+# path as well.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+- path: patch.yaml
+
+# As in the base: a release archive names its release, by digest; this copy
+# names none, so the pod does not start from it.
+images:
+- name: ghcr.io/knoppiks/opencloud-backup-vault-web
+  newTag: unreleased

@@ -447,9 +447,10 @@ jobs:
           go.sum
           tools/*/go.sum
 
-    # Offline schema validation of the /deploy manifests. `kubectl apply
-    # --dry-run=client` needs a reachable API server for REST mappings, so CI
-    # uses kubeconform (schema-only, no cluster) as the equivalent check.
+    # Schema validation of the Kustomize base and the example overlay,
+    # rendered, on the oldest and the newest Kubernetes the docs name.
+    # `kubectl apply --dry-run=client` needs a reachable API server for REST
+    # mappings, so CI uses kubeconform (schema-only, no cluster) instead.
     - name: validate manifests
       run: make k8s-validate
 
@@ -457,12 +458,39 @@ jobs:
     - name: compose add-on setup
       run: make compose-test
 
-    # The manifests name only published versions of the images (#110): a
-    # tag that was never released, or `latest`, fails here. Nightly too, so
-    # a tag removed from the registry is noticed. docker buildx and jq are
-    # preinstalled; ghcr.io serves public images without a login.
-    - name: images are published
+    # The check that a release archive names only published images (#110),
+    # against a fake registry. The repository's manifests name no release.
+    - name: published-image check
       run: make deploy-images
+
+  # The Kustomize manifests on a real cluster (#159): kind with Calico, which
+  # enforces NetworkPolicy. The base's policy against stand-in pods with the
+  # service's labels, every connection shown to work without it first; and
+  # the web-extension Component with the web image built here.
+  kind:
+    name: k8s on kind (NetworkPolicy, web extension)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    # Full history: the image is stamped with the version git describes.
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+        cache-dependency-path: |
+          go.sum
+          tools/*/go.sum
+
+    - name: build the web image
+      run: make web-image
+
+    - name: NetworkPolicy and web extension
+      run: make k8s-kind-test
 
   # The Go side of the license audit (phase-11 §11.1): every program on every
   # platform anything ships for, against the allow-list, and the probe that

@@ -88,6 +88,6 @@ EXPOSE 8080
 #
 #   kubectl run ... --image <this> -- rotate-srw -service-stopped
 #
-# and it is why deploy/deployment-backupd.yaml sets no `args`. A Take-Out
+# and it is why deploy/kustomize/base/deployment-backupd.yaml sets no `args`. A Take-Out
 # overrides the entrypoint instead: `--entrypoint /takeout`.
 ENTRYPOINT ["/backupd"]

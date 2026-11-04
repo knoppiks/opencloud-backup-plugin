@@ -1,0 +1,10 @@
+# The web-extension Component on a stand-in for OpenCloud's Deployment, so
+# `make k8s-validate` renders and validates what the patch makes of it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- opencloud.yaml
+
+components:
+- ../../../deploy/kustomize/components/web-extension

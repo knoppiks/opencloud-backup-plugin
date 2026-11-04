@@ -431,21 +431,47 @@ web-image: ## Build the web bundle image for an initContainer ($(WEB_IMAGE):$(IM
 image-stamp-check: ## Check both images report this tree's version everywhere (after image, web-image).
 	scripts/check-image-stamp.sh $(IMAGE):$(IMAGE_TAG) $(WEB_IMAGE):$(IMAGE_TAG) "$(VERSION)" "$(COMMIT)"
 
+# The Kustomize base and the example overlay, rendered, against the oldest
+# and the newest Kubernetes the docs name (deploy/kustomize/README.md; a test
+# holds the two together).
+K8S_OLDEST := 1.35.0
+K8S_NEWEST := 1.37.0
+KUSTOMIZATIONS := deploy/kustomize/base deploy/kustomize/overlays/example test/kustomize/web-extension
+
 .PHONY: k8s-validate
-k8s-validate: $(TOOLS)/kubeconform ## Validate K8s manifests offline (kubeconform).
-	$(TOOLS)/kubeconform -strict -summary deploy/*.yaml
+k8s-validate: $(TOOLS)/kubeconform $(TOOLS)/kustomize ## Render the Kustomize base and example, validate them (kubeconform).
+	@set -e; for k in $(KUSTOMIZATIONS); do \
+		for v in $(K8S_OLDEST) $(K8S_NEWEST); do \
+			echo "$$k on Kubernetes $$v"; \
+			$(TOOLS)/kustomize build $$k | $(TOOLS)/kubeconform -strict -summary -kubernetes-version $$v -; \
+		done; \
+	done
+
+# The manifests on a real cluster (#159): the NetworkPolicy on kind with
+# Calico, which enforces it, and the web-extension Component with the web
+# image built from this tree (make web-image). Needs Docker and the network.
+# renovate: datasource=docker
+KIND_PROBE_IMAGE ?= busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+# renovate: datasource=github-releases depName=projectcalico/calico
+CALICO_VERSION ?= v3.33.0
+
+.PHONY: k8s-kind-test
+k8s-kind-test: $(TOOLS)/kind $(TOOLS)/kustomize ## Test the NetworkPolicy and the web-extension Component on kind (after web-image).
+	KIND=$(TOOLS)/kind KUSTOMIZE=$(TOOLS)/kustomize PROBE_IMAGE=$(KIND_PROBE_IMAGE) \
+		CALICO_VERSION=$(CALICO_VERSION) WEB_IMAGE=$(WEB_IMAGE):$(IMAGE_TAG) test/kustomize/kind-test.sh
 
 # The compose add-on's first-install helper (#157), against a fake docker.
 .PHONY: compose-test
 compose-test: ## Test the compose add-on's setup.sh (no Docker needed).
 	test/compose/setup-test.sh
 
-# deploy/ names only published versions of this project's images (#110);
-# needs the registry (docker buildx). The check's own test needs nothing.
+# The check that a manifest names only published versions of this
+# project's images (#110), against a fake registry. The manifests in the
+# repository name none (they are stamped in a release archive, #160), so
+# only the check's own test runs here.
 .PHONY: deploy-images
-deploy-images: ## Check deploy/ names only published image tags (queries ghcr.io).
+deploy-images: ## Test the published-image check for the deploy manifests (no network).
 	test/release/deploy-images-test.sh
-	scripts/check-deploy-images.sh deploy/*.yaml
 
 # HEAD's whole history (what CI fails on), then the files of the working
 # tree git would commit (AGENTS.md, "Secret scanning").
