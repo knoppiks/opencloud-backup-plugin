@@ -2090,6 +2090,37 @@ None reopens a locked decision.
   kubeconform validates oldest and newest, a test holds README and Makefile
   together.
 
+### Amendments from Phase 12 (packaging; #160, release archives)
+
+None reopens a locked decision.
+
+- **Two assets (owner, 2026-11-05):** `backup-vault-compose_<ver>.tar.gz`
+  and `backup-vault-kustomize_<ver>.tar.gz`. The compose archive has **no
+  wrapping directory**: it unpacks straight into an opencloud-compose
+  checkout (`backup/`, `traefik/backup.yml`, `external-proxy/backup.yml`,
+  `LICENSE` under `backup/`), file entries only, so upstream's directories
+  keep their own modes. The Kustomize archive wraps in
+  `backup-vault-kustomize_<ver>/`.
+- **Stamped in the release job from `images.txt`** (`make deploy-archives`,
+  `scripts/deploy-archives.sh`), before GoReleaser, so `SHA256SUMS`, its
+  signature and build provenance cover them like every other asset. Only
+  git-tracked files, git's modes (`setup.sh` 0755, the rest 0644), root
+  owner, the commit's time: bit-identical rebuilds. Compose:
+  `${BACKUP_VERSION:-<ver>@sha256:…}`; Kustomize: `newTag` + `digest`, and
+  `app.kubernetes.io/version`.
+- **Checked twice (owner, 2026-11-05).** Offline in the release
+  (`check-deploy-archives.sh`, run by `check-release-assets.sh`): file list
+  and modes against git, every image against `images.txt`, and the base and
+  the Component as Kustomize renders them. Against the registry in
+  `release-publish.yml` after tagging (`check-deploy-images.sh`, which now
+  reads compose defaults and kustomization `images:` through
+  `deploy-images.sh`): a draft has no tags to check yet.
+- **Every pull request builds and checks them (owner, 2026-11-05):**
+  `make release-snapshot` stamps with stand-in digests, listed in a stand-in
+  `images.txt`. `make deploy-images` probes what the check refuses.
+- A remote Kustomize base at a release tag names `unreleased` like `main`;
+  the README tells such users to set the images by digest in their overlay.
+
 ---
 
 ## Trust & key model

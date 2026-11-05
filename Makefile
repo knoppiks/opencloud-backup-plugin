@@ -75,17 +75,26 @@ GORELEASER_ENV := VERSION=$(VERSION) COMMIT=$(COMMIT) DATE=$(DATE)
 decrypt-release: ## Cross-build the offline decrypt CLI for every supported OS (into dist/release).
 	$(GORELEASER_ENV) $(GORELEASER) build --snapshot --clean --id decrypt
 
+# The asset check renders the Kustomize add-on (scripts/check-deploy-archives.sh).
+RELEASE_CHECK_ENV = DECRYPT_PLATFORMS="$(DECRYPT_PLATFORMS)" KUSTOMIZE=$(TOOLS)/kustomize
+
 # Everything the release builds, signed by nobody and published nowhere,
 # then checked the way the release is checked. Builds the web bundle archive
 # first (web-archive needs `pnpm install` done) into an emptied
-# $(RELEASE_ASSETS), so nothing left from an earlier run is attached.
+# $(RELEASE_ASSETS), so nothing left from an earlier run is attached. No
+# image is built: the deployment add-ons are stamped with stand-in digests,
+# listed in images.txt as a release lists its images.
 .PHONY: release-snapshot
 release-snapshot: ## Build every release asset locally (no signing, no upload) and check them.
 	rm -rf $(RELEASE_ASSETS)
-	$(MAKE) --no-print-directory web-archive
+	$(MAKE) --no-print-directory web-archive $(TOOLS)/kustomize
+	for image in opencloud-backup-vault-web opencloud-backupd; do \
+		echo "ghcr.io/knoppiks/$$image@sha256:$$(printf 'stand-in %s' $$image | sha256sum | cut -d' ' -f1)"; \
+	done >$(DEPLOY_IMAGES)
+	$(MAKE) --no-print-directory deploy-archives
 	$(GORELEASER_ENV) $(GORELEASER) release --snapshot --clean --skip=sign
-	DECRYPT_PLATFORMS="$(DECRYPT_PLATFORMS)" scripts/check-release-assets.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
-	test/release/release-scripts-test.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
+	$(RELEASE_CHECK_ENV) scripts/check-release-assets.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
+	$(RELEASE_CHECK_ENV) test/release/release-scripts-test.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
 	test/release/release-issues-test.sh
 
 # The release's shell scripts (tags, notes, verification), and that the
@@ -109,8 +118,9 @@ release-issues: ## Print the issues TAG ships (a tag, or HEAD to preview; querie
 .PHONY: release
 release:
 	@[ -n "$(RELEASE_NOTES)" ] || { echo "release: RELEASE_NOTES is not set" >&2; exit 1; }
+	$(MAKE) --no-print-directory $(TOOLS)/kustomize
 	$(GORELEASER_ENV) $(GORELEASER) release --clean --release-notes "$(RELEASE_NOTES)"
-	DECRYPT_PLATFORMS="$(DECRYPT_PLATFORMS)" scripts/check-release-assets.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
+	$(RELEASE_CHECK_ENV) scripts/check-release-assets.sh $(RELEASE_DIST) $(RELEASE_ASSETS) "$(VERSION)" "$(COMMIT)"
 	scripts/check-release-notes.sh "$(VERSION)" "$(RELEASE_NOTES)"
 
 # The web bundle as a release asset, for an install without the
@@ -128,6 +138,15 @@ web-archive: web-build ## Build the web bundle and archive it as a release asset
 	tar -C $(DIST)/web-archive --sort=name --mtime="$(DATE)" --owner=0 --group=0 --numeric-owner \
 		-cf - backup-vault | gzip -n >$(WEB_ARCHIVE)
 	@rm -rf $(DIST)/web-archive
+
+# The compose and Kustomize add-ons as release assets (#160), stamped with
+# the images DEPLOY_IMAGES lists by digest: the release's images.txt, which
+# the release job writes before it runs this.
+DEPLOY_IMAGES ?= $(RELEASE_ASSETS)/images.txt
+
+.PHONY: deploy-archives
+deploy-archives: ## Archive the deploy add-ons as release assets, stamped with the images in DEPLOY_IMAGES.
+	scripts/deploy-archives.sh $(DEPLOY_IMAGES) "$(VERSION)" $(RELEASE_ASSETS) "$(DATE)"
 
 # Unit tests build with kopia's own `testing` tag: repositories they create
 # derive their key with kopia's fast test derivation instead of scrypt, which
@@ -468,10 +487,12 @@ compose-test: ## Test the compose add-on's setup.sh (no Docker needed).
 # The check that a manifest names only published versions of this
 # project's images (#110), against a fake registry. The manifests in the
 # repository name none (they are stamped in a release archive, #160), so
-# only the check's own test runs here.
+# only the check's own test runs here; and the stamping of those archives,
+# with what their check refuses.
 .PHONY: deploy-images
-deploy-images: ## Test the published-image check for the deploy manifests (no network).
+deploy-images: $(TOOLS)/kustomize ## Test the published-image check and the add-on archives (no network).
 	test/release/deploy-images-test.sh
+	KUSTOMIZE=$(TOOLS)/kustomize test/release/deploy-archives-test.sh
 
 # HEAD's whole history (what CI fails on), then the files of the working
 # tree git would commit (AGENTS.md, "Secret scanning").

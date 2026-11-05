@@ -7,6 +7,8 @@
 #     THIRD_PARTY_NOTICES generated for that archive's platform;
 #   - every archive has an SPDX SBOM;
 #   - the web bundle archive holds the bundle, its notices and LICENSE;
+#   - the deployment add-ons name the release's images by digest
+#     (scripts/check-deploy-archives.sh; KUSTOMIZE names its kustomize);
 #   - SHA256SUMS lists exactly the release's assets, and they match it;
 #   - the programs this machine can run report the stamp, and are static.
 #
@@ -133,6 +135,9 @@ else
 	done
 	grep -qv '^backup-vault/' <<<"$entries" && fail "$web holds files outside backup-vault/"
 fi
+
+# The compose and Kustomize add-ons, against the release's images.txt.
+"$(dirname "$0")/check-deploy-archives.sh" "$assets" "$version" || fail "the deployment add-ons are not right (above)"
 
 # Whatever else the release jobs added (image SBOMs, the image list).
 if [ -d "$assets" ]; then

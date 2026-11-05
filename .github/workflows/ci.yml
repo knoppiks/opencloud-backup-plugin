@@ -459,7 +459,9 @@ jobs:
       run: make compose-test
 
     # The check that a release archive names only published images (#110),
-    # against a fake registry. The repository's manifests name no release.
+    # against a fake registry. The repository's manifests name no release;
+    # the stamp that names one in the release's add-on archives, and what
+    # their check refuses (#160).
     - name: published-image check
       run: make deploy-images
 

@@ -36,9 +36,10 @@ labels:
   includeTemplates: true
 
 # One place for the image of the service and of its operator commands. A
-# release archive names its release here, by digest. This copy names none:
-# `unreleased` exists in no registry, so a pod from it does not start. Use a
-# release archive, or set the version in your overlay's `images:`.
+# release archive names its release here, by digest. The repository's copy
+# names none: `unreleased` exists in no registry, so a pod from it does not
+# start. Use a release archive, or set the version in your overlay's
+# `images:`.
 images:
 - name: ghcr.io/knoppiks/opencloud-backupd
   newTag: unreleased

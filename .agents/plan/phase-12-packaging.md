@@ -225,4 +225,6 @@ and `deploy/kustomize/README.md` that the docs site later absorbs.
       untested — not claimed).
 - [x] The bespoke fixture is gone; integration and E2E run on
       opencloud-compose + add-on (#158).
-- [ ] Release archives for both add-ons attached by the release workflow.
+- [x] Release archives for both add-ons attached by the release workflow
+      (#160; built and checked by every PR's release snapshot, not yet by
+      a real tag).

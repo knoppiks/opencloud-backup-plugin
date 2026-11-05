@@ -16,10 +16,13 @@ Validated against **Kubernetes 1.35 to 1.37** (kubeconform, oldest and
 newest). The NetworkPolicy and the web-extension Component are tested on a
 kind cluster with Calico (`make k8s-kind-test`).
 
-Use the manifests from a release archive: they name that release's images by
-digest. The copy in the repository names none (`unreleased`, which no
-registry has), so its pods do not start until your overlay names a version in
-`images:`.
+Use the manifests from a release archive,
+`backup-vault-kustomize_<version>.tar.gz`: they name that release's images by
+digest, and the archive is checksummed and signed with the release's other
+assets ([Verifying a release](https://github.com/knoppiks/opencloud-backup-plugin#verifying-a-release)).
+The copy in the repository names none (`unreleased`, which no registry has),
+also at a release tag, so its pods do not start until your overlay names a
+version in `images:`.
 
 ## What the base does
 
@@ -47,9 +50,12 @@ OpenCloud first: expose its gateway and data server on a Service, and allow
 WebAssembly in its Content Security Policy (README.md, "Deployment: step by
 step", steps 1 and 2).
 
-1. **Copy `overlays/example`** into your own repository, and point its
-   `resources:` at this base (a path, or a remote base at a release tag).
-   Set `namespace:`.
+1. **Unpack the release archive** into your own repository, copy
+   `overlays/example` next to it, and point its `resources:` at the
+   archive's `base`. Set `namespace:`. A remote base at a release tag works
+   too, but names no release: set the image by tag and digest in your
+   overlay's `images:`, and the web extension's in the kustomization that
+   adds the Component (the release notes list both digests).
 2. **Secrets.** Create the Secret imperatively, which keeps the keys out of
    any file, and drop `secret-wrap-keys.yaml` from the overlay's resources:
 

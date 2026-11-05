@@ -109,12 +109,15 @@ $refs
 | \`decrypt_${version}_<os>_<arch>\` | Opens a Take-Out with your Recovery Key, offline. Linux, macOS, Windows. |
 | \`takeout_${version}_linux_<arch>\` | The administrator's Take-Out tool, outside the image. |
 | \`backup-vault_${version}.tar.gz\` | The web extension, for installs without the initContainer image. |
-| \`*.spdx.json\` | SBOMs: one per archive, one per image and platform. |
+| \`backup-vault-compose_${version}.tar.gz\` | The add-on for opencloud-compose, naming the images above by digest. Unpack it into your opencloud-compose directory. |
+| \`backup-vault-kustomize_${version}.tar.gz\` | The Kustomize base, example overlay and web-extension Component, naming the images above by digest. |
+| \`*.spdx.json\` | SBOMs: one per program archive, one per image and platform. |
 | \`images.txt\` | The images above, covered by the signature. |
 | \`SHA256SUMS\`, \`SHA256SUMS.sigstore.json\` | Checksums of every asset, and their signature. |
 
-Each archive holds the program, \`LICENSE\` and the third-party notices for
-its platform.
+Each program archive holds the program, \`LICENSE\` and the third-party
+notices for its platform. Install the deployment add-ons from these
+archives, not from the repository: its copies name no release.
 
 ## Verify
 

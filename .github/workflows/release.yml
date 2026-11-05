@@ -5,6 +5,9 @@ name: Release
 #   decrypt_<ver>_<os>_<arch>     the offline recovery CLI, five platforms
 #   takeout_<ver>_linux_<arch>    the admin Take-Out tool, outside the image
 #   backup-vault_<ver>.tar.gz     the web extension bundle
+#   backup-vault-compose_<ver>.tar.gz    the opencloud-compose add-on and
+#   backup-vault-kustomize_<ver>.tar.gz  the Kustomize add-on, both naming
+#                                        the images below by digest
 #   *.spdx.json                   SBOMs: per archive, per image and platform
 #   images.txt                    both images, by digest
 #   SHA256SUMS                    every asset above
@@ -364,6 +367,11 @@ jobs:
         LC_ALL=C sort dist/images/*.txt > dist/release-assets/images.txt
         scripts/release-notes.sh "$TAG" dist/release-assets/images.txt \
           dist/release-issues.json internal/ocversion/versions.yaml > dist/release-notes.md
+
+    # The compose and Kustomize add-ons, naming the images above by digest
+    # (#160). `make release` checks them with the other assets.
+    - name: make deploy-archives
+      run: make deploy-archives VERSION="$TAG"
 
     # GORELEASER_CURRENT_TAG: an rc and its release may tag the same commit.
     - name: make release
