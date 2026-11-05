@@ -18,8 +18,8 @@ kind: Component
 patches:
 - path: patch.yaml
 
-# As in the base: a release archive names its release, by digest; this copy
-# names none, so the pod does not start from it.
+# As in the base: a release archive names its release, by digest; the
+# repository's copy names none, so the pod does not start from it.
 images:
 - name: ghcr.io/knoppiks/opencloud-backup-vault-web
   newTag: unreleased

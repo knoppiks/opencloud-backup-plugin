@@ -14,9 +14,12 @@ traefik/backup.yml          the route, with opencloud-compose's Traefik
 external-proxy/backup.yml   the port, with your own proxy instead
 ```
 
-Use the add-on from a release: its files name the images of that release, by
-digest. The copy in the repository names no version and refuses to start
-until `BACKUP_VERSION` is set.
+Use the add-on from a release, `backup-vault-compose_<version>.tar.gz`: its
+files name the images of that release, by digest, and it is checksummed and
+signed with the release's other assets
+([Verifying a release](https://github.com/knoppiks/opencloud-backup-plugin#verifying-a-release)).
+The copy in the repository names no version and refuses to start until
+`BACKUP_VERSION` is set.
 
 ## What is supported
 
@@ -34,7 +37,15 @@ until `BACKUP_VERSION` is set.
 
 From your opencloud-compose directory:
 
-1. **Copy the add-on** into it, and append `backup/.env.example` to `.env`.
+1. **Unpack the add-on** into it, and append `backup/.env.example` to `.env`.
+   The archive holds only `backup/`, `traefik/backup.yml` and
+   `external-proxy/backup.yml`, so nothing of opencloud-compose's own is
+   replaced:
+
+   ```sh
+   tar -xzf backup-vault-compose_<version>.tar.gz
+   cat backup/.env.example >>.env
+   ```
 
 2. **Allow WebAssembly in OpenCloud's Content Security Policy.** The Recovery
    Key ceremony runs Argon2id in the browser as WebAssembly, which the default
@@ -110,8 +121,10 @@ Write into `.env`, single-quoted:
 
 - **After a reboot** the backup service waits for OpenCloud and is unhealthy
   until OpenCloud answers. It logs `waiting for OpenCloud` meanwhile.
-- **Upgrading:** replace the add-on's files with the new release's and run
-  `docker compose up -d`. A new web extension restarts OpenCloud once, because
+- **Upgrading:** unpack the new release's archive over the add-on's files
+  and run `docker compose up -d`. `BACKUP_VERSION` in `.env` overrides the
+  release the files name, and pins by tag only; leave it unset to run the
+  images the release names by digest. A new web extension restarts OpenCloud once, because
   OpenCloud reads its extensions at startup only.
 - **One instance only.** Do not scale `backupd`: a second instance against the
   same state Space is refused.

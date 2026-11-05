@@ -296,7 +296,10 @@ In order, for a Kubernetes deployment next to an existing OpenCloud. The
 manifests are a Kustomize base and an example overlay in
 [`deploy/kustomize/`](deploy/kustomize/README.md), which walks through the
 Kubernetes side in detail; every `REPLACE_ME` in the service's settings is
-refused at startup. Every
+refused at startup. Install either add-on from its release archive
+(`backup-vault-compose_<version>.tar.gz`,
+`backup-vault-kustomize_<version>.tar.gz`): it names that release's images by
+digest, while the repository's copy names no release. Every
 environment variable, its default and what it does is listed in the
 [environment reference](docs/reference/environment-backupd.md), which is
 generated from the code. The service logs the configuration it ended up with at startup, with
@@ -690,7 +693,9 @@ The signature proves that `SHA256SUMS` was made by
 `.github/workflows/release.yml` in this repository, running for that tag. The
 checksums then prove that every download is the file the workflow built. Each
 asset also has GitHub build provenance, and the images are signed and carry
-their SBOMs as attestations. The release notes name the images by digest.
+their SBOMs as attestations. The release notes name the images by digest,
+and so do the deployment add-ons: a verified add-on archive pulls exactly the
+release's images.
 
 With [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
 (v2.4 or newer for files; images need v3, below), in the folder holding the downloads, `SHA256SUMS` and

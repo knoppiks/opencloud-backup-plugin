@@ -10,7 +10,9 @@
 #                                    and an empty download; the signature half
 #                                    cannot be skipped by accident
 #   scripts/check-release-assets.sh  still refuses (with RELEASE_DIST given):
-#                                    a changed archive, a missing SBOM
+#                                    a changed archive, a missing SBOM, a
+#                                    missing add-on (the add-on check itself:
+#                                    deploy-archives-test.sh)
 #
 # Usage: release-scripts-test.sh [RELEASE_DIST ASSETS_DIR VERSION COMMIT]
 #   With arguments (after `make release-snapshot`), the asset check is
@@ -202,6 +204,7 @@ if [ $# -eq 4 ]; then
 	probe "a changed archive" 'printf x >>"$(ls dist/takeout_*_linux_arm64.tar.gz)"'
 	probe "a missing SBOM" 'rm dist/decrypt_*_darwin_arm64.tar.gz.spdx.json'
 	probe "a missing web archive" 'rm assets/backup-vault_*.tar.gz'
+	probe "a missing compose add-on" 'rm assets/backup-vault-compose_*.tar.gz'
 	probe "an asset SHA256SUMS does not list" 'echo extra >assets/unlisted.txt'
 elif [ $# -ne 0 ]; then
 	echo "usage: $0 [RELEASE_DIST ASSETS_DIR VERSION COMMIT]" >&2

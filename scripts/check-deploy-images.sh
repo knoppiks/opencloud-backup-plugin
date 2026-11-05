@@ -3,13 +3,18 @@
 # not published (phase-11 §11.4, #110). deploy/ is the copy-paste starting
 # point of a deployment; an image that does not exist is its first failure.
 #
-# For every `image:` of ghcr.io/knoppiks/opencloud-backup* in the given files:
+# For every image of ghcr.io/knoppiks/opencloud-backup* in the given files,
+# as scripts/deploy-images.sh reads them (manifests, the compose add-on's
+# defaults, kustomization `images:`):
 #
 #   - the reference has a version tag (X.Y.Z or X.Y.Z-rc.N), never `latest`,
 #     no other moving tag and no tag at all: published tags exist only for
 #     versions (release-publish.yml);
 #   - the tag exists in the registry; with `tag@sha256:…`, it also names
 #     that digest.
+#
+# release-publish.yml runs it over a release's add-on archives (#160), once
+# their tags exist.
 #
 # Usage: check-deploy-images.sh FILE...
 # RESOLVE names the command that prints a reference's digest, or fails if it
@@ -38,11 +43,10 @@ fail() {
 	failures=$((failures + 1))
 }
 
-while IFS= read -r line; do
-	file=${line%%:*}
-	rest=${line#*:}
-	lineno=${rest%%:*}
-	ref=$(sed -E 's/^[^:]*:[[:space:]]*["'\'']?//; s/["'\'']?[[:space:]]*(#.*)?$//' <<<"${rest#*:}")
+images=$("$(dirname "$0")/deploy-images.sh" "$@")
+
+while IFS=$'\t' read -r file lineno ref; do
+	[ -n "$file" ] || continue
 	where="$file:$lineno"
 	checked=$((checked + 1))
 
@@ -61,7 +65,7 @@ while IFS= read -r line; do
 		continue
 	fi
 	echo "check-deploy-images: $where: $repo:$tag${digest:+@$digest} published" >&2
-done < <(grep -nE "^[[:space:]]*-?[[:space:]]*image:[[:space:]]*[\"']?$ours" "$@" /dev/null || true)
+done <<<"$images"
 
 if [ "$checked" -eq 0 ]; then
 	fail "no image of this project found in: $*"

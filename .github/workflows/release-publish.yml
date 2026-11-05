@@ -10,7 +10,8 @@ name: Release published
 # No `latest`: a deployment pins a version, and a moving tag would make "the
 # image that was tested" unanswerable. The digests come from the release's
 # images.txt, which is accepted only if SHA256SUMS lists it, and SHA256SUMS
-# only if release.yml signed it at this tag.
+# only if release.yml signed it at this tag. Then the deployment add-ons
+# attached to the release must name exactly those, now tagged.
 on:
   release:
     types: [ published ]
@@ -49,11 +50,12 @@ jobs:
       with:
         cosign-release: ${{ env.COSIGN_VERSION }}
 
-    - name: verify the image list
+    - name: verify the image list and the add-ons
       run: |
         mkdir -p "$RUNNER_TEMP/release"
         gh release download "$TAG" --dir "$RUNNER_TEMP/release" \
-          --pattern images.txt --pattern SHA256SUMS --pattern SHA256SUMS.sigstore.json
+          --pattern images.txt --pattern SHA256SUMS --pattern SHA256SUMS.sigstore.json \
+          --pattern 'backup-vault-compose_*.tar.gz' --pattern 'backup-vault-kustomize_*.tar.gz'
         scripts/verify-release.sh -t "$TAG" "$RUNNER_TEMP/release"
 
     - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -88,3 +90,16 @@ jobs:
             fi
           done
         done < "$RUNNER_TEMP/release/images.txt"
+
+    # What an operator installs: the add-ons name the release's images by
+    # tag and digest (#160), and now that the tags exist, each must resolve
+    # to its digest. Checked from the archives as released.
+    - name: the add-ons name the published images
+      run: |
+        addons=$RUNNER_TEMP/addons
+        mkdir -p "$addons"
+        for archive in "$RUNNER_TEMP"/release/backup-vault-{compose,kustomize}_*.tar.gz; do
+          tar -xzf "$archive" -C "$addons"
+        done
+        mapfile -t files < <(find "$addons" -type f \( -name '*.yml' -o -name kustomization.yaml \) | LC_ALL=C sort)
+        scripts/check-deploy-images.sh "${files[@]}"

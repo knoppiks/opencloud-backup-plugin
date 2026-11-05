@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests scripts/check-deploy-images.sh against a fake registry (#110): what
 # it accepts, and that it refuses each way a manifest can name an image that
-# a deployment cannot pull. No network.
+# a deployment cannot pull, in each form scripts/deploy-images.sh reads
+# (manifests, the compose add-on, kustomization `images:`; #160). No network.
 #
 # Usage: deploy-images-test.sh
 set -euo pipefail
@@ -54,6 +55,42 @@ accepts "tag and its digest" "$(manifest digest "  image: ghcr.io/knoppiks/openc
 accepts "other images are not ours to check" "$(manifest other "  image: ghcr.io/knoppiks/opencloud-backupd:0.1.0-rc.4
   image: dxflrs/garage:v2.3.0")"
 
+# The compose add-on, as a release stamps it and as the repository has it.
+accepts "compose, stamped" "$(manifest compose "    image: \${BACKUP_DOCKER_IMAGE:-ghcr.io/knoppiks/opencloud-backupd}:\${BACKUP_VERSION:-0.1.0-rc.4@$d1}")"
+refuses "compose, stamped with another digest" "$(manifest composewrong "    image: \${BACKUP_DOCKER_IMAGE:-ghcr.io/knoppiks/opencloud-backupd}:\${BACKUP_VERSION:-0.1.0-rc.4@$d2}")"
+refuses "compose, unstamped" "$(manifest composeraw "    image: \${BACKUP_DOCKER_IMAGE:-ghcr.io/knoppiks/opencloud-backupd}:\${BACKUP_VERSION:?set BACKUP_VERSION}")"
+
+# kustomization.yaml `images:`, likewise.
+kustomization() {
+	mkdir -p "$work/$1"
+	printf '%s\n' "$2" >"$work/$1/kustomization.yaml"
+	echo "$work/$1/kustomization.yaml"
+}
+accepts "kustomization, stamped" "$(kustomization kok "# a leading comment
+images:
+- name: ghcr.io/knoppiks/opencloud-backupd
+  newTag: 0.1.0-rc.4
+  digest: $d1
+- name: dxflrs/garage
+  newTag: v2.3.0")"
+refuses "kustomization, unreleased" "$(kustomization kraw "images:
+- name: ghcr.io/knoppiks/opencloud-backupd
+  newTag: unreleased")"
+refuses "kustomization, no tag" "$(kustomization knotag "images:
+- name: ghcr.io/knoppiks/opencloud-backupd
+  digest: $d1")"
+refuses "kustomization, another digest" "$(kustomization kwrong "images:
+- name: ghcr.io/knoppiks/opencloud-backup-vault-web
+  newTag: 0.1.0-rc.4
+  digest: $d1")"
+refuses "kustomization, unreadable" "$(kustomization kbad "images: [")"
+
+# deploy-images.sh names the line of each image, for the messages.
+got=$("$root/scripts/deploy-images.sh" "$work/kok/kustomization.yaml" "$work/compose.yaml" | cut -f2,3)
+want=$(printf '%s\t%s\n' 3 "ghcr.io/knoppiks/opencloud-backupd:0.1.0-rc.4@$d1" 1 "ghcr.io/knoppiks/opencloud-backupd:0.1.0-rc.4@$d1")
+[ "$got" = "$want" ] || fail "deploy-images.sh printed"$'\n'"$got"$'\n'"want"$'\n'"$want"
+
+refuses "a file that does not exist" "$work/nonexistent.yaml"
 refuses "unpublished version" "$(manifest missing "  image: ghcr.io/knoppiks/opencloud-backupd:0.1.0")"
 refuses "latest" "$(manifest latest "  image: ghcr.io/knoppiks/opencloud-backupd:latest")"
 refuses "no tag" "$(manifest notag "  image: ghcr.io/knoppiks/opencloud-backupd")"
