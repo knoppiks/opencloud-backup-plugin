@@ -47,7 +47,7 @@ RUN BACKUP_VAULT_VERSION="$VERSION" pnpm build
 # Keep the Go version in step with go.mod and CI's GO_VERSION
 # (internal/buildinfo/toolchain_test.go). Cross-compiled on the builder's
 # platform, like the service image.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS installer
+FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 AS installer
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=""
