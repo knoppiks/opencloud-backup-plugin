@@ -45,7 +45,7 @@ concurrency:
 env:
   # Keep in step with ci.yml (internal/buildinfo/toolchain_test.go).
   # renovate: datasource=golang-version depName=go
-  GO_VERSION: "1.27.3"
+  GO_VERSION: "1.27.4"
   # renovate: datasource=node-version depName=node
   NODE_VERSION: "24.22.0"
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
