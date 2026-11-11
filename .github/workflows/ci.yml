@@ -27,7 +27,7 @@ concurrency:
 env:
   # Keep in sync with go.mod's toolchain pin.
   # renovate: datasource=golang-version depName=go
-  GO_VERSION: "1.27.3"
+  GO_VERSION: "1.27.4"
   # The web extension's floor is Node 20.19 (vite 8); CI runs the current LTS.
   # renovate: datasource=node-version depName=node
   NODE_VERSION: "24.22.0"
