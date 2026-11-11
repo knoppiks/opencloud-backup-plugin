@@ -2,7 +2,7 @@ module github.com/knoppiks/opencloud-backup-plugin
 
 go 1.26.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.3
