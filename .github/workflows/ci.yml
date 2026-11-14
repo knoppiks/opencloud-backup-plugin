@@ -30,7 +30,7 @@ env:
   GO_VERSION: "1.27.3"
   # The web extension's floor is Node 20.19 (vite 8); CI runs the current LTS.
   # renovate: datasource=node-version depName=node
-  NODE_VERSION: "24.22.0"
+  NODE_VERSION: "24.22.3"
   # golangci-lint, gitleaks, kubeconform, actionlint and govulncheck are
   # pinned in tools/<name>/go.mod and built by make, as locally (#125).
   # The release's tools; keep in step with release.yml.
