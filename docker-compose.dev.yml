@@ -13,7 +13,7 @@
 
 services:
   garage:
-    image: dxflrs/garage:v2.4.1
+    image: dxflrs/garage:v2.5.0
     container_name: opencloud-backup-garage-dev
     entrypoint: [ "/garage" ]
     command: [ "server", "--single-node", "--default-bucket" ]
