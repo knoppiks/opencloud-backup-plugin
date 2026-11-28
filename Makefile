@@ -382,9 +382,9 @@ license-probe: ## Prove the license check still refuses unlicensed and disallowe
 # every other tool: govulncheck in tools/, the others as images by digest;
 # Renovate bumps them (the `# renovate:` lines).
 # renovate: datasource=docker
-OSV_SCANNER_IMAGE ?= ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0
+OSV_SCANNER_IMAGE ?= ghcr.io/google/osv-scanner:v2.7.1@sha256:a70ffffc2bfd33482953e5d6b64c6fcdb30239717a07b0f0d3ab2859ce3e4cde
 # renovate: datasource=docker
-TRIVY_IMAGE ?= aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222
+TRIVY_IMAGE ?= aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
 
 # The shipped programs, on every platform anything ships for, in source mode:
 # a vulnerability fails only when the code can reach it. The standard
@@ -424,7 +424,7 @@ image-scan-probe: ## Prove the image scan still refuses a fixable critical vulne
 # A renovate.json Renovate cannot read stops every update; the hosted app
 # then opens an issue, and nothing else notices.
 # renovate: datasource=npm depName=renovate
-RENOVATE_VERSION ?= 44.171.7
+RENOVATE_VERSION ?= 44.263.1
 
 .PHONY: renovate-config
 renovate-config: ## Validate renovate.json with the pinned Renovate.
@@ -470,9 +470,9 @@ k8s-validate: $(TOOLS)/kubeconform $(TOOLS)/kustomize ## Render the Kustomize ba
 # Calico, which enforces it, and the web-extension Component with the web
 # image built from this tree (make web-image). Needs Docker and the network.
 # renovate: datasource=docker
-KIND_PROBE_IMAGE ?= busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+KIND_PROBE_IMAGE ?= busybox:1.38.0@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4
 # renovate: datasource=github-releases depName=projectcalico/calico
-CALICO_VERSION ?= v3.33.0
+CALICO_VERSION ?= v3.33.1
 
 .PHONY: k8s-kind-test
 k8s-kind-test: $(TOOLS)/kind $(TOOLS)/kustomize ## Test the NetworkPolicy and the web-extension Component on kind (after web-image).
@@ -506,7 +506,7 @@ secret-scan: $(TOOLS)/gitleaks ## Scan HEAD's history and the working tree for s
 # by digest. zizmor's online audits (impostor commits, known-vulnerable
 # actions) need GH_TOKEN; without it they are skipped, as locally they may be.
 # renovate: datasource=docker
-ZIZMOR_IMAGE ?= ghcr.io/zizmorcore/zizmor:1.31.1@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9
+ZIZMOR_IMAGE ?= ghcr.io/zizmorcore/zizmor:1.33.1@sha256:ecd3ffe6158de1322e05a044ed43749bee12b1dccb7e1a7859bc6ac4b2a1c516
 # renovate: datasource=docker
 SHELLCHECK_IMAGE ?= koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
 # renovate: datasource=docker
